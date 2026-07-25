@@ -1,28 +1,24 @@
 {
-  "name": "todo-vault",
+  "name": "todo-vault-workspace",
   "version": "0.1.0",
-  "description": "Local-first, Jira-shaped task vault with an MCP server so any Claude can read and write it",
-  "type": "module",
-  "bin": {
-    "vault": "./dist/cli.js"
-  },
-  "main": "./dist/index.js",
+  "private": true,
+  "description": "Local-first, Jira-shaped task vault, plus the desktop app over it",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/cli.ts",
-    "mcp": "tsx src/mcp-server.ts",
-    "test": "tsx test/vault.test.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "yaml": "^2.5.0",
-    "zod": "^3.23.8"
+    "vault": "tsx packages/core/src/cli.ts",
+    "mcp": "tsx packages/core/src/mcp-server.ts",
+    "seed": "tsx packages/core/scripts/seed-vault.ts",
+    "test": "npm run test -w todo-vault",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20"

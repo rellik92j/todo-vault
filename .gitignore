@@ -14,3 +14,6 @@ dist/
 # Jira push artefacts — they contain real issue content.
 plan.json
 issues.csv
+
+# electron-vite build output
+apps/desktop/out/

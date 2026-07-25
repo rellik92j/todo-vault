@@ -1,0 +1,31 @@
+{
+  "name": "@todo-vault/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell over the vault",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "//ensure-electron": "Electron 43 has no install script — it downloads lazily on first require(). electron-vite instead looks for the binary on disk and fails with 'Electron uninstall', so this forces the download. A no-op costing ~0.2s once the binary is there.",
+    "ensure-electron": "node -e \"require('electron')\"",
+    "predev": "npm run ensure-electron",
+    "prebuild": "npm run ensure-electron",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "todo-vault": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite": "^7.3.6"
+  }
+}

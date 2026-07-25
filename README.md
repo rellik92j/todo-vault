@@ -7,20 +7,62 @@ write the same data without a server.
 Phases 1, 2, and 5 of the plan: schema, vault core, CLI, and MCP server. The
 desktop UI comes next and sits on top of `Vault` without changing any of this.
 
+## Layout
+
+An npm workspace with two packages:
+
+| | |
+|---|---|
+| `packages/core` | The vault: schema, read/write, CLI, MCP server, Jira planner |
+| `apps/desktop` | The Electron app over it |
+
+The core has no idea the app exists. The app holds no state the vault does not.
+
 ## Quick start
 
 ```bash
 npm install
 npm run build
+npm run seed -- ./vault
+npm run dev
+```
 
-npx tsx src/cli.ts init ./vault
-npx tsx src/cli.ts project new ACME "Acme platform rollout" --vault ./vault
-npx tsx src/cli.ts new --vault ./vault --project ACME --type epic --summary "Migrate reporting"
-npx tsx src/cli.ts agenda week --vault ./vault
+`npm run dev` builds the core and launches the desktop app. The CLI runs from the
+repo root, so paths like `./vault` mean what they look like:
+
+```bash
+npm run vault -- agenda week --vault ./vault
 ```
 
 Set `VAULT_DIR` to skip `--vault` everywhere. Add `--git` to auto-commit every
-write, which gives you undo and a full audit trail for free.
+write, which gives you undo and a full audit trail for free. The desktop app
+always passes it.
+
+## The desktop app
+
+Backlog table, board, agenda, and an item detail panel, over a project sidebar in
+manual rank order. Read-only for now; editing is next.
+
+The shape that matters: `Vault` imports `node:fs` and `node:child_process`, so it
+lives in the **main** process and the renderer reaches it only through a
+`contextBridge` preload — `contextIsolation: true`, `nodeIntegration: false`,
+`sandbox: true`. Every call returns `{ ok, value }` or `{ ok, message }` rather
+than throwing, because structured clone strips the `VaultError` class on the way
+across and the core's messages are worth showing verbatim. Mutations will return
+a whole fresh snapshot rather than a delta; at a few hundred items, reconciling
+would be a bug farm for no gain.
+
+`items/` and `projects/` are watched, so an edit from anything else — an external
+Claude, or Notepad — shows up in about a second without a refresh. Files that fail
+to parse get a banner naming them; otherwise they would simply vanish from every
+view, which is the one failure mode that looks like data loss.
+
+```bash
+npm run dev            # build core, launch the app
+npm run build          # both workspaces
+npm test               # 36 core tests
+npm run typecheck      # both workspaces
+```
 
 A worked example vault is included at `./vault` — two projects, an epic with
 stories, tasks, a subtask and a bug, recurring daily/weekly/monthly items, and
@@ -176,19 +218,21 @@ cross-project moves, path portability, and git health reporting.
 
 ## What is not here yet
 
-- **Desktop shell** (phases 3–4). Tauri or Electron over `Vault`. Board view,
-  backlog table, item detail, drag and drop.
-- **In-app Claude** (phase 6). One line of text to a filled draft, using the
-  Messages API with tool-use for structured output, validated against
-  `CreateItemInput`, shown as a preview before it writes.
-- **Live file watching.** `Vault.load()` is cheap and rebuilds the whole index;
-  wire it to chokidar so the UI updates when an external Claude writes a file.
+- **Editing in the app.** Forms, status transitions, drag and drop, comments.
+  The core and the MCP server can already do all of it; the UI reads only.
+- **In-app Claude.** One line of text to a filled draft, using the Messages API
+  with tool-use for structured output, validated against `CreateItemInput` and
+  shown as a preview before it writes. The API key would live in the main
+  process only, never in the renderer bundle.
+- **`vault jira discover`.** Referenced by this file and by a warning inside
+  `jira.ts`, but not implemented.
+- **`updateProject` in the UI**, and project reordering by drag rather than CLI.
 - **The actual Jira POST.** By design.
 
-## Layout
+## Files
 
 ```
-src/
+packages/core/src/
 ├── schema.ts       zod schema — the source of truth
 ├── markdown.ts     frontmatter with stable key ordering
 ├── util.ts         dates, hashing, atomic writes, rank arithmetic
@@ -198,8 +242,14 @@ src/
 ├── mcp-server.ts   stdio MCP server
 └── index.ts        public API for the desktop app
 
-scripts/
+packages/core/scripts/
 └── seed-vault.ts   builds the worked example vault
+
+apps/desktop/src/
+├── shared/api.ts   the IPC contract, imported by both sides
+├── main/           Vault instance, chokidar watcher, IPC handlers
+├── preload/        contextBridge — the renderer's only way in
+└── renderer/       React: backlog, board, agenda, detail
 ```
 
 Read `SCHEMA.md` before changing anything in `src/schema.ts`.

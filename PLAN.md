@@ -72,7 +72,33 @@ Also fixed, both found by running the code rather than reading it:
   could assign a rank that collided with an existing one. `{ before: X }` now
   means *immediately* before X, deriving the other bound from the real order.
 
-## Phase 1 — the shell, read-only
+## Phase 1 — the shell, read-only ✅
+
+Built and verified running. Workspaces are `packages/core` (unchanged, 36 tests
+still green) and `apps/desktop`. Four views — backlog table, board, agenda, and
+an item detail panel — plus a project sidebar in manual rank order, filters, and
+a first-run vault picker.
+
+The gate passed: an item edited entirely outside the app appeared without any
+interaction, and breaking a file's YAML produced the load-error banner naming the
+file, with the item count dropping to match.
+
+Two things caught only by running it, both worth remembering:
+
+- **`electron-vite` cannot start Electron 43 out of the box.** It looks for the
+  binary on disk, while Electron 43 downloads lazily on first `require()`, so it
+  fails with a bare `Error: Electron uninstall`. Fixed with an `ensure-electron`
+  script wired to `predev`/`prebuild` — `node -e "require('electron')"`, which
+  costs ~0.2s once the binary is there.
+- **`ready-to-show` is not a reliable trigger to show the window.** With
+  `show: false`, a renderer that fails to boot leaves no window and nothing on
+  stdout. The window is now shown once the load settles either way, and renderer
+  console output is forwarded to the terminal. Note Electron 35 changed
+  `console-message` from positional arguments to a details object; the old
+  signature silently logs nothing, which is how a production-only problem stays
+  invisible.
+
+## Phase 1 — as designed
 
 **Dependencies — pin these.** Installing the latest of everything fails outright:
 `electron-vite@5` accepts Vite `^5 || ^6 || ^7`, while the current
