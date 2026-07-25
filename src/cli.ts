@@ -56,6 +56,11 @@ Usage: vault <command> [options]
   link KEY --url|--item|--file X    Attach a link
   attach KEY <path> [--no-copy]     Attach a file
   agenda [today|week|month]         What needs attention
+  move KEY --after K --before K     Reorder by hand (rank)
+  delete KEY [--cascade]            Move to .trash (recoverable)
+  trash                             List trashed items
+  restore FILE                      Bring one back from .trash
+  git-status                        Whether writes are being committed
   jira plan [--out plan.json]       Build a reviewable Jira push payload
   jira csv  [--out issues.csv]      Export for Jira's CSV importer
 
@@ -71,6 +76,9 @@ Item options for new/set:
   --assignee NAME   --start YYYY-MM-DD --due YYYY-MM-DD
   --cadence daily|weekly|monthly|quarterly|none
   --estimate N      --description TEXT
+
+List options:
+  --sort work|rank  work = by urgency (default), rank = manual order
 `;
 
 function itemLine(item: Item): string {
@@ -224,6 +232,7 @@ async function main(): Promise<void> {
         parent: str(flags, "parent"),
         text: str(flags, "text"),
         open: flags.open === true ? true : undefined,
+        sort: str(flags, "sort") as never,
         limit: Number(str(flags, "limit") ?? 100),
       });
       if (asJson) {
@@ -337,6 +346,97 @@ async function main(): Promise<void> {
         for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);
       }
       process.stdout.write("\n");
+      return;
+    }
+
+    case "move": {
+      const key = _[1];
+      if (!key) throw new VaultError("Usage: vault move KEY [--after KEY] [--before KEY]");
+      const moved = await vault.moveItem(key, {
+        after: str(flags, "after"),
+        before: str(flags, "before"),
+      });
+      process.stdout.write(`${moved.key} now ranked ${moved.rank}\n`);
+      return;
+    }
+
+    case "delete": {
+      const key = _[1];
+      if (!key) throw new VaultError("Usage: vault delete KEY [--cascade]");
+      const results = await vault.deleteItem(key, { cascade: flags.cascade === true });
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+        return;
+      }
+      for (const r of results) {
+        process.stdout.write(`Trashed ${r.key} -> ${r.trashedTo}\n`);
+        if (r.attachmentsTrashedTo) {
+          process.stdout.write(`  attachments -> ${r.attachmentsTrashedTo}\n`);
+        }
+        for (const source of r.danglingBacklinks) {
+          process.stdout.write(`  warning: ${source} still links to ${r.key}\n`);
+        }
+      }
+      process.stdout.write(`\nRecover with: vault restore ${path.basename(results[0].trashedTo)}\n`);
+      return;
+    }
+
+    case "trash": {
+      const entries = await vault.listTrash();
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);
+        return;
+      }
+      if (!entries.length) {
+        process.stdout.write("Trash is empty.\n");
+        return;
+      }
+      for (const e of entries) {
+        const attach = e.hasAttachments ? " (+attachments)" : "";
+        process.stdout.write(`${e.key.padEnd(10)} ${e.summary ?? "(unreadable)"}${attach}\n`);
+        process.stdout.write(`${" ".repeat(11)}${e.file}\n`);
+      }
+      return;
+    }
+
+    case "restore": {
+      const file = _[1];
+      if (!file) throw new VaultError("Usage: vault restore FILE  (see: vault trash)");
+      const item = await vault.restoreItem(file);
+      process.stdout.write(`Restored ${item.key}: ${item.summary}\n`);
+      return;
+    }
+
+    case "git-status": {
+      const status = await vault.gitStatus();
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(`auto-commit  ${status.enabled ? "requested" : "off (no --git)"}\n`);
+      process.stdout.write(`git present  ${status.gitAvailable ? "yes" : "no"}\n`);
+      process.stdout.write(`is a repo    ${status.isRepo ? "yes" : `no — run: git init ${vault.root}`}\n`);
+      if (status.repoRoot) {
+        const nested = status.repoRoot !== vault.root ? "  (the vault is nested inside it)" : "";
+        process.stdout.write(`history in   ${status.repoRoot}${nested}\n`);
+      }
+      if (status.ignored) {
+        process.stdout.write(`ignored      yes — that repo ignores this vault, so nothing is committed\n`);
+      }
+      if (status.lastCommit) {
+        process.stdout.write(`last commit  ${status.lastCommit.hash} ${status.lastCommit.subject}\n`);
+      }
+      if (status.lastError) {
+        process.stdout.write(`last error   ${status.lastError}\n`);
+      }
+      process.stdout.write(
+        `\n${
+          status.healthy
+            ? "Writes are being committed. Undo is available."
+            : "Writes are NOT being committed. Deletes are still recoverable from .trash."
+        }\n`,
+      );
+      if (!status.healthy) process.exitCode = 1;
       return;
     }
 

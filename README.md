@@ -24,7 +24,14 @@ write, which gives you undo and a full audit trail for free.
 
 A worked example vault is included at `./vault` — two projects, an epic with
 stories, tasks, a subtask and a bug, recurring daily/weekly/monthly items, and
-examples of every link type.
+examples of every link type. Rebuild it from scratch at any time:
+
+```bash
+npx tsx scripts/seed-vault.ts ./vault --force
+```
+
+It is also the fixture the desktop UI is developed against. `--force` clears the
+vault's contents but leaves its `.git` alone, so history survives a reset.
 
 ## Commands
 
@@ -42,9 +49,19 @@ comment KEY "text"                Append to the running log
 link KEY --url|--item|--outlook X Link arbitrary content
 attach KEY <path> [--no-copy]     Attach a file
 agenda [today|week|month]         What needs attention
+move KEY --after K --before K     Reorder by hand
+delete KEY [--cascade]            Move to .trash, recoverable
+trash                             List what is in .trash
+restore FILE                      Bring one back
+git-status                        Whether writes are being committed
 jira plan [--out plan.json]       Reviewable push payload
 jira csv  [--out issues.csv]      For Jira's CSV importer
 ```
+
+`list --sort rank` gives the manual order; the default `--sort work` gives the
+derived one (overdue, due date, priority). Deletes go to `.trash/` rather than
+being unlinked, so recovery does not depend on git being set up — run
+`git-status` to see whether it actually is.
 
 ## Wiring up Claude
 
@@ -92,6 +109,10 @@ Because the vault is plain markdown, a Claude with only filesystem access can
 already read and edit it. The MCP server adds schema validation, key allocation,
 and hierarchy rules on top — worth having, but not a hard dependency.
 
+Not yet exposed over MCP: `move_item`, `delete_item`, `restore_item`, and
+`list_trash`. They exist on `Vault` and in the CLI, so this is a gap in the MCP
+surface rather than in the core.
+
 ## Pushing to Jira
 
 Push only. The vault is upstream of Jira, never a mirror of it.
@@ -128,9 +149,10 @@ silently dropping your dates.
 npx tsx --test test/vault.test.ts
 ```
 
-Fourteen tests covering key allocation, disk round-trips, frontmatter stability,
-hierarchy rules, transition validation, backlinks, attachments, agenda windows,
-ADF conversion, push ordering, and drift detection.
+Twenty-six tests covering key allocation, disk round-trips, frontmatter
+stability, hierarchy rules, transition validation, backlinks, attachments,
+agenda windows, ADF conversion, push ordering, drift detection, manual
+reordering, trash and restore, path portability, and git health reporting.
 
 ## What is not here yet
 
@@ -149,11 +171,15 @@ ADF conversion, push ordering, and drift detection.
 src/
 ├── schema.ts       zod schema — the source of truth
 ├── markdown.ts     frontmatter with stable key ordering
+├── util.ts         dates, hashing, atomic writes, rank arithmetic
 ├── vault.ts        core: load, validate, index, write atomically
 ├── jira.ts         field mapping, markdown→ADF, push plans
 ├── cli.ts          proves the core without a UI
 ├── mcp-server.ts   stdio MCP server
 └── index.ts        public API for the desktop app
+
+scripts/
+└── seed-vault.ts   builds the worked example vault
 ```
 
 Read `SCHEMA.md` before changing anything in `src/schema.ts`.

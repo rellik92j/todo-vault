@@ -1,81 +1,75 @@
 # Plan: the Electron desktop shell
 
-Phases 1, 2, and 5 are done and read well — schema, vault core, CLI, MCP server,
-14 tests. Stack is decided: **Electron**. This is the plan for phases 3, 4, and 6.
+Stack is decided: **Electron**. This is the plan for phases 3, 4, and 6.
 
-Before any UI code, though, there are five things wrong with the working copy.
+**Phases 0 and 0.5 are complete.** Node 24.18 is installed, the tree is split
+into `src/` and `test/`, both git repos exist, the example vault is seeded, and
+the suite is at 26 green tests. `rank` and trash-based deletion are in the schema
+and the CLI. What follows below Phase 0.5 is the remaining work.
 
-## Phase 0 — make the existing code run
+## Phase 0 — make the existing code run ✅
 
-None of it has ever executed on this machine. Fix that first; the core is the
-foundation for everything below, and a UI built over unproven code just moves
-the debugging later.
+Node 24.18.0 installed via winget. The nine modules moved into `src/`,
+`vault.test.ts` into `test/`, which is what `tsconfig.json`'s `rootDir` and the
+npm scripts had always named. `npm install`, typecheck clean, 14 tests green on
+the first run — the core was sound, it had just never been executed.
 
-**0.1 — Node.js is not installed.** Not on `PATH`, not in `Program Files\nodejs`,
-no nvm/fnm/Volta. `winget` is available:
+Two git repos, because `Vault.commit()` shells out with `cwd: this.root` and so
+commits into the *vault*, not the code tree. The code repo gitignores `/vault/`
+to avoid a nested repo. Both carry a `.gitattributes` pinning `eol=lf`: without
+it git checks files out as CRLF on Windows, the app rewrites them as LF, and
+every file reads as wholly modified — which would defeat the stable frontmatter
+ordering the whole design rests on.
 
-```bash
-winget install OpenJS.NodeJS.LTS
-```
+The example vault is seeded by `scripts/seed-vault.ts` (12 items, 2 projects,
+every link type, both attachment modes) and `doctor` reports it clean.
 
-Then open a new shell and confirm `node --version` reports v20 or later, which
-`package.json` requires.
+## Phase 0.5 — the two schema decisions ✅
 
-**0.2 — the files are in the wrong place.** Everything is flat in
-`Desktop/files/`, but the config expects a `src/` + `test/` split:
+**Manual ordering — `rank`, as sparse integers.** Gaps of 1000; a drag rewrites
+one file; `moveItem` respaces the project when a gap closes. I had floated
+LexoRank-style fractional strings in the first draft of this plan and changed my
+mind: those exist for trackers with millions of rows, whereas a respace here is
+a few hundred instant writes, and integers stay hand-editable in the markdown.
 
-| Says | Expects |
-|---|---|
-| `tsconfig.json` | `rootDir: "src"`, `include: ["src/**/*.ts"]` |
-| `package.json` | `tsx src/cli.ts`, `tsx test/vault.test.ts`, `dist/index.js` |
-| `vault.test.ts` | `import { Vault } from "../src/vault.js"` |
+Work order and rank order are kept as **separate sorts** rather than one blended
+comparator — `listItems({ sort: "work" | "rank" })`. A backlog wants "what is
+most urgent"; a board column wants "the order I dragged them into". Blending them
+gives neither.
 
-As it stands `tsc` compiles zero files and every npm script fails. Move the nine
-modules (`schema` `markdown` `util` `vault` `jira` `cli` `mcp-server` `index`)
-into `src/`, `vault.test.ts` into `test/`, and leave `README.md`, `SCHEMA.md`,
-`package.json`, `tsconfig.json`, and `jira-map.example.yaml` at the root.
+**Deletion — `.trash/`, not a hard delete and not an `archived` flag.** This
+reversed the recommendation in the first draft, after checking what git actually
+guarantees. `git add -A` does stage deletions, so a hard delete *would* be
+recoverable — but only if `git: true` is passed, the vault is really a repo, and
+git is on PATH, and `commit()` swallows every failure silently. Recovery that
+depends on three unverified conditions is not recovery.
 
-**0.3 — install and prove it.**
+A trash directory beats both alternatives: unlike a hard delete it does not need
+git configured correctly, and unlike an `archived` flag nothing has to filter on
+it — `load()` only reads `items/` and `projects/`, so trashed items leave the
+index for free. It composes with git rather than competing, since the move is
+committed too.
 
-```bash
-npm install && npm run typecheck && npx tsx --test test/vault.test.ts
-```
+Delete refuses to orphan children without `cascade`, and reports the links it
+leaves dangling instead of silently editing other items.
 
-Fourteen green tests is the gate for starting Phase 1. Nothing else.
+**`gitStatus()`** closes the silent-failure hole so the UI can show whether
+history is really accruing. `commit()` stays non-fatal but now records why it
+failed. Worth noting what shook out of testing this: checking
+`--is-inside-work-tree` is *not* enough, because a vault sitting gitignored
+inside another repo answers yes while committing nothing. It now reports the repo
+root and whether that repo ignores the vault.
 
-**0.4 — `git init` the vault, not just the repo.** `Vault.commit()` shells out to
-git with `cwd: this.root` — the *vault* directory, not the code. Without a repo
-there, `--git` does nothing, and because `commit()` swallows every error you'd
-believe you had undo history when you had none. Two separate repos: one for the
-code, one for the vault.
+Also fixed, both found by running the code rather than reading it:
 
-**0.5 — build the example vault.** The README advertises a worked example at
-`./vault` with two projects, an epic, recurring items, and every link type. It
-doesn't exist. Generate it with the CLI — it doubles as the fixture the UI is
-developed against, so day one of Phase 1 has something real on screen.
-
-## Phase 0.5 — two schema decisions, before the UI
-
-Both are schema changes. Deciding them after the board is built means reworking
-the board.
-
-**Manual ordering.** `sortByWorkOrder` is entirely derived — done, then due date,
-then priority, then key. There is no rank field. Dragging a card *between*
-columns is a status change and works today; dragging *within* a column to
-reorder has nowhere to persist, so cards will spring back to computed position
-the moment they land. Recommendation: add an optional `rank` string to
-`ItemFrontmatterSchema` and `FRONTMATTER_ORDER`, sorted lexicographically ahead
-of the existing tiebreakers, assigned as a sparse fractional key (LexoRank-style:
-midpoint between neighbours). A reorder then rewrites one file instead of
-renumbering the column. If manual ordering isn't worth a schema field, say so
-now and make column order explicitly read-only in the UI.
-
-**Deletion.** There is no `deleteItem`, no `deleteProject`, no `updateProject` —
-the test file reaches past the API and calls `fs.rm` directly, which is the tell
-that it was never needed until now. A UI needs it. Recommendation: add
-`Vault.deleteItem(key)` that unlinks the file and commits. Key reuse is already
-prevented by the counters file, and git holds the history, so a hard delete is
-safe and an `archived` flag is a field you'd have to filter on in every view.
+- Attachment paths were stored with Windows backslashes. Now POSIX-style, with
+  `resolveAttachment()` accepting either separator so older vaults still load.
+- `addComment` wrote unvalidated, so an empty comment produced a file that threw
+  on the next `load()`. All seven write paths now go through one `persist()` that
+  validates first.
+- `moveItem` with only one neighbour named put the card in the wrong place, and
+  could assign a rank that collided with an existing one. `{ before: X }` now
+  means *immediately* before X, deriving the other bound from the real order.
 
 ## Phase 1 — the shell, read-only
 
@@ -133,7 +127,11 @@ watch the board update without touching the app.
   explains why), and on a drag-and-drop board an unguarded rejection surfaces as
   a card snapping back with an error toast, which reads as a bug.
 - Board drag-and-drop with `@dnd-kit/core`. Cross-column → `transition`,
-  intra-column → `rank`.
+  intra-column → `moveItem(key, { after, before })` with the two neighbours the
+  drop landed between. Read columns with `sort: "rank"`.
+- Delete via the trash, with an undo affordance backed by `restoreItem`, and a
+  trash view. Deleting a parent must surface the cascade prompt rather than
+  swallowing the refusal.
 - Links, attachments, comments. For dropping files onto an item, note that
   `File.path` was removed from Electron — use `webUtils.getPathForFile`.
 
@@ -162,22 +160,26 @@ action. Also implement `vault jira discover`: both the README and a warning
 string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
 subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
-## Two bugs to fix on the way past
+## Loose ends worth knowing about
 
-**Attachment paths use backslashes on Windows.** `addAttachment` stores
-`path.relative(this.root, destPath)`, which on win32 yields
-`attachments\ACME-2\spec.pdf` and writes that into the YAML. It round-trips fine
-on this machine, breaks if the vault is ever opened on macOS or Linux, and looks
-wrong to the external readers the whole design is built around. Normalize to
-forward slashes on write and `path.normalize` on read.
+**The MCP surface is now behind the CLI.** `moveItem`, `deleteItem`,
+`restoreItem`, and `listTrash` exist on `Vault` and in the CLI but are not
+registered as MCP tools, so an external Claude can create and update but cannot
+reorder or delete. Four more `registerTool` blocks. Deliberately left for a
+decision rather than assumed: exposing delete to an agent is a choice, even with
+a trash directory behind it.
 
-**`addComment` skips validation.** Unlike `addLink` and `addAttachment`, it
-constructs the `Item` directly instead of round-tripping through
-`ItemFrontmatterSchema.parse`. `CommentSchema` requires a non-empty body, so an
-empty textarea submitted from the UI writes a file that fails to parse on the
-next `load()` — the item disappears from the app and shows up in the `errors[]`
-nothing displays yet. One-line fix, and it matters much more once a UI is calling
-it than it did from the CLI.
+**`vault jira discover` still does not exist.** Both the README and a warning
+string inside `jira.ts` tell you to run it. Phase 5.
+
+**No `updateProject` or `deleteProject`.** Projects can be created and read but
+not edited. The UI will want at least a rename.
+
+**Cadence items appear outside their date window.** In the seeded vault, OPS-2 is
+due 2026-07-29 but shows in the 20th–26th week agenda because it is `weekly` —
+correct per the code, since a section matches on date *or* cadence, but visually
+odd. The UI should separate "due this week" from "recurring this week" rather
+than interleaving them.
 
 ## The risk that stays
 

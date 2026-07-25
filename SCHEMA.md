@@ -17,9 +17,14 @@ vault/
 ├── attachments/
 │   └── ACME-2/              files copied into the vault
 │       └── target-schema.md
+├── .trash/                  deleted items, recoverable
+│   └── ACME-9-2026-07-25T13-06-03-925Z.md
 ├── jira-map.yaml            how this vault maps onto a Jira instance
 └── .counters.json           highest key issued per project
 ```
+
+`load()` reads `items/` and `projects/` and nothing else, so anything in
+`.trash/` is invisible to every query without needing a flag to exclude it.
 
 Items are flat rather than nested under their epics, because in Jira everything
 is an issue and `type` is what distinguishes them. A flat folder means
@@ -79,8 +84,9 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `startDate` / `dueDate` | `YYYY-MM-DD` | `dueDate` is standard in Jira; `startDate` is a custom field. |
 | `estimate` | number | Story points or hours — `jira-map.yaml` decides which. |
 | `cadence` | enum | `daily` `weekly` `monthly` `quarterly` `none`. **Local only.** |
+| `rank` | int | Manual sort position within the project. **Local only.** See below. |
 | `links` | Link[] | See below. |
-| `attachments` | Attachment[] | Paths relative to the vault root. |
+| `attachments` | Attachment[] | Paths relative to the vault root, always with forward slashes. |
 | `comments` | Comment[] | Append-only running log. |
 | `sync` | Sync | Jira relationship. See below. |
 | `created` / `updated` | ISO 8601 | UTC with offset. |
@@ -106,6 +112,52 @@ Attaching with `copy: true` brings the file into `attachments/<key>/` so it is
 versioned with the item; `copy: false` records a `file` link instead. Copy small
 documents you want kept alongside the task. Point at anything large or anything
 living on a network share.
+
+Attachment paths are stored POSIX-style — `attachments/ACME-2/spec.pdf` — even
+when written on Windows, so a vault stays readable wherever it is opened. Use
+`Vault.resolveAttachment()` to turn one back into a native absolute path; it
+accepts either separator, so vaults written by older builds still resolve.
+
+### Ordering
+
+There are two orders, and they answer different questions.
+
+**Work order** is derived — unfinished first, then due date, then priority, then
+key. It answers "what should I look at next", so it is right for a backlog and is
+the default for `listItems`.
+
+**Rank order** is manual: whatever you dragged. `rank` is a sparse integer, gaps
+of ~1000, so moving one card rewrites one file. Items without a rank sort after
+ranked ones in work order, which puts a newly created item at the end of its
+column rather than in the middle. Pass `sort: "rank"` to get it.
+
+Ranks are per project. Set them with `Vault.moveItem(key, { after, before })`
+rather than by patching `rank` directly — it derives whichever neighbour you
+leave out, so `{ before: "ACME-7" }` means *immediately* before ACME-7, and it
+respaces the project when a gap closes. Sparse integers rather than fractional
+string keys: a respace is a few hundred instant writes, and the numbers stay
+hand-editable.
+
+## Deletion
+
+`deleteItem` moves the file to `.trash/<key>-<timestamp>.md`, taking any
+`attachments/<key>/` folder with it. It does not unlink anything.
+
+This is deliberately independent of git. `commit()` is non-fatal by design, so a
+vault that was never `git init`ed accepts every write and keeps no history at
+all — recovery that depends on it would be recovery that quietly is not there.
+A trashed file is on disk either way, and `restoreItem` puts it back. Use
+`gitStatus()` to check whether history is actually accruing; it reports the repo
+the vault commits into and whether that repo ignores the vault, because being
+*inside* a repo is not the same as being tracked by it.
+
+Deleting refuses to orphan children unless `cascade` is passed — a dangling
+parent is invisible in every view and only surfaces when `doctor` runs. Items
+that linked to the deleted one come back in `danglingBacklinks` rather than
+being edited behind your back.
+
+Keys are never recycled: `.counters.json` holds the high-water mark, so trashing
+`ACME-7` does not free the number even while `items/` no longer contains it.
 
 ### Sync
 

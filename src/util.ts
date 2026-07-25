@@ -39,6 +39,44 @@ export function endOfMonth(dateIso: string): string {
 }
 
 /**
+ * Vault-relative paths are stored POSIX-style regardless of the OS that wrote
+ * them, so a vault written on Windows still reads correctly on macOS and still
+ * looks right to the external tools this design is built around.
+ */
+export function toPosixPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/** Turn a stored vault-relative path back into a native one. */
+export function fromPosixPath(p: string): string {
+  return p.split("/").join(path.sep);
+}
+
+/**
+ * Manual ordering uses sparse integers rather than fractional string keys.
+ * A drag rewrites exactly one file, gaps only close after repeated insertions in
+ * the same spot, and when one does close `Vault.moveItem` renumbers the project
+ * — a few hundred instant writes. The string-key schemes exist for issue
+ * trackers with millions of rows; the integers stay hand-editable.
+ */
+export const RANK_GAP = 1000;
+
+/**
+ * Midpoint between two ranks, or undefined when no integer is left between them
+ * and the caller needs to renumber first.
+ *
+ * Named for rank space, not list order: the item *above* in a list has the
+ * *lower* rank. Mixing those up is the classic reordering bug.
+ */
+export function rankBetween(lower?: number, upper?: number): number | undefined {
+  if (lower === undefined && upper === undefined) return RANK_GAP;
+  if (lower === undefined) return upper! > 0 ? Math.floor(upper! / 2) : undefined;
+  if (upper === undefined) return lower + RANK_GAP;
+  if (upper - lower < 2) return undefined;
+  return lower + Math.floor((upper - lower) / 2);
+}
+
+/**
  * Stable content hash used to spot local edits made after a Jira push.
  * Only fields that would be pushed are included — changing a local-only field
  * like `cadence` should not mark an item as drifted.

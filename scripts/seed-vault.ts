@@ -38,7 +38,12 @@ async function main(): Promise<void> {
         `A vault already exists at ${root}. Pass --force to delete and rebuild it.`,
       );
     }
-    await fs.rm(root, { recursive: true, force: true });
+    // Clear the contents, never the directory itself — removing the whole thing
+    // takes the vault's .git and .gitattributes with it, which silently turns
+    // off version history for every write that follows.
+    for (const entry of ["items", "projects", "attachments", ".trash", ".counters.json"]) {
+      await fs.rm(path.join(root, entry), { recursive: true, force: true });
+    }
   }
 
   const vault = await Vault.init(root);

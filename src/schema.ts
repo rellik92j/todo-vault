@@ -130,6 +130,14 @@ export const ItemFrontmatterSchema = z
       .optional()
       .describe("Story points or hours, whatever your jira-map says it maps to"),
     cadence: z.enum(CADENCES).default("none").describe("Local only — drives the agenda views"),
+    rank: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Manual sort position within the project. Sparse by design — gaps of ~1000 — so a drag rewrites one file. Local only.",
+      ),
     links: z.array(LinkSchema).default([]),
     attachments: z.array(AttachmentSchema).default([]),
     comments: z.array(CommentSchema).default([]),
@@ -245,6 +253,8 @@ export const UpdateItemInput = z
     dueDate: isoDate.nullable().optional(),
     estimate: z.number().nonnegative().nullable().optional(),
     cadence: z.enum(CADENCES).optional(),
+    /** Normally set via Vault.moveItem, which keeps the gaps sane. Null clears it. */
+    rank: z.number().int().nonnegative().nullable().optional(),
   })
   .strict();
 
@@ -265,6 +275,12 @@ export const ItemFilter = z
     dueAfter: isoDate.optional(),
     open: z.boolean().optional().describe("true = exclude done items"),
     text: z.string().optional().describe("Case-insensitive match on summary and description"),
+    sort: z
+      .enum(["work", "rank"])
+      .default("work")
+      .describe(
+        "'work' orders by urgency (overdue, due date, priority) — right for a backlog. 'rank' honours the manual order set by dragging — right for a board column.",
+      ),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
   })
@@ -294,6 +310,7 @@ export const FRONTMATTER_ORDER: readonly string[] = [
   "dueDate",
   "estimate",
   "cadence",
+  "rank",
   "links",
   "attachments",
   "comments",

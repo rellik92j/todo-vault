@@ -7,12 +7,22 @@ import test from "node:test";
 import { Vault } from "../src/vault.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
+import { RANK_GAP, rankBetween } from "../src/util.js";
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-test-"));
   const vault = await Vault.init(dir);
   await vault.createProject({ key: "ACME", name: "Acme rollout" });
   return vault;
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 test("assigns sequential keys and never reuses them", async () => {
@@ -271,4 +281,281 @@ test("doctor-style load reports invalid files instead of throwing", async () => 
   const { errors } = await vault.load();
   assert.equal(errors.length, 1);
   assert.match(errors[0], /ACME-77/);
+});
+
+// ------------------------------------------------------------ manual ordering
+
+test("rankBetween finds midpoints and reports when a gap has closed", () => {
+  assert.equal(rankBetween(undefined, undefined), RANK_GAP);
+  assert.equal(rankBetween(1000, 2000), 1500);
+  assert.equal(rankBetween(1000, undefined), 2000);
+  assert.equal(rankBetween(undefined, 1000), 500);
+  assert.equal(rankBetween(1000, 1001), undefined, "adjacent integers leave no room");
+  assert.equal(rankBetween(undefined, 0), undefined, "nothing sorts below zero");
+});
+
+test("moveItem reorders by hand and survives a closed gap", async () => {
+  const vault = await tmpVault();
+  const a = await vault.createItem({ project: "ACME", summary: "A" });
+  const b = await vault.createItem({ project: "ACME", summary: "B" });
+  const c = await vault.createItem({ project: "ACME", summary: "C" });
+
+  const order = () =>
+    vault.listItems({ sort: "rank" }).items.map((i) => i.summary);
+
+  // Nothing is ranked yet, so rank order falls through to work order.
+  assert.deepEqual(order(), ["A", "B", "C"]);
+
+  // Drop C between A and B. The first manual move backfills ranks across the
+  // whole project, so all three end up ranked and sort purely by rank.
+  await vault.moveItem(c.key, { after: a.key, before: b.key });
+  assert.deepEqual(order(), ["A", "C", "B"], "C lands between its two neighbours");
+
+  const ranked = vault.getItem(c.key);
+  assert.equal(typeof ranked.rank, "number");
+
+  // Force the gap shut, then drop into it — moveItem must respace and succeed.
+  await vault.updateItem(a.key, { rank: 1000 });
+  await vault.updateItem(b.key, { rank: 1001 });
+  const moved = await vault.moveItem(c.key, { after: a.key, before: b.key });
+
+  assert.equal(typeof moved.rank, "number");
+  const aRank = vault.getItem(a.key).rank as number;
+  const bRank = vault.getItem(b.key).rank as number;
+  assert.ok(
+    aRank < (moved.rank as number) && (moved.rank as number) < bRank,
+    `expected ${aRank} < ${moved.rank} < ${bRank} after respacing`,
+  );
+  assert.deepEqual(order(), ["A", "C", "B"]);
+});
+
+test("moveItem lands exactly where one-sided positions say", async () => {
+  const vault = await tmpVault();
+  const items = [];
+  for (const summary of ["A", "B", "C", "D"]) {
+    items.push(await vault.createItem({ project: "ACME", summary }));
+  }
+  const order = () => vault.listItems({ sort: "rank" }).items.map((i) => i.summary);
+  assert.deepEqual(order(), ["A", "B", "C", "D"]);
+
+  // Only `before` given. This must mean *immediately* before D — an open lower
+  // bound would halve D's rank and collide with whatever already sits there.
+  await vault.moveItem(items[0].key, { before: items[3].key });
+  assert.deepEqual(order(), ["B", "C", "A", "D"]);
+
+  // Only `after` given.
+  await vault.moveItem(items[3].key, { after: items[1].key });
+  assert.deepEqual(order(), ["B", "D", "C", "A"]);
+
+  // Neither given: to the end.
+  await vault.moveItem(items[1].key, {});
+  assert.deepEqual(order(), ["D", "C", "A", "B"]);
+
+  // No two items may share a rank, or the order is decided by key as a tiebreak
+  // rather than by the drag.
+  const ranks = vault.listItems({ sort: "rank" }).items.map((i) => i.rank);
+  assert.equal(new Set(ranks).size, ranks.length, `ranks must be distinct: ${ranks.join(", ")}`);
+});
+
+test("moveItem refuses nonsense positions", async () => {
+  const vault = await tmpVault();
+  const a = await vault.createItem({ project: "ACME", summary: "A" });
+  await vault.createProject({ key: "OPS", name: "Ops" });
+  const other = await vault.createItem({ project: "OPS", summary: "Elsewhere" });
+
+  await assert.rejects(() => vault.moveItem(a.key, { after: a.key }), /relative to itself/);
+  await assert.rejects(() => vault.moveItem(a.key, { after: other.key }), /per project/);
+});
+
+test("work order and rank order stay separate sorts", async () => {
+  const vault = await tmpVault();
+  const urgent = await vault.createItem({
+    project: "ACME",
+    summary: "Urgent",
+    dueDate: "2026-01-01",
+  });
+  const whenever = await vault.createItem({ project: "ACME", summary: "Whenever" });
+
+  // Put the non-urgent one first by hand.
+  await vault.moveItem(whenever.key, { before: urgent.key });
+
+  assert.deepEqual(
+    vault.listItems({ sort: "work" }).items.map((i) => i.summary),
+    ["Urgent", "Whenever"],
+    "work order ignores rank and leads with the due date",
+  );
+  assert.deepEqual(
+    vault.listItems({ sort: "rank" }).items.map((i) => i.summary),
+    ["Whenever", "Urgent"],
+    "rank order honours the drag",
+  );
+});
+
+// -------------------------------------------------------------------- trash
+
+test("deleteItem trashes rather than destroys, and restores", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({
+    project: "ACME",
+    summary: "Deleted but recoverable",
+    description: "Body text that must survive the round trip.",
+  });
+
+  const src = path.join(vault.root, "..", `trash-fixture-${Date.now()}.txt`);
+  await fs.writeFile(src, "attached", "utf8");
+  await vault.addAttachment(item.key, src, { copy: true });
+  await fs.rm(src, { force: true });
+
+  const [result] = await vault.deleteItem(item.key);
+  assert.equal(result.key, item.key);
+  assert.match(result.trashedTo, /^\.trash\//);
+  assert.ok(result.attachmentsTrashedTo, "the attachment folder goes with it");
+  assert.equal(vault.hasItem(item.key), false, "gone from the index immediately");
+
+  // Gone from disk in items/, present in .trash/ — recovery needs no git.
+  assert.equal(await exists(vault.itemPath(item.key)), false);
+  assert.equal(await exists(path.join(vault.root, result.trashedTo)), true);
+
+  // A reload must not resurrect it: load() only reads items/ and projects/.
+  await vault.load();
+  assert.equal(vault.hasItem(item.key), false);
+
+  const trash = await vault.listTrash();
+  assert.equal(trash.length, 1);
+  assert.equal(trash[0].key, item.key);
+  assert.equal(trash[0].summary, "Deleted but recoverable");
+  assert.equal(trash[0].hasAttachments, true);
+
+  const restored = await vault.restoreItem(trash[0].file);
+  assert.equal(restored.key, item.key);
+  assert.equal(restored.description, "Body text that must survive the round trip.");
+  assert.equal(vault.hasItem(item.key), true);
+  assert.equal(await exists(vault.attachmentDir(item.key)), true, "attachments come back too");
+  assert.deepEqual(await vault.listTrash(), []);
+});
+
+test("deleteItem will not silently orphan children", async () => {
+  const vault = await tmpVault();
+  const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });
+  const story = await vault.createItem({
+    project: "ACME",
+    type: "story",
+    summary: "Story",
+    parent: epic.key,
+  });
+  const sub = await vault.createItem({
+    project: "ACME",
+    type: "subtask",
+    summary: "Subtask",
+    parent: story.key,
+  });
+
+  await assert.rejects(() => vault.deleteItem(epic.key), /beneath it/);
+  assert.equal(vault.hasItem(epic.key), true, "the refusal must not have deleted anything");
+
+  const results = await vault.deleteItem(epic.key, { cascade: true });
+  assert.deepEqual(
+    results.map((r) => r.key).sort(),
+    [epic.key, story.key, sub.key].sort(),
+    "cascade takes the whole subtree",
+  );
+  assert.equal(vault.listItems().total, 0);
+});
+
+test("deleteItem reports the links it leaves dangling", async () => {
+  const vault = await tmpVault();
+  const target = await vault.createItem({ project: "ACME", summary: "Linked to" });
+  const source = await vault.createItem({ project: "ACME", summary: "Links out" });
+  await vault.addLink(source.key, { type: "item", target: target.key });
+
+  const [result] = await vault.deleteItem(target.key);
+  assert.deepEqual(result.danglingBacklinks, [source.key]);
+});
+
+test("restoreItem refuses a path, an occupied key, and a missing parent", async () => {
+  const vault = await tmpVault();
+  const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });
+  const story = await vault.createItem({
+    project: "ACME",
+    type: "story",
+    summary: "Story",
+    parent: epic.key,
+  });
+
+  await assert.rejects(() => vault.restoreItem("../../etc/passwd"), /got a path/);
+  await assert.rejects(() => vault.restoreItem("nope.md"), /Nothing called/);
+
+  // Trash the story, then the epic. Restoring the story first must fail.
+  const [storyTrash] = await vault.deleteItem(story.key);
+  await vault.deleteItem(epic.key);
+  await assert.rejects(
+    () => vault.restoreItem(path.basename(storyTrash.trashedTo)),
+    /not in the vault/,
+  );
+
+  // Recreating the key by hand blocks a restore rather than overwriting it.
+  const recreated = await vault.createItem({ project: "ACME", summary: "Squatter" });
+  const squatted = path.basename(storyTrash.trashedTo).replace(story.key, recreated.key);
+  await fs.rename(
+    path.join(vault.root, storyTrash.trashedTo),
+    path.join(vault.trashDir, squatted),
+  );
+  // The file still says it is ACME-2, so the collision is on the real key.
+  await assert.rejects(() => vault.restoreItem(squatted), /exists again|not in the vault/);
+});
+
+// ------------------------------------------------------- portability and git
+
+test("attachment paths are stored POSIX-style on every platform", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Portable paths" });
+
+  const src = path.join(vault.root, "..", `posix-fixture-${Date.now()}.txt`);
+  await fs.writeFile(src, "x", "utf8");
+  const updated = await vault.addAttachment(item.key, src, { copy: true });
+  await fs.rm(src, { force: true });
+
+  const stored = updated.attachments[0].path;
+  assert.ok(!stored.includes("\\"), `stored path must not contain backslashes: ${stored}`);
+  assert.match(stored, /^attachments\/ACME-1\//);
+
+  // And it still resolves to something real on this platform.
+  assert.equal(await exists(vault.resolveAttachment(stored)), true);
+
+  const raw = await fs.readFile(vault.itemPath(item.key), "utf8");
+  assert.ok(!raw.includes("attachments\\"), "the file on disk must be portable too");
+});
+
+test("addComment validates instead of writing a file that will not load", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Comments" });
+
+  await assert.rejects(() => vault.addComment(item.key, "   "), /needs a body/);
+
+  // The rejection must not have left a broken file behind.
+  const { errors } = await vault.load();
+  assert.deepEqual(errors, []);
+
+  const commented = await vault.addComment(item.key, "  trimmed  ");
+  assert.equal(commented.comments[0].body, "trimmed");
+});
+
+test("gitStatus tells the truth about whether history is being kept", async () => {
+  const withoutGit = await tmpVault();
+  const off = await withoutGit.gitStatus();
+  assert.equal(off.enabled, false);
+  assert.equal(off.healthy, false, "auto-commit was never asked for");
+
+  // Asking for git in a directory that is not a repo is the dangerous case:
+  // every write succeeds and no history is kept.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-nogit-"));
+  const notARepo = await Vault.init(dir, { git: true });
+  await notARepo.createProject({ key: "ACME", name: "Acme" });
+  await notARepo.createItem({ project: "ACME", summary: "Unversioned" });
+
+  const status = await notARepo.gitStatus();
+  assert.equal(status.enabled, true);
+  assert.equal(status.isRepo, false);
+  assert.equal(status.healthy, false, "must not claim health outside a repo");
+  assert.ok(status.lastError, "and must say why, rather than staying quiet");
 });

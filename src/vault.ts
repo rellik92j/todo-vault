@@ -24,12 +24,16 @@ import {
   contentHash,
   endOfMonth,
   formatZodError,
+  fromPosixPath,
   nowIso,
   pathExists,
   randomUUID,
+  RANK_GAP,
+  rankBetween,
   startOfMonth,
   startOfWeek,
   todayIso,
+  toPosixPath,
   writeFileAtomic,
 } from "./util.js";
 
@@ -58,12 +62,51 @@ export interface AgendaSection {
   items: Item[];
 }
 
+export interface DeleteResult {
+  key: string;
+  /** Where the markdown went, relative to the vault root. */
+  trashedTo: string;
+  /** Where the attachment folder went, if the item had one. */
+  attachmentsTrashedTo?: string;
+  /** Items that linked to this one and now have a dangling link. */
+  danglingBacklinks: string[];
+}
+
+export interface TrashEntry {
+  /** Filename inside .trash — pass this to restoreItem. */
+  file: string;
+  key: string;
+  trashedAt: string;
+  summary?: string;
+  hasAttachments: boolean;
+}
+
+export interface GitStatus {
+  /** Whether auto-commit was requested when the vault was opened. */
+  enabled: boolean;
+  gitAvailable: boolean;
+  isRepo: boolean;
+  /**
+   * Root of the repo the vault sits in, which is not necessarily the vault
+   * itself — a vault kept inside a larger notes repo commits into that one.
+   */
+  repoRoot?: string;
+  /** True when that repo ignores the vault, so writes are committed nowhere. */
+  ignored: boolean;
+  lastCommit?: { hash: string; subject: string; at: string };
+  /** Why the most recent auto-commit did not happen, if it didn't. */
+  lastError?: string;
+  /** True only if a write right now would actually be committed. */
+  healthy: boolean;
+}
+
 export class Vault {
   readonly root: string;
   private readonly options: VaultOptions;
   private items = new Map<string, Item>();
   private projects = new Map<string, Project>();
   private loaded = false;
+  private lastCommitError?: string;
 
   constructor(root: string, options: VaultOptions = {}) {
     this.root = path.resolve(root);
@@ -98,6 +141,18 @@ export class Vault {
 
   attachmentDir(key: string): string {
     return path.join(this.attachmentsDir, key);
+  }
+
+  get trashDir(): string {
+    return path.join(this.root, ".trash");
+  }
+
+  /**
+   * Absolute path for a stored attachment. Accepts either separator, so
+   * attachments written by an older build — or on another OS — still resolve.
+   */
+  resolveAttachment(storedPath: string): string {
+    return path.resolve(this.root, fromPosixPath(toPosixPath(storedPath)));
   }
 
   // --------------------------------------------------------------- loading
@@ -243,7 +298,7 @@ export class Vault {
       return true;
     });
 
-    matched.sort(sortByWorkOrder);
+    matched.sort(filter.sort === "rank" ? compareByRank : sortByWorkOrder);
     return {
       total: matched.length,
       items: matched.slice(filter.offset, filter.offset + filter.limit),
@@ -302,6 +357,28 @@ export class Vault {
   }
 
   // --------------------------------------------------------------- writing
+
+  /**
+   * Validate, write, index, commit. Every item mutation goes through here.
+   *
+   * The validation is the point: writing an item that does not satisfy the
+   * schema produces a file that throws on the next `load()`, so the item
+   * silently disappears from every view and turns up in `load().errors`
+   * instead. Cheaper to reject it here, where there is a caller to tell.
+   */
+  private async writeAndIndex(next: Item): Promise<Item> {
+    const frontmatter = ItemFrontmatterSchema.parse(stripDescription(next));
+    const item: Item = { ...frontmatter, description: next.description };
+    await this.writeItem(item);
+    this.items.set(item.key, item);
+    return item;
+  }
+
+  private async persist(next: Item, message: string): Promise<Item> {
+    const item = await this.writeAndIndex(next);
+    await this.commit(message);
+    return item;
+  }
 
   async createProject(input: {
     key: string;
@@ -378,11 +455,10 @@ export class Vault {
       updated: now,
     });
 
-    const item: Item = { ...frontmatter, description: input.description ?? "" };
-    await this.writeItem(item);
-    this.items.set(key, item);
-    await this.commit(`Add ${key}: ${item.summary}`);
-    return item;
+    return this.persist(
+      { ...frontmatter, description: input.description ?? "" },
+      `Add ${key}: ${frontmatter.summary}`,
+    );
   }
 
   async updateItem(key: string, rawPatch: unknown): Promise<Item> {
@@ -415,10 +491,7 @@ export class Vault {
       }
     }
 
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Update ${key}`);
-    return next;
+    return this.persist(next, `Update ${key}`);
   }
 
   async transition(key: string, status: Status): Promise<Item> {
@@ -427,15 +500,17 @@ export class Vault {
 
   async addComment(key: string, body: string, author = "me"): Promise<Item> {
     const existing = this.getItem(key);
-    const next: Item = {
-      ...existing,
-      comments: [...existing.comments, { author, at: nowIso(), body }],
-      updated: nowIso(),
-    };
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Comment on ${key}`);
-    return next;
+    if (!body.trim()) {
+      throw new VaultError("A comment needs a body");
+    }
+    return this.persist(
+      {
+        ...existing,
+        comments: [...existing.comments, { author, at: nowIso(), body: body.trim() }],
+        updated: nowIso(),
+      },
+      `Comment on ${key}`,
+    );
   }
 
   async addLink(
@@ -451,18 +526,14 @@ export class Vault {
     );
     if (duplicate) return existing;
 
-    const frontmatter = ItemFrontmatterSchema.parse(
-      stripDescription({
+    return this.persist(
+      {
         ...existing,
-        links: [...existing.links, { ...link, addedAt: nowIso() }],
+        links: [...existing.links, { ...link, addedAt: nowIso() }] as Item["links"],
         updated: nowIso(),
-      }),
+      },
+      `Link ${key} -> ${link.target}`,
     );
-    const next: Item = { ...frontmatter, description: existing.description };
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Link ${key} -> ${link.target}`);
-    return next;
   }
 
   async removeLink(key: string, target: string): Promise<Item> {
@@ -471,11 +542,7 @@ export class Vault {
     if (links.length === existing.links.length) {
       throw new VaultError(`${key} has no link to ${target}`);
     }
-    const next: Item = { ...existing, links, updated: nowIso() };
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Unlink ${key} -> ${target}`);
-    return next;
+    return this.persist({ ...existing, links, updated: nowIso() }, `Unlink ${key} -> ${target}`);
   }
 
   /**
@@ -514,10 +581,11 @@ export class Vault {
     await fs.mkdir(destDir, { recursive: true });
     const destPath = path.join(destDir, path.basename(absSource));
     await fs.copyFile(absSource, destPath);
-    const relative = path.relative(this.root, destPath);
+    // Stored POSIX-style so the vault survives being opened on another OS.
+    const relative = toPosixPath(path.relative(this.root, destPath));
 
-    const frontmatter = ItemFrontmatterSchema.parse(
-      stripDescription({
+    return this.persist(
+      {
         ...existing,
         attachments: [
           ...existing.attachments.filter((a) => a.path !== relative),
@@ -529,33 +597,364 @@ export class Vault {
           },
         ],
         updated: nowIso(),
-      }),
+      },
+      `Attach ${path.basename(absSource)} to ${key}`,
     );
-    const next: Item = { ...frontmatter, description: existing.description };
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Attach ${path.basename(absSource)} to ${key}`);
-    return next;
   }
 
   /** Records the outcome of a Jira push so drift detection has a baseline. */
   async markPushed(key: string, jiraKey: string, jiraId?: string): Promise<Item> {
     const existing = this.getItem(key);
-    const next: Item = {
-      ...existing,
-      sync: {
-        jiraKey,
-        jiraId,
-        lastPushedAt: nowIso(),
-        contentHash: contentHash(pushableFields(existing)),
-        state: "pushed",
+    return this.persist(
+      {
+        ...existing,
+        sync: {
+          jiraKey,
+          jiraId,
+          lastPushedAt: nowIso(),
+          contentHash: contentHash(pushableFields(existing)),
+          state: "pushed",
+        },
+        updated: nowIso(),
       },
-      updated: nowIso(),
+      `Mark ${key} pushed as ${jiraKey}`,
+    );
+  }
+
+  // ------------------------------------------------------- manual ordering
+
+  /**
+   * Place an item manually: after one neighbour, before another, or between two
+   * when a card is dropped in the middle of a column. Pass neither to send it to
+   * the end of its project.
+   *
+   * `after` and `before` are list positions — the item after another has the
+   * higher rank.
+   */
+  async moveItem(
+    key: string,
+    position: { after?: string; before?: string } = {},
+  ): Promise<Item> {
+    const item = this.getItem(key);
+    if (position.after === key || position.before === key) {
+      throw new VaultError(`Cannot position ${key} relative to itself`);
+    }
+
+    for (const k of [position.after, position.before]) {
+      const neighbour = k ? this.getItem(k) : undefined;
+      if (neighbour && neighbour.project !== item.project) {
+        throw new VaultError(
+          `${neighbour.key} is in ${neighbour.project}, not ${item.project} — ranks are per project`,
+        );
+      }
+    }
+
+    // Any unranked item in the project means it has never been ordered by hand.
+    // Rank the lot first, so every position has real numbers on both sides.
+    if ([...this.items.values()].some((i) => i.project === item.project && i.rank === undefined)) {
+      await this.renumber(item.project);
+    }
+
+    /**
+     * Resolve the pair of ranks the new one has to land between.
+     *
+     * The caller may name only one side. "before X" means *immediately* before
+     * X, so the other bound is X's current predecessor — not an open end. An
+     * open end would return X's rank halved, which collides with whatever
+     * already sits there.
+     */
+    const bounds = (): { lower?: number; upper?: number } => {
+      const column = [...this.items.values()]
+        .filter((i) => i.project === item.project && i.key !== key)
+        .sort(compareByRank);
+
+      let above = position.after ? column.find((i) => i.key === position.after) : undefined;
+      let below = position.before ? column.find((i) => i.key === position.before) : undefined;
+
+      if (below && !above) {
+        const at = column.indexOf(below);
+        above = at > 0 ? column[at - 1] : undefined;
+      } else if (above && !below) {
+        const at = column.indexOf(above);
+        below = at >= 0 && at + 1 < column.length ? column[at + 1] : undefined;
+      } else if (!above && !below) {
+        above = column[column.length - 1]; // no position given: send it to the end
+      }
+
+      return { lower: above?.rank, upper: below?.rank };
     };
-    await this.writeItem(next);
-    this.items.set(key, next);
-    await this.commit(`Mark ${key} pushed as ${jiraKey}`);
-    return next;
+
+    let { lower, upper } = bounds();
+    let rank = rankBetween(lower, upper);
+
+    if (rank === undefined) {
+      // The gap closed. Respace and try once more, which always succeeds
+      // because every gap is RANK_GAP wide again.
+      await this.renumber(item.project);
+      ({ lower, upper } = bounds());
+      rank = rankBetween(lower, upper);
+      if (rank === undefined) {
+        throw new VaultError(
+          `Could not find a rank between ${lower ?? "start"} and ${upper ?? "end"} even after renumbering`,
+        );
+      }
+    }
+
+    return this.persist({ ...this.getItem(key), rank, updated: nowIso() }, `Reorder ${key}`);
+  }
+
+  /**
+   * Respace every rank in a project to multiples of RANK_GAP, preserving the
+   * current order. One commit for the lot rather than one per item.
+   */
+  private async renumber(projectKey: string): Promise<void> {
+    const ordered = [...this.items.values()]
+      .filter((i) => i.project === projectKey)
+      .sort(compareByRank);
+
+    let rank = RANK_GAP;
+    let changed = 0;
+    for (const item of ordered) {
+      if (item.rank !== rank) {
+        await this.writeAndIndex({ ...item, rank, updated: nowIso() });
+        changed += 1;
+      }
+      rank += RANK_GAP;
+    }
+    if (changed) await this.commit(`Respace ranks in ${projectKey}`);
+  }
+
+  // ----------------------------------------------------------------- trash
+
+  /**
+   * Move an item to `.trash/` instead of unlinking it.
+   *
+   * Recovery deliberately does not depend on git: the file is still on disk and
+   * `restoreItem` puts it back, so undo works even when auto-commit is off or
+   * the vault was never `git init`ed. Refuses to orphan children unless
+   * `cascade` is set — a dangling parent is invisible in every view and only
+   * surfaces when `doctor` runs.
+   */
+  async deleteItem(key: string, opts: { cascade?: boolean } = {}): Promise<DeleteResult[]> {
+    const item = this.getItem(key);
+    const below = this.descendants(key);
+
+    if (below.length && !opts.cascade) {
+      throw new VaultError(
+        `${key} has ${below.length} item(s) beneath it: ${below.map((i) => i.key).join(", ")}. ` +
+          `Re-parent them, delete them first, or pass cascade to trash the lot together.`,
+      );
+    }
+
+    // Deepest first, so a partial failure never leaves a parent pointing at
+    // something already gone.
+    const doomed = [...below.reverse(), item];
+    const results: DeleteResult[] = [];
+    for (const target of doomed) {
+      results.push(await this.trashOne(target));
+    }
+
+    await this.commit(
+      doomed.length > 1 ? `Trash ${key} and ${doomed.length - 1} descendant(s)` : `Trash ${key}`,
+    );
+    return results;
+  }
+
+  /** Everything beneath an item, breadth-first. */
+  descendants(key: string): Item[] {
+    this.assertLoaded();
+    const out: Item[] = [];
+    const queue = [key];
+    while (queue.length) {
+      const current = queue.shift() as string;
+      for (const child of this.children(current)) {
+        out.push(child);
+        queue.push(child.key);
+      }
+    }
+    return out;
+  }
+
+  private async trashOne(item: Item): Promise<DeleteResult> {
+    await fs.mkdir(this.trashDir, { recursive: true });
+    // Colons are illegal in Windows filenames, so the ISO stamp gets flattened.
+    const stamp = nowIso().replace(/[:.]/g, "-");
+    const danglingBacklinks = this.backlinks(item.key).map((i) => i.key);
+
+    const trashName = `${item.key}-${stamp}.md`;
+    await fs.rename(this.itemPath(item.key), path.join(this.trashDir, trashName));
+
+    let attachmentsTrashedTo: string | undefined;
+    const attachDir = this.attachmentDir(item.key);
+    if (await pathExists(attachDir)) {
+      const dirName = `${item.key}-${stamp}-attachments`;
+      await fs.rename(attachDir, path.join(this.trashDir, dirName));
+      attachmentsTrashedTo = `.trash/${dirName}`;
+    }
+
+    this.items.delete(item.key);
+
+    return {
+      key: item.key,
+      trashedTo: `.trash/${trashName}`,
+      attachmentsTrashedTo,
+      danglingBacklinks,
+    };
+  }
+
+  async listTrash(): Promise<TrashEntry[]> {
+    let entries: string[] = [];
+    try {
+      entries = await fs.readdir(this.trashDir);
+    } catch {
+      return [];
+    }
+
+    const out: TrashEntry[] = [];
+    for (const file of entries) {
+      if (!file.endsWith(".md")) continue;
+      const match = /^([A-Z][A-Z0-9]{1,9}-\d+)-(.+)\.md$/.exec(file);
+      if (!match) continue;
+
+      let summary: string | undefined;
+      try {
+        const raw = await fs.readFile(path.join(this.trashDir, file), "utf8");
+        const { data } = parseFrontmatter(raw);
+        const value = (data as { summary?: unknown }).summary;
+        if (typeof value === "string") summary = value;
+      } catch {
+        // A trashed file that no longer parses is still listed, just unlabelled.
+      }
+
+      out.push({
+        file,
+        key: match[1],
+        trashedAt: match[2],
+        summary,
+        hasAttachments: entries.includes(`${match[1]}-${match[2]}-attachments`),
+      });
+    }
+
+    return out.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt));
+  }
+
+  /** Put a trashed item back where it came from. */
+  async restoreItem(file: string): Promise<Item> {
+    // `file` may arrive from the UI over IPC, so it never gets to name a path.
+    if (file.includes("/") || file.includes("\\") || file.includes("..")) {
+      throw new VaultError(`Expected a filename from listTrash(), got a path: ${file}`);
+    }
+
+    const source = path.join(this.trashDir, file);
+    let raw: string;
+    try {
+      raw = await fs.readFile(source, "utf8");
+    } catch {
+      throw new VaultError(`Nothing called ${file} in the trash`);
+    }
+
+    const { data, body } = parseFrontmatter(raw);
+    let frontmatter;
+    try {
+      frontmatter = ItemFrontmatterSchema.parse(data);
+    } catch (err) {
+      throw new VaultError(`${file} no longer matches the schema: ${formatZodError(err)}`);
+    }
+
+    if (this.items.has(frontmatter.key)) {
+      throw new VaultError(
+        `${frontmatter.key} exists again — restoring would overwrite it. Rename the live one first.`,
+      );
+    }
+    if (frontmatter.parent && !this.items.has(frontmatter.parent)) {
+      throw new VaultError(
+        `${frontmatter.key} hangs off ${frontmatter.parent}, which is not in the vault. Restore that first.`,
+      );
+    }
+
+    await fs.rename(source, this.itemPath(frontmatter.key));
+
+    const stamp = file.slice(frontmatter.key.length + 1, -3);
+    const attachSource = path.join(this.trashDir, `${frontmatter.key}-${stamp}-attachments`);
+    if (await pathExists(attachSource)) {
+      await fs.rename(attachSource, this.attachmentDir(frontmatter.key));
+    }
+
+    const item: Item = { ...frontmatter, description: body };
+    this.items.set(item.key, item);
+    await this.commit(`Restore ${item.key} from trash`);
+    return item;
+  }
+
+  // ------------------------------------------------------------------- git
+
+  /**
+   * Whether writes are actually being committed.
+   *
+   * `commit()` is intentionally non-fatal, which means a vault that was never
+   * `git init`ed accepts every write and silently keeps no history — the one
+   * failure mode that loses work. This is what the UI shows so "I have undo" is
+   * something you can check rather than assume.
+   */
+  async gitStatus(): Promise<GitStatus> {
+    const enabled = this.options.git === true;
+    let gitAvailable = false;
+    let isRepo = false;
+    let repoRoot: string | undefined;
+    let ignored = false;
+    let lastCommit: GitStatus["lastCommit"];
+
+    try {
+      await execFileAsync("git", ["--version"]);
+      gitAvailable = true;
+    } catch {
+      return { enabled, gitAvailable: false, isRepo: false, ignored: false, healthy: false };
+    }
+
+    try {
+      const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: this.root,
+      });
+      repoRoot = path.resolve(stdout.trim());
+      isRepo = true;
+    } catch {
+      isRepo = false;
+    }
+
+    if (isRepo) {
+      // Being inside a repo is not enough. A vault the repo ignores accepts
+      // every write and keeps no history at all — which is how this method
+      // reported "healthy" for a vault sitting gitignored inside another repo.
+      try {
+        await execFileAsync("git", ["check-ignore", "-q", this.root], { cwd: this.root });
+        ignored = true; // exit 0 means the path is ignored
+      } catch {
+        ignored = false;
+      }
+
+      try {
+        const { stdout } = await execFileAsync(
+          "git",
+          ["log", "-1", "--format=%h%x00%s%x00%cI"],
+          { cwd: this.root },
+        );
+        const [hash, subject, at] = stdout.trim().split("\0");
+        if (hash) lastCommit = { hash, subject: subject ?? "", at: at ?? "" };
+      } catch {
+        // A repo with no commits yet.
+      }
+    }
+
+    return {
+      enabled,
+      gitAvailable,
+      isRepo,
+      repoRoot,
+      ignored,
+      lastCommit,
+      lastError: this.lastCommitError,
+      healthy: enabled && gitAvailable && isRepo && !ignored && !this.lastCommitError,
+    };
   }
 
   // ------------------------------------------------------------ validation
@@ -655,14 +1054,29 @@ export class Vault {
     return `${projectKey}-${next}`;
   }
 
-  /** Best-effort git commit. Never throws — version history is a bonus, not a dependency. */
+  /**
+   * Best-effort git commit. Never throws — version history is a bonus, not a
+   * dependency — but the reason for a failure is kept so `gitStatus()` can
+   * report it. Silently doing nothing is the failure that loses work.
+   */
   private async commit(message: string): Promise<void> {
     if (!this.options.git) return;
     try {
       await execFileAsync("git", ["add", "-A"], { cwd: this.root });
       await execFileAsync("git", ["commit", "-m", message, "--no-verify"], { cwd: this.root });
-    } catch {
-      // No git repo, nothing staged, or git absent. Carry on.
+      this.lastCommitError = undefined;
+    } catch (err) {
+      const text = [
+        err instanceof Error ? err.message : String(err),
+        (err as { stdout?: string }).stdout ?? "",
+        (err as { stderr?: string }).stderr ?? "",
+      ].join("\n");
+
+      // An empty commit is not a problem — it means an identical write landed
+      // twice, which happens whenever a no-op update is saved.
+      this.lastCommitError = /nothing to commit|nothing added to commit/i.test(text)
+        ? undefined
+        : text.trim().split("\n")[0];
     }
   }
 }
@@ -693,6 +1107,28 @@ function sortByWorkOrder(a: Item, b: Item): number {
   if (pri !== 0) return pri;
 
   return a.key.localeCompare(b.key, undefined, { numeric: true });
+}
+
+/**
+ * Manual order, for a board column.
+ *
+ * Ranked items come first in the order they were dragged into; unranked ones
+ * fall to the bottom in urgency order, so a freshly created item lands at the
+ * end of the column rather than somewhere arbitrary in the middle.
+ */
+export function compareByRank(a: Item, b: Item): number {
+  const aDone = DONE_STATUSES.includes(a.status) ? 1 : 0;
+  const bDone = DONE_STATUSES.includes(b.status) ? 1 : 0;
+  if (aDone !== bDone) return aDone - bDone;
+
+  if (a.rank !== undefined && b.rank !== undefined) {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.key.localeCompare(b.key, undefined, { numeric: true });
+  }
+  if (a.rank !== undefined) return -1;
+  if (b.rank !== undefined) return 1;
+
+  return sortByWorkOrder(a, b);
 }
 
 function stripDescription(obj: Record<string, unknown>): Record<string, unknown> {
