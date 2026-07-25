@@ -1,0 +1,3 @@
+# Keep LF in the working tree on Windows. The vault library writes LF, and the
+# tests assert on exact file content, so a CRLF checkout would fail them.
+* text eol=lf

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# Personal Claude Code settings. .claude/settings.json is the shared one.
+.claude/settings.local.json
+
+# The example vault is its own git repository, so that --git auto-commit has
+# somewhere to commit to. Keeping it out of this one avoids a nested repo.
+/vault/
+
+# Atomic-write temp files, if a write is ever interrupted.
+*.tmp-*
+
+# Jira push artefacts — they contain real issue content.
+plan.json
+issues.csv

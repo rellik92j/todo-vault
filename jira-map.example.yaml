@@ -1,0 +1,69 @@
+# Jira field mapping.
+#
+# Copy this to <vault>/jira-map.yaml and fill it in for YOUR instance. Almost
+# every value below differs between Jira sites, which is why this is config and
+# not code. To discover the custom field ids, hit these endpoints on your
+# instance with an API token and search the JSON for the field names:
+#
+#   GET /rest/api/3/field
+#   GET /rest/api/3/issue/createmeta?projectKeys=ENG&expand=projects.issuetypes.fields
+#
+# The vault never reads this file over the network. It is used only to build a
+# payload you review before anything is sent.
+
+# Where these items land. This is the Jira project key, not your vault key.
+jiraProjectKey: ENG
+
+# Used only to build clickable links back to created issues.
+baseUrl: https://yourcompany.atlassian.net
+
+# Local item type -> Jira issue type NAME as it appears on the create screen.
+# Team-managed and company-managed projects often differ here, and some sites
+# have renamed "Story" to something bespoke.
+issueTypes:
+  epic: Epic
+  story: Story
+  task: Task
+  bug: Bug
+  subtask: Subtask
+
+# Local priority -> Jira priority name.
+priorities:
+  highest: Highest
+  high: High
+  medium: Medium
+  low: Low
+  lowest: Lowest
+
+fields:
+  # Start date is a custom field on essentially every instance, and the id is
+  # different on each one. customfield_10015 is a common default on Jira Cloud
+  # but do not trust it — look it up. Leave this out and the push will warn you
+  # rather than silently dropping your start dates.
+  startDate: customfield_10015
+
+  # Story points, or whatever you decided `estimate` means.
+  estimate: customfield_10016
+
+  # Only needed on older company-managed projects that still use the Epic Link
+  # field instead of the modern `parent` field.
+  # epicLink: customfield_10014
+
+  # Where the local `category` field goes. Either the literal string "labels"
+  # to fold it into labels (spaces become hyphens), or a customfield id.
+  category: labels
+
+# Fields your instance marks as required on the create screen. Anything here is
+# merged into every issue. A required "Team" or "Reporter" field usually lives
+# here.
+defaults: {}
+#  customfield_10001: { id: "team-uuid-here" }
+
+# Local status -> Jira transition name. Issues are created in the project's
+# default status, so anything not starting in "To Do" needs a transition applied
+# after creation.
+statusTransitions:
+  in_progress: Start work
+  in_review: Ready for review
+  blocked: Block
+  done: Done

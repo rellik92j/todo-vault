@@ -1,0 +1,395 @@
+#!/usr/bin/env node
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
+import { Vault, VaultError } from "./vault.js";
+import { buildPushPlan, loadJiraMap, toJiraCsv } from "./jira.js";
+import { STATUSES, type Item, type Status } from "./schema.js";
+import { formatZodError, todayIso } from "./util.js";
+
+interface Args {
+  _: string[];
+  flags: Record<string, string | boolean>;
+}
+
+function parseArgs(argv: string[]): Args {
+  const _: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg.startsWith("--")) {
+      const [name, inline] = arg.slice(2).split("=", 2);
+      if (inline !== undefined) {
+        flags[name] = inline;
+      } else if (argv[i + 1] && !argv[i + 1].startsWith("--")) {
+        flags[name] = argv[i + 1];
+        i += 1;
+      } else {
+        flags[name] = true;
+      }
+    } else {
+      _.push(arg);
+    }
+  }
+  return { _, flags };
+}
+
+function str(flags: Args["flags"], name: string): string | undefined {
+  const v = flags[name];
+  return typeof v === "string" ? v : undefined;
+}
+
+const HELP = `todo-vault — a local, Jira-shaped task vault
+
+Usage: vault <command> [options]
+
+  init [dir]                        Create a new vault (default: ./vault)
+  doctor                            Validate every file and report problems
+  projects                          List projects
+  project new KEY "Name"            Create a project
+  new --project KEY --summary "..." Create an item
+  list                              List items
+  show KEY                          Show one item with children and backlinks
+  set KEY --status done             Update fields on an item
+  done KEY                          Shorthand for --status done
+  comment KEY "text"                Append a comment
+  link KEY --url|--item|--file X    Attach a link
+  attach KEY <path> [--no-copy]     Attach a file
+  agenda [today|week|month]         What needs attention
+  jira plan [--out plan.json]       Build a reviewable Jira push payload
+  jira csv  [--out issues.csv]      Export for Jira's CSV importer
+
+Global options:
+  --vault <dir>   Vault location (default: $VAULT_DIR or ./vault)
+  --git           Auto-commit every write
+  --json          Machine-readable output
+
+Item options for new/set:
+  --type epic|story|task|bug|subtask   --status ${STATUSES.join("|")}
+  --priority highest|high|medium|low|lowest
+  --parent KEY      --category TEXT    --labels a,b,c
+  --assignee NAME   --start YYYY-MM-DD --due YYYY-MM-DD
+  --cadence daily|weekly|monthly|quarterly|none
+  --estimate N      --description TEXT
+`;
+
+function itemLine(item: Item): string {
+  const mark = item.status === "done" ? "x" : item.status === "in_progress" ? ">" : " ";
+  const due = item.dueDate ? ` due:${item.dueDate}` : "";
+  const cad = item.cadence !== "none" ? ` @${item.cadence}` : "";
+  const parent = item.parent ? ` ^${item.parent}` : "";
+  return `[${mark}] ${item.key.padEnd(10)} ${item.type.padEnd(7)} ${item.summary}${due}${cad}${parent}`;
+}
+
+function fieldPatch(flags: Args["flags"]): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const map: Record<string, string> = {
+    summary: "summary",
+    description: "description",
+    type: "type",
+    status: "status",
+    priority: "priority",
+    parent: "parent",
+    category: "category",
+    assignee: "assignee",
+    reporter: "reporter",
+    start: "startDate",
+    due: "dueDate",
+    cadence: "cadence",
+  };
+  for (const [flag, field] of Object.entries(map)) {
+    const value = str(flags, flag);
+    if (value !== undefined) patch[field] = value === "none" && field !== "cadence" ? null : value;
+  }
+  const labels = str(flags, "labels");
+  if (labels !== undefined) patch.labels = labels.split(",").map((s) => s.trim()).filter(Boolean);
+  const estimate = str(flags, "estimate");
+  if (estimate !== undefined) patch.estimate = Number(estimate);
+  return patch;
+}
+
+async function main(): Promise<void> {
+  const { _, flags } = parseArgs(process.argv.slice(2));
+  const command = _[0];
+  const sub = _[1];
+
+  if (!command || command === "help" || flags.help) {
+    process.stdout.write(HELP);
+    return;
+  }
+
+  const vaultDir = str(flags, "vault") ?? process.env.VAULT_DIR ?? "./vault";
+  const asJson = flags.json === true;
+  const options = { git: flags.git === true };
+
+  if (command === "init") {
+    const target = _[1] ?? vaultDir;
+    const vault = await Vault.init(target, options);
+    process.stdout.write(`Vault ready at ${vault.root}\n`);
+    process.stdout.write(`Next: vault project new ACME "Acme rollout" --vault ${target}\n`);
+    return;
+  }
+
+  const vault = await Vault.open(vaultDir, options);
+
+  switch (command) {
+    case "doctor": {
+      const { items, projects, errors } = await vault.load();
+      process.stdout.write(`${projects} projects, ${items} items loaded from ${vault.root}\n`);
+      const dangling: string[] = [];
+      for (const item of vault.listItems({ limit: 500 }).items) {
+        if (item.parent && !vault.hasItem(item.parent)) {
+          dangling.push(`${item.key} points at missing parent ${item.parent}`);
+        }
+        for (const link of item.links) {
+          if (link.type === "item" && !vault.hasItem(link.target)) {
+            dangling.push(`${item.key} links to missing item ${link.target}`);
+          }
+          if (link.type === "file" && path.isAbsolute(link.target)) {
+            try {
+              await fs.access(link.target);
+            } catch {
+              dangling.push(`${item.key} links to a file that no longer exists: ${link.target}`);
+            }
+          }
+        }
+      }
+      const problems = [...errors, ...dangling];
+      if (!problems.length) {
+        process.stdout.write("No problems found.\n");
+      } else {
+        process.stdout.write(`\n${problems.length} problem(s):\n`);
+        for (const p of problems) process.stdout.write(`  - ${p}\n`);
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    case "projects": {
+      const projects = vault.listProjects();
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(projects, null, 2)}\n`);
+        return;
+      }
+      if (!projects.length) {
+        process.stdout.write("No projects yet. Try: vault project new ACME \"Acme rollout\"\n");
+        return;
+      }
+      for (const p of projects) {
+        const open = vault.listItems({ project: p.key, open: true, limit: 500 }).total;
+        process.stdout.write(`${p.key.padEnd(8)} ${p.name} (${open} open)\n`);
+      }
+      return;
+    }
+
+    case "project": {
+      if (sub !== "new") throw new VaultError("Usage: vault project new KEY \"Name\"");
+      const key = _[2];
+      const name = _[3];
+      if (!key || !name) throw new VaultError("Usage: vault project new KEY \"Name\"");
+      const project = await vault.createProject({
+        key,
+        name,
+        description: str(flags, "description"),
+        category: str(flags, "category"),
+        lead: str(flags, "lead"),
+        startDate: str(flags, "start"),
+        dueDate: str(flags, "due"),
+        jiraProjectKey: str(flags, "jira"),
+      });
+      process.stdout.write(`Created project ${project.key}\n`);
+      return;
+    }
+
+    case "new": {
+      const item = await vault.createItem({
+        project: str(flags, "project"),
+        type: str(flags, "type") ?? "task",
+        summary: str(flags, "summary") ?? _[1],
+        description: str(flags, "description") ?? "",
+        ...fieldPatch(flags),
+      });
+      process.stdout.write(asJson ? `${JSON.stringify(item, null, 2)}\n` : `${item.key}\n`);
+      return;
+    }
+
+    case "list": {
+      const { total, items } = vault.listItems({
+        project: str(flags, "project"),
+        type: str(flags, "type") as never,
+        status: str(flags, "status") as never,
+        cadence: str(flags, "cadence") as never,
+        category: str(flags, "category"),
+        label: str(flags, "label"),
+        parent: str(flags, "parent"),
+        text: str(flags, "text"),
+        open: flags.open === true ? true : undefined,
+        limit: Number(str(flags, "limit") ?? 100),
+      });
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify({ total, items }, null, 2)}\n`);
+        return;
+      }
+      for (const item of items) process.stdout.write(`${itemLine(item)}\n`);
+      process.stdout.write(`\n${items.length} of ${total} shown\n`);
+      return;
+    }
+
+    case "show": {
+      const item = vault.getItem(_[1]);
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(item, null, 2)}\n`);
+        return;
+      }
+      process.stdout.write(`${item.key}  ${item.summary}\n`);
+      process.stdout.write(`${"-".repeat(60)}\n`);
+      process.stdout.write(`type      ${item.type}\nstatus    ${item.status}\npriority  ${item.priority}\n`);
+      if (item.parent) process.stdout.write(`parent    ${item.parent}\n`);
+      if (item.category) process.stdout.write(`category  ${item.category}\n`);
+      if (item.startDate) process.stdout.write(`start     ${item.startDate}\n`);
+      if (item.dueDate) process.stdout.write(`due       ${item.dueDate}\n`);
+      if (item.cadence !== "none") process.stdout.write(`cadence   ${item.cadence}\n`);
+      if (item.labels.length) process.stdout.write(`labels    ${item.labels.join(", ")}\n`);
+      if (item.sync.jiraKey) process.stdout.write(`jira      ${item.sync.jiraKey} (${item.sync.state})\n`);
+      if (item.description) process.stdout.write(`\n${item.description}\n`);
+
+      for (const link of item.links) {
+        process.stdout.write(`\nlink      ${link.type}: ${link.label ?? link.target}`);
+      }
+      for (const att of item.attachments) {
+        process.stdout.write(`\nattach    ${att.path}`);
+      }
+      if (item.links.length || item.attachments.length) process.stdout.write("\n");
+
+      const kids = vault.children(item.key);
+      if (kids.length) {
+        process.stdout.write(`\nChildren:\n`);
+        for (const k of kids) process.stdout.write(`  ${itemLine(k)}\n`);
+      }
+      const back = vault.backlinks(item.key);
+      if (back.length) {
+        process.stdout.write(`\nReferenced by:\n`);
+        for (const b of back) process.stdout.write(`  ${b.key}  ${b.summary}\n`);
+      }
+      for (const c of item.comments) {
+        process.stdout.write(`\n${c.author} at ${c.at}:\n  ${c.body}\n`);
+      }
+      return;
+    }
+
+    case "set": {
+      const item = await vault.updateItem(_[1], fieldPatch(flags));
+      process.stdout.write(`${item.key} updated -> ${item.status}\n`);
+      return;
+    }
+
+    case "done": {
+      const item = await vault.transition(_[1], "done" as Status);
+      process.stdout.write(`${item.key} done\n`);
+      return;
+    }
+
+    case "comment": {
+      const item = await vault.addComment(_[1], _.slice(2).join(" "));
+      process.stdout.write(`Comment added to ${item.key}\n`);
+      return;
+    }
+
+    case "link": {
+      const key = _[1];
+      const types = ["url", "item", "file", "folder", "outlook", "note"] as const;
+      const found = types.find((t) => typeof flags[t] === "string");
+      if (!found) throw new VaultError(`Specify one of: ${types.map((t) => `--${t}`).join(", ")}`);
+      const item = await vault.addLink(key, {
+        type: found,
+        target: flags[found] as string,
+        label: str(flags, "label"),
+      });
+      process.stdout.write(`${item.key} now has ${item.links.length} link(s)\n`);
+      return;
+    }
+
+    case "attach": {
+      const item = await vault.addAttachment(_[1], _[2], {
+        copy: flags["no-copy"] !== true,
+        title: str(flags, "title"),
+      });
+      process.stdout.write(
+        `${item.key}: ${item.attachments.length} attachment(s), ${item.links.filter((l) => l.type === "file").length} file link(s)\n`,
+      );
+      return;
+    }
+
+    case "agenda": {
+      const scope = (_[1] ?? "today") as "today" | "week" | "month";
+      const sections = vault.agenda(scope);
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(sections, null, 2)}\n`);
+        return;
+      }
+      for (const section of sections) {
+        const label =
+          section.scope === "overdue"
+            ? `Overdue as of ${todayIso()}`
+            : `${section.scope} (${section.from} to ${section.to})`;
+        process.stdout.write(`\n${label}\n${"-".repeat(label.length)}\n`);
+        if (!section.items.length) process.stdout.write("  nothing\n");
+        for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);
+      }
+      process.stdout.write("\n");
+      return;
+    }
+
+    case "jira": {
+      const mapPath = str(flags, "map") ?? path.join(vault.root, "jira-map.yaml");
+      const map = await loadJiraMap(mapPath);
+      const { items } = vault.listItems({
+        project: str(flags, "project"),
+        open: flags.all === true ? undefined : true,
+        limit: 500,
+      });
+
+      if (sub === "csv") {
+        const csv = toJiraCsv(items, map);
+        const out = str(flags, "out");
+        if (out) {
+          await fs.writeFile(out, csv, "utf8");
+          process.stdout.write(`Wrote ${items.length} rows to ${out}\n`);
+        } else {
+          process.stdout.write(`${csv}\n`);
+        }
+        return;
+      }
+
+      const plan = buildPushPlan(items, map, vault);
+      const out = str(flags, "out");
+      if (out) {
+        await fs.writeFile(out, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
+      } else if (asJson) {
+        process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+        return;
+      }
+
+      process.stdout.write(
+        `Plan for Jira project ${plan.jiraProjectKey}: ${plan.drafts.length} issue(s) to create\n`,
+      );
+      for (const draft of plan.drafts) {
+        const parent = draft.parentLocalKey ? ` (after ${draft.parentLocalKey})` : "";
+        process.stdout.write(`  ${draft.localKey}  ${draft.fields.summary as string}${parent}\n`);
+      }
+      for (const s of plan.skipped) process.stdout.write(`  skip ${s.localKey}: ${s.reason}\n`);
+      for (const w of plan.warnings) process.stdout.write(`  warn ${w}\n`);
+      if (out) process.stdout.write(`\nWrote plan to ${out}. Review it before pushing.\n`);
+      return;
+    }
+
+    default:
+      throw new VaultError(`Unknown command '${command}'. Run \`vault help\` for the list.`);
+  }
+}
+
+main().catch((err) => {
+  const message = err instanceof VaultError ? err.message : formatZodError(err);
+  process.stderr.write(`Error: ${message}\n`);
+  process.exitCode = 1;
+});
