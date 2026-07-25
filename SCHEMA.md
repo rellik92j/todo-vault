@@ -17,14 +17,21 @@ vault/
 ├── attachments/
 │   └── ACME-2/              files copied into the vault
 │       └── target-schema.md
-├── .trash/                  deleted items, recoverable
-│   └── ACME-9-2026-07-25T13-06-03-925Z.md
+├── .trash/                  deleted, recoverable
+│   ├── items/
+│   │   └── ACME-9-2026-07-25T13-06-03-925Z.md
+│   └── projects/
+│       └── OLD-2026-07-25T13-06-03-925Z.md
 ├── jira-map.yaml            how this vault maps onto a Jira instance
 └── .counters.json           highest key issued per project
 ```
 
 `load()` reads `items/` and `projects/` and nothing else, so anything in
 `.trash/` is invisible to every query without needing a flag to exclude it.
+
+Items and projects are trashed into separate folders because a project trashed
+alongside items would produce `.trash/ACME-2026-07-25T…md`, which reads as item
+key "ACME-2026" to anything parsing those names.
 
 Items are flat rather than nested under their epics, because in Jira everything
 is an issue and `type` is what distinguishes them. A flat folder means
@@ -158,6 +165,50 @@ being edited behind your back.
 
 Keys are never recycled: `.counters.json` holds the high-water mark, so trashing
 `ACME-7` does not free the number even while `items/` no longer contains it.
+
+`deleteProject` refuses while the project still holds items. With `cascade` it
+trashes them alongside, but as separate entries, so a project can be restored
+without everything that was once in it.
+
+## Re-keying
+
+Two operations change item keys, and both go through the same primitive because
+both have to fix the same five things: the item's own `key` and `project`, its
+filename, its attachment folder plus the paths recorded inside it, and every
+`parent` and `item` link elsewhere in the vault — including from other projects.
+
+**`renameProject(old, new)`** re-keys the whole project, preserving numbers:
+`ACME-42` becomes `NEW-42`. The counter moves across, so numbers are not
+reissued under the new key either.
+
+**`moveItemsToProject(key, target)`** moves an item and its subtree into another
+project, issuing fresh keys there, the way Jira's Move does — a key belongs to a
+project, so `ACME-5` cannot stay `ACME-5` in `OPS`. If the moved item's parent
+stays behind, the link is dropped and reported rather than left pointing across
+projects. A subtask cannot lose its parent, so moving one requires naming a new
+parent in the target.
+
+Both preserve every `id`, which is the point of having one: identity survives
+even though the human-facing key does not. `sync.jiraKey` is left alone, because
+that key is Jira's. Nothing outside the vault gets updated — an email or a Jira
+issue that quoted the old key still quotes it, so both operations are explicit
+rather than a side effect of an edit.
+
+## The agenda
+
+`agenda(scope)` returns up to three sections, each tagged with `kind`:
+
+| `kind` | |
+|---|---|
+| `overdue` | Past its due date, not done. First when present. |
+| `due` | Has a due date inside the window. |
+| `recurring` | No due date in the window, but its cadence comes round inside it. |
+
+`due` and `recurring` are separate because recurring work has no deadline;
+merging them reads as though the recurring items were also due. Every item lands
+in exactly one section — something due last Tuesday is both inside this week's
+window and overdue, and `overdue` claims it — so the sections can be totalled
+without double-counting.
 
 ### Sync
 

@@ -87,31 +87,43 @@ Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
 note that legal signed off"*.
 
-Thirteen tools are registered:
+Twenty-two tools are registered:
 
 | Tool | |
 |---|---|
 | `vault_list_items` | Filtered list, compact projection |
 | `vault_get_item` | Full record plus children and backlinks |
-| `vault_get_agenda` | Overdue, today, week, or month |
+| `vault_get_agenda` | Overdue, due, and recurring, kept separate |
 | `vault_list_projects` | Portfolio view with open counts |
 | `vault_create_item` | Create, with hierarchy validation |
 | `vault_update_item` | Patch fields |
 | `vault_transition_item` | Move through the workflow |
+| `vault_move_item` | Reorder by hand within a project |
 | `vault_add_comment` | Append to the log |
 | `vault_link_item` | Link a URL, file, item, or Outlook message |
 | `vault_attach_file` | Copy in, or point at in place |
+| `vault_delete_item` | To `.trash/`, recoverable |
+| `vault_restore_item` | Back out of `.trash/` |
+| `vault_list_trash` | What is recoverable |
 | `vault_create_project` | New project |
+| `vault_update_project` | Patch project fields |
+| `vault_rename_project` | Change the key, re-keying every item |
+| `vault_move_item_to_project` | Move an item and its subtree across |
+| `vault_delete_project` | To `.trash/projects/`, recoverable |
+| `vault_restore_project` | Back out of `.trash/projects/` |
 | `vault_plan_jira_push` | Build a reviewable payload. Sends nothing. |
 | `vault_mark_pushed` | Record a completed push |
+
+The destructive ones are marked `destructiveHint` and refuse rather than guess:
+deleting something with children, or a project with items, returns an error
+listing what is in the way instead of taking it along.
 
 Because the vault is plain markdown, a Claude with only filesystem access can
 already read and edit it. The MCP server adds schema validation, key allocation,
 and hierarchy rules on top — worth having, but not a hard dependency.
 
-Not yet exposed over MCP: `move_item`, `delete_item`, `restore_item`, and
-`list_trash`. They exist on `Vault` and in the CLI, so this is a gap in the MCP
-surface rather than in the core.
+The MCP surface, the CLI, and `Vault` all cover the same operations, so nothing
+is reachable from one and not the others.
 
 ## Pushing to Jira
 
@@ -149,10 +161,11 @@ silently dropping your dates.
 npx tsx --test test/vault.test.ts
 ```
 
-Twenty-six tests covering key allocation, disk round-trips, frontmatter
+Thirty-three tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, backlinks, attachments,
-agenda windows, ADF conversion, push ordering, drift detection, manual
-reordering, trash and restore, path portability, and git health reporting.
+agenda sectioning, ADF conversion, push ordering, drift detection, manual
+reordering, trash and restore, project rename and cross-project moves, path
+portability, and git health reporting.
 
 ## What is not here yet
 

@@ -194,13 +194,22 @@ server.registerTool(
   "vault_get_agenda",
   {
     title: "Get the agenda",
-    description: `Answer "what needs my attention" for a time window. Combines items due in the window with recurring items whose cadence falls inside it, and always surfaces anything overdue first.
+    description: `Answer "what needs my attention" for a time window.
+
+Returns up to three sections, each tagged with 'kind':
+  - overdue:   past its due date and not done. Always first when present.
+  - due:       has a due date landing inside the window.
+  - recurring: no due date in the window, but its cadence comes round inside it.
+
+'due' and 'recurring' are separate because recurring work has no deadline —
+reporting them as one list implies the recurring items are due, which they are
+not. An item that is both due and recurring appears only under 'due'.
 
 Args:
   - scope ('today'|'week'|'month', default 'today')
   - reference (YYYY-MM-DD, optional): treat this as the current date
 
-Returns: { sections: [{ scope, from?, to?, count, items: [...] }] }
+Returns: { sections: [{ kind, scope, from?, to?, count, items: [...] }] }
 Weeks run Monday to Sunday.
 
 Use when: "what's on for today", "what's due this week", "give me a monthly status rollup".`,
@@ -217,6 +226,7 @@ Use when: "what's on for today", "what's due this week", "give me a monthly stat
       return ok({
         reference: reference ?? todayIso(),
         sections: sections.map((s) => ({
+          kind: s.kind,
           scope: s.scope,
           from: s.from,
           to: s.to,
@@ -518,6 +528,304 @@ Returns: { created: { key, name, ... } }`,
     try {
       const project = await withFreshVault(() => vault.createProject(args));
       return ok({ created: project }, `Created project ${project.key}.`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_update_project",
+  {
+    title: "Update a project",
+    description: `Change a project's fields. Not its key — that re-keys every item in it, so use vault_rename_project.
+
+Args (all optional; pass null to clear a field):
+  - key (string, required): the project to update
+  - name, description, category, lead (string)
+  - startDate / dueDate (YYYY-MM-DD)
+  - status ('active'|'on_hold'|'complete'|'archived')
+  - jiraProjectKey (string): target project in Jira
+
+Returns: { updated: { key, name, status, ... } }`,
+    inputSchema: {
+      key: projectKey,
+      name: z.string().min(1).max(200).optional(),
+      description: z.string().optional(),
+      category: z.string().max(60).nullable().optional(),
+      lead: z.string().max(120).nullable().optional(),
+      startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      status: z.enum(["active", "on_hold", "complete", "archived"]).optional(),
+      jiraProjectKey: z.string().nullable().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key, ...patch }) => {
+    try {
+      const project = await withFreshVault(() => vault.updateProject(key, patch));
+      return ok({ updated: project }, `Updated project ${project.key}.`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_rename_project",
+  {
+    title: "Rename a project key",
+    description: `Change a project's key, re-keying every item in it: ACME-42 becomes NEW-42.
+
+This is the one operation that changes item keys, which are otherwise issued once and never reused. Item numbers and every item's stable 'id' are preserved, and sync.jiraKey is untouched. Anything OUTSIDE the vault that quoted an old key — an email, a Jira issue, a document — will not be updated. Say so when reporting the result.
+
+Args:
+  - from (string, required): current project key
+  - to (string, required): new key, 2-10 uppercase letters/digits
+
+Returns: { project, rekeyed: <count> }
+
+Use when: the user explicitly asks to rename or re-key a project.
+Don't use when: they only want to change the display name — that is vault_update_project with 'name'.`,
+    inputSchema: { from: projectKey, to: projectKey },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ from, to }) => {
+    try {
+      return await withFreshVault(async () => {
+        const count = vault.listItems({ project: from, limit: 500 }).total;
+        const project = await vault.renameProject(from, to);
+        return ok(
+          { project, rekeyed: count },
+          `Renamed ${from} to ${to}, re-keying ${count} item(s). References outside the vault still say ${from}-.`,
+        );
+      });
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_move_item_to_project",
+  {
+    title: "Move an item to another project",
+    description: `Move an item, and everything beneath it, into a different project. Like Jira's Move, the items get fresh keys in the target project, because a key belongs to a project.
+
+The whole subtree moves together. Each item keeps its stable 'id', so only the human-facing keys change.
+
+If the item's parent stays behind in the old project, the parent link is dropped and reported — pass 'parent' to attach it to something in the target instead. A subtask cannot lose its parent, so moving one requires 'parent'.
+
+Args:
+  - key (string, required): the item to move
+  - targetProject (string, required)
+  - parent (string, optional): new parent in the target project; null to detach
+
+Returns: { rekeyed: [{ from, to }], parentDropped? }`,
+    inputSchema: {
+      key: itemKey,
+      targetProject: projectKey,
+      parent: itemKey.nullable().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ key, targetProject, parent }) => {
+    try {
+      const result = await withFreshVault(() =>
+        vault.moveItemsToProject(key, targetProject, { parent }),
+      );
+      const moved = result.rekeyed.find((r) => r.from === key);
+      return ok(
+        result,
+        `Moved ${key} to ${targetProject} as ${moved?.to}` +
+          (result.rekeyed.length > 1 ? ` with ${result.rekeyed.length - 1} descendant(s).` : ".") +
+          (result.parentDropped ? ` Parent ${result.parentDropped} stayed behind, link dropped.` : ""),
+      );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+// -------------------------------------------------------------- destructive
+
+server.registerTool(
+  "vault_delete_item",
+  {
+    title: "Delete an item (recoverable)",
+    description: `Move an item to the vault's .trash/ folder. The file is NOT destroyed and vault_restore_item brings it back, so this is recoverable without relying on git.
+
+Refuses when the item has children, rather than orphaning them — the error lists them. Pass cascade to trash the whole subtree together.
+
+Items elsewhere that link to this one are reported in danglingBacklinks. Their links are left alone rather than silently edited; mention them when reporting the result.
+
+The key is never reissued, even though items/ no longer contains it.
+
+Args:
+  - key (string, required)
+  - cascade (boolean, default false): also trash everything beneath it
+
+Returns: { trashed: [{ key, trashedTo, attachmentsTrashedTo?, danglingBacklinks }] }
+
+Use when: the user asks to delete, remove, or drop an item.`,
+    inputSchema: { key: itemKey, cascade: z.boolean().default(false) },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ key, cascade }) => {
+    try {
+      const trashed = await withFreshVault(() => vault.deleteItem(key, { cascade }));
+      const dangling = trashed.flatMap((t) => t.danglingBacklinks);
+      return ok(
+        { trashed },
+        `Trashed ${trashed.map((t) => t.key).join(", ")}. Recoverable with vault_restore_item.` +
+          (dangling.length ? ` Still linking to it: ${[...new Set(dangling)].join(", ")}.` : ""),
+      );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_delete_project",
+  {
+    title: "Delete a project (recoverable)",
+    description: `Move a project to .trash/projects/. Recoverable with vault_restore_project.
+
+Refuses while the project still holds items, rather than trashing work by implication. Pass cascade to trash the project and every item in it; each item becomes its own trash entry so they can be restored individually.
+
+Args:
+  - key (string, required)
+  - cascade (boolean, default false)
+
+Returns: { key, trashedTo, items: [{ key, trashedTo }] }
+
+Use when: the user asks to delete a project. Confirm the cascade with them first if it holds items — the refusal exists so that choice is theirs.`,
+    inputSchema: { key: projectKey, cascade: z.boolean().default(false) },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ key, cascade }) => {
+    try {
+      const result = await withFreshVault(() => vault.deleteProject(key, { cascade }));
+      return ok(
+        result,
+        `Trashed project ${result.key}` +
+          (result.items.length ? ` and ${result.items.length} item(s).` : ".") +
+          " Recoverable with vault_restore_project.",
+      );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_list_trash",
+  {
+    title: "List the trash",
+    description: `What is recoverable, most recently trashed first.
+
+Args:
+  - projects (boolean, default false): list trashed projects instead of items
+
+Returns: { entries: [{ file, key, trashedAt, summary?, hasAttachments }] }
+
+Pass 'file' to vault_restore_item or vault_restore_project.`,
+    inputSchema: { projects: z.boolean().default(false) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ projects }) => {
+    try {
+      await vault.load();
+      const entries = projects ? await vault.listTrashedProjects() : await vault.listTrash();
+      return ok({ entries }, `${entries.length} recoverable ${projects ? "project" : "item"}(s).`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_restore_item",
+  {
+    title: "Restore a trashed item",
+    description: `Bring an item back from .trash/, along with any attachments trashed with it.
+
+Takes the 'file' from vault_list_trash — a bare filename, not a path.
+
+Fails when the key has since been reissued, or when the item's parent is itself still in the trash; restore the parent first.
+
+Args:
+  - file (string, required)
+
+Returns: { restored: { key, summary, ... } }`,
+    inputSchema: { file: z.string().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ file }) => {
+    try {
+      const item = await withFreshVault(() => vault.restoreItem(file));
+      return ok({ restored: detail(item) }, `Restored ${item.key}: ${item.summary}`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_restore_project",
+  {
+    title: "Restore a trashed project",
+    description: `Bring a project back from .trash/projects/.
+
+Its items stay in the trash — restore them separately with vault_restore_item, so a project can return without everything that was once in it.
+
+Args:
+  - file (string, required): from vault_list_trash with projects: true
+
+Returns: { restored: { key, name, ... } }`,
+    inputSchema: { file: z.string().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ file }) => {
+    try {
+      const project = await withFreshVault(() => vault.restoreProject(file));
+      return ok(
+        { restored: project },
+        `Restored project ${project.key}. Its items are still in the trash.`,
+      );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_move_item",
+  {
+    title: "Reorder an item by hand",
+    description: `Set an item's manual position within its project — the order a board column shows when read with sort 'rank'.
+
+Positions are list positions, not rank numbers: give the neighbours it should land between. Naming one side is enough — 'before' means IMMEDIATELY before that item. Naming neither sends it to the end.
+
+Ranks are per project, so both neighbours must be in the same project as the item.
+
+Args:
+  - key (string, required)
+  - after (string, optional): the item it should follow
+  - before (string, optional): the item it should precede
+
+Returns: { key, rank }
+
+Use when: the user asks to prioritise, reorder, or move something up or down a list.
+Don't use when: they mean a different project — that is vault_move_item_to_project.`,
+    inputSchema: { key: itemKey, after: itemKey.optional(), before: itemKey.optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key, after, before }) => {
+    try {
+      const item = await withFreshVault(() => vault.moveItem(key, { after, before }));
+      return ok({ key: item.key, rank: item.rank }, `${item.key} repositioned.`);
     } catch (err) {
       return fail(err);
     }

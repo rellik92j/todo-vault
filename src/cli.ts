@@ -47,6 +47,11 @@ Usage: vault <command> [options]
   doctor                            Validate every file and report problems
   projects                          List projects
   project new KEY "Name"            Create a project
+  project set KEY --name "..."      Update project fields
+  project rename OLD NEW            Change the key, re-keying every item
+  project move ITEM TARGET          Move an item + subtree to another project
+  project delete KEY [--cascade]    Trash a project
+  project restore FILE              Restore a trashed project
   new --project KEY --summary "..." Create an item
   list                              List items
   show KEY                          Show one item with children and backlinks
@@ -58,7 +63,7 @@ Usage: vault <command> [options]
   agenda [today|week|month]         What needs attention
   move KEY --after K --before K     Reorder by hand (rank)
   delete KEY [--cascade]            Move to .trash (recoverable)
-  trash                             List trashed items
+  trash [--projects]                List trashed items, or trashed projects
   restore FILE                      Bring one back from .trash
   git-status                        Whether writes are being committed
   jira plan [--out plan.json]       Build a reviewable Jira push payload
@@ -191,22 +196,113 @@ async function main(): Promise<void> {
     }
 
     case "project": {
-      if (sub !== "new") throw new VaultError("Usage: vault project new KEY \"Name\"");
-      const key = _[2];
-      const name = _[3];
-      if (!key || !name) throw new VaultError("Usage: vault project new KEY \"Name\"");
-      const project = await vault.createProject({
-        key,
-        name,
-        description: str(flags, "description"),
-        category: str(flags, "category"),
-        lead: str(flags, "lead"),
-        startDate: str(flags, "start"),
-        dueDate: str(flags, "due"),
-        jiraProjectKey: str(flags, "jira"),
-      });
-      process.stdout.write(`Created project ${project.key}\n`);
-      return;
+      switch (sub) {
+        case "new": {
+          const key = _[2];
+          const name = _[3];
+          if (!key || !name) throw new VaultError('Usage: vault project new KEY "Name"');
+          const project = await vault.createProject({
+            key,
+            name,
+            description: str(flags, "description"),
+            category: str(flags, "category"),
+            lead: str(flags, "lead"),
+            startDate: str(flags, "start"),
+            dueDate: str(flags, "due"),
+            jiraProjectKey: str(flags, "jira"),
+          });
+          process.stdout.write(`Created project ${project.key}\n`);
+          return;
+        }
+
+        case "set": {
+          const key = _[2];
+          if (!key) throw new VaultError("Usage: vault project set KEY --name ... --lead ...");
+          const patch: Record<string, unknown> = {};
+          for (const [flag, field] of Object.entries({
+            name: "name",
+            description: "description",
+            category: "category",
+            lead: "lead",
+            start: "startDate",
+            due: "dueDate",
+            status: "status",
+            jira: "jiraProjectKey",
+          })) {
+            const value = str(flags, flag);
+            if (value !== undefined) {
+              patch[field] = value === "none" && field !== "name" ? null : value;
+            }
+          }
+          const updated = await vault.updateProject(key, patch);
+          process.stdout.write(`Updated project ${updated.key}\n`);
+          return;
+        }
+
+        case "rename": {
+          const from = _[2];
+          const to = _[3];
+          if (!from || !to) throw new VaultError("Usage: vault project rename OLD NEW");
+          const before = vault.listItems({ project: from, limit: 500 }).total;
+          const renamed = await vault.renameProject(from, to);
+          process.stdout.write(`Renamed ${from} to ${renamed.key}, re-keying ${before} item(s)\n`);
+          if (before) {
+            process.stdout.write(
+              `Note: anything outside the vault that quoted a ${from}- key still says ${from}-.\n`,
+            );
+          }
+          return;
+        }
+
+        case "move": {
+          const key = _[2];
+          const target = _[3];
+          if (!key || !target) {
+            throw new VaultError("Usage: vault project move ITEM-KEY TARGET-PROJECT [--parent KEY]");
+          }
+          const parentFlag = str(flags, "parent");
+          const result = await vault.moveItemsToProject(key, target, {
+            parent: parentFlag === "none" ? null : parentFlag,
+          });
+          for (const { from, to } of result.rekeyed) {
+            process.stdout.write(`${from} -> ${to}\n`);
+          }
+          if (result.parentDropped) {
+            process.stdout.write(
+              `Note: parent ${result.parentDropped} stayed in the old project, so the link was dropped.\n`,
+            );
+          }
+          return;
+        }
+
+        case "delete": {
+          const key = _[2];
+          if (!key) throw new VaultError("Usage: vault project delete KEY [--cascade]");
+          const result = await vault.deleteProject(key, { cascade: flags.cascade === true });
+          process.stdout.write(`Trashed project ${result.key} -> ${result.trashedTo}\n`);
+          for (const item of result.items) {
+            process.stdout.write(`  ${item.key} -> ${item.trashedTo}\n`);
+          }
+          return;
+        }
+
+        case "restore": {
+          const file = _[2];
+          if (!file) {
+            throw new VaultError("Usage: vault project restore FILE  (see: vault trash --projects)");
+          }
+          const project = await vault.restoreProject(file);
+          process.stdout.write(
+            `Restored project ${project.key}. Its items are still in the trash — restore them with: vault trash\n`,
+          );
+          return;
+        }
+
+        default:
+          throw new VaultError(
+            "Usage: vault project new|set|rename|move|delete|restore — see: vault help",
+          );
+      }
     }
 
     case "new": {
@@ -338,9 +434,11 @@ async function main(): Promise<void> {
       }
       for (const section of sections) {
         const label =
-          section.scope === "overdue"
+          section.kind === "overdue"
             ? `Overdue as of ${todayIso()}`
-            : `${section.scope} (${section.from} to ${section.to})`;
+            : section.kind === "recurring"
+              ? `Recurring this ${section.scope === "today" ? "day" : section.scope}`
+              : `Due this ${section.scope === "today" ? "day" : section.scope} (${section.from} to ${section.to})`;
         process.stdout.write(`\n${label}\n${"-".repeat(label.length)}\n`);
         if (!section.items.length) process.stdout.write("  nothing\n");
         for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);
@@ -382,13 +480,14 @@ async function main(): Promise<void> {
     }
 
     case "trash": {
-      const entries = await vault.listTrash();
+      const projectsOnly = flags.projects === true;
+      const entries = projectsOnly ? await vault.listTrashedProjects() : await vault.listTrash();
       if (asJson) {
         process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);
         return;
       }
       if (!entries.length) {
-        process.stdout.write("Trash is empty.\n");
+        process.stdout.write(projectsOnly ? "No trashed projects.\n" : "Trash is empty.\n");
         return;
       }
       for (const e of entries) {

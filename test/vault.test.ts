@@ -182,20 +182,60 @@ test("agenda surfaces overdue work and honours cadence", async () => {
   await vault.transition(finished.key, "done");
 
   const today = vault.agenda("today", "2026-06-17");
-  const overdue = today.find((s) => s.scope === "overdue");
+  const overdue = today.find((s) => s.kind === "overdue");
   assert.ok(overdue, "an overdue section should exist");
   assert.deepEqual(overdue.items.map((i) => i.summary), ["Late thing"]);
   assert.ok(!overdue.items.some((i) => i.summary === "Old"), "done items are never overdue");
 
-  const todaySection = today.find((s) => s.scope === "today")!;
-  const summaries = todaySection.items.map((i) => i.summary);
-  assert.ok(summaries.includes("Due today"));
-  assert.ok(summaries.includes("Standup"));
-  assert.ok(!summaries.includes("Weekly report"), "weekly cadence is out of scope for today");
+  const due = today.find((s) => s.kind === "due")!;
+  assert.deepEqual(due.items.map((i) => i.summary), ["Due today"]);
 
-  const week = vault.agenda("week", "2026-06-17").find((s) => s.scope === "week")!;
-  assert.ok(week.items.some((i) => i.summary === "Weekly report"));
-  assert.equal(week.from, "2026-06-15", "weeks run Monday to Sunday");
+  const recurring = today.find((s) => s.kind === "recurring")!;
+  assert.deepEqual(
+    recurring.items.map((i) => i.summary),
+    ["Standup"],
+    "daily cadence recurs today; weekly does not",
+  );
+
+  const week = vault.agenda("week", "2026-06-17");
+  assert.ok(
+    week.find((s) => s.kind === "recurring")!.items.some((i) => i.summary === "Weekly report"),
+  );
+  assert.equal(week.find((s) => s.kind === "due")!.from, "2026-06-15", "weeks run Monday to Sunday");
+});
+
+test("agenda keeps due work and recurring work in separate sections", async () => {
+  const vault = await tmpVault();
+  // Recurring *and* dated: it has a deadline, so it belongs under due, once.
+  await vault.createItem({
+    project: "ACME",
+    summary: "Weekly rollup",
+    cadence: "weekly",
+    dueDate: "2026-06-18",
+  });
+  await vault.createItem({ project: "ACME", summary: "Standup", cadence: "daily" });
+  await vault.createItem({ project: "ACME", summary: "Ship it", dueDate: "2026-06-19" });
+  // Earlier in the same week as the reference date: overdue AND inside the
+  // window, so it must be claimed by exactly one section.
+  await vault.createItem({ project: "ACME", summary: "Slipped", dueDate: "2026-06-16" });
+
+  const week = vault.agenda("week", "2026-06-17");
+  assert.deepEqual(
+    week.find((s) => s.kind === "overdue")!.items.map((i) => i.summary),
+    ["Slipped"],
+  );
+  const due = week.find((s) => s.kind === "due")!;
+  const recurring = week.find((s) => s.kind === "recurring")!;
+
+  assert.deepEqual(due.items.map((i) => i.summary).sort(), ["Ship it", "Weekly rollup"]);
+  assert.deepEqual(recurring.items.map((i) => i.summary), ["Standup"]);
+
+  const everywhere = week.flatMap((s) => s.items.map((i) => i.key));
+  assert.equal(
+    new Set(everywhere).size,
+    everywhere.length,
+    "no item may be counted twice across sections",
+  );
 });
 
 test("converts markdown to ADF", () => {
@@ -493,15 +533,221 @@ test("restoreItem refuses a path, an occupied key, and a missing parent", async 
     /not in the vault/,
   );
 
-  // Recreating the key by hand blocks a restore rather than overwriting it.
-  const recreated = await vault.createItem({ project: "ACME", summary: "Squatter" });
-  const squatted = path.basename(storyTrash.trashedTo).replace(story.key, recreated.key);
-  await fs.rename(
-    path.join(vault.root, storyTrash.trashedTo),
-    path.join(vault.trashDir, squatted),
+  // A key that is occupied again blocks the restore rather than being
+  // overwritten. An external edit could put one back, so copy the trashed file
+  // into items/ and reload to reproduce exactly that.
+  const solo = await vault.createItem({ project: "ACME", summary: "Solo" });
+  const [soloTrash] = await vault.deleteItem(solo.key);
+  await fs.copyFile(path.join(vault.root, soloTrash.trashedTo), vault.itemPath(solo.key));
+  await vault.load();
+
+  assert.equal(vault.hasItem(solo.key), true);
+  await assert.rejects(
+    () => vault.restoreItem(path.basename(soloTrash.trashedTo)),
+    /exists again/,
   );
-  // The file still says it is ACME-2, so the collision is on the real key.
-  await assert.rejects(() => vault.restoreItem(squatted), /exists again|not in the vault/);
+});
+
+// ----------------------------------------------------------------- projects
+
+test("updateProject patches fields and clears them with null", async () => {
+  const vault = await tmpVault();
+  const updated = await vault.updateProject("ACME", {
+    name: "Acme, renamed",
+    lead: "someone",
+    dueDate: "2026-12-01",
+    status: "on_hold",
+    description: "New blurb.",
+  });
+  assert.equal(updated.name, "Acme, renamed");
+  assert.equal(updated.lead, "someone");
+  assert.equal(updated.status, "on_hold");
+  assert.equal(updated.description, "New blurb.");
+
+  const cleared = await vault.updateProject("ACME", { lead: null, dueDate: null });
+  assert.equal(cleared.lead, undefined);
+  assert.equal(cleared.dueDate, undefined);
+
+  const reopened = await Vault.open(vault.root);
+  assert.equal(reopened.getProject("ACME").name, "Acme, renamed");
+  assert.equal(reopened.getProject("ACME").lead, undefined);
+});
+
+test("renameProject re-keys every item and every reference to them", async () => {
+  const vault = await tmpVault();
+  const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });
+  const story = await vault.createItem({
+    project: "ACME",
+    type: "story",
+    summary: "Story",
+    parent: epic.key,
+  });
+  const sub = await vault.createItem({
+    project: "ACME",
+    type: "subtask",
+    summary: "Subtask",
+    parent: story.key,
+  });
+  await vault.addLink(epic.key, { type: "item", target: story.key, label: "its story" });
+
+  // An item in another project pointing in, which must be repointed too.
+  await vault.createProject({ key: "OPS", name: "Ops" });
+  const outsider = await vault.createItem({ project: "OPS", summary: "Watches ACME" });
+  await vault.addLink(outsider.key, { type: "item", target: story.key });
+
+  const src = path.join(vault.root, "..", `rename-fixture-${Date.now()}.txt`);
+  await fs.writeFile(src, "x", "utf8");
+  await vault.addAttachment(story.key, src, { copy: true });
+  await fs.rm(src, { force: true });
+
+  const ids = new Map([...vault.listItems().items].map((i) => [i.key, i.id]));
+
+  const renamed = await vault.renameProject("ACME", "NEW");
+  assert.equal(renamed.key, "NEW");
+
+  // Numbers are preserved, so ACME-1 becomes NEW-1.
+  assert.equal(vault.hasItem("ACME-1"), false);
+  const newEpic = vault.getItem("NEW-1");
+  const newStory = vault.getItem("NEW-2");
+  const newSub = vault.getItem("NEW-3");
+  assert.equal(newEpic.project, "NEW");
+  assert.equal(newStory.parent, "NEW-1", "parents are repointed");
+  assert.equal(newSub.parent, "NEW-2");
+  assert.equal(newEpic.links[0].target, "NEW-2", "item links are repointed");
+  assert.equal(
+    vault.getItem(outsider.key).links[0].target,
+    "NEW-2",
+    "links from other projects are repointed too",
+  );
+
+  // Identity survives even though the key did not.
+  assert.equal(newEpic.id, ids.get(epic.key));
+  assert.equal(newStory.id, ids.get(story.key));
+
+  // Attachments follow, both the folder and the recorded path.
+  assert.match(newStory.attachments[0].path, /^attachments\/NEW-2\//);
+  assert.equal(await exists(vault.resolveAttachment(newStory.attachments[0].path)), true);
+  assert.equal(await exists(vault.attachmentDir("ACME-2")), false);
+
+  // The old files are gone and nothing is left broken on disk.
+  assert.equal(await exists(vault.itemPath("ACME-1")), false);
+  assert.equal(await exists(vault.projectPath("ACME")), false);
+  const reopened = await Vault.open(vault.root);
+  assert.deepEqual((await reopened.load()).errors, []);
+  assert.equal(reopened.getItem("NEW-3").parent, "NEW-2");
+
+  // And the counter came across, so numbers are not reissued under the new key.
+  const next = await reopened.createItem({ project: "NEW", summary: "After the rename" });
+  assert.equal(next.key, "NEW-4");
+});
+
+test("renameProject refuses a bad or occupied key", async () => {
+  const vault = await tmpVault();
+  await vault.createProject({ key: "OPS", name: "Ops" });
+  await assert.rejects(() => vault.renameProject("ACME", "OPS"), /already exists/);
+  await assert.rejects(() => vault.renameProject("ACME", "lower"), /not a valid project key/);
+  assert.equal(vault.getProject("ACME").key, "ACME", "a refusal changes nothing");
+});
+
+test("moveItemsToProject issues new keys and takes the subtree along", async () => {
+  const vault = await tmpVault();
+  await vault.createProject({ key: "OPS", name: "Ops" });
+
+  const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });
+  const story = await vault.createItem({
+    project: "ACME",
+    type: "story",
+    summary: "Story",
+    parent: epic.key,
+  });
+  const sub = await vault.createItem({
+    project: "ACME",
+    type: "subtask",
+    summary: "Subtask",
+    parent: story.key,
+  });
+  const storyId = story.id;
+
+  // Moving the story takes its subtask, and drops the epic parent left behind.
+  const result = await vault.moveItemsToProject(story.key, "OPS");
+  assert.equal(result.parentDropped, epic.key);
+  assert.deepEqual(result.rekeyed.map((r) => r.from), [story.key, sub.key]);
+
+  const movedStory = vault.getItem("OPS-1");
+  const movedSub = vault.getItem("OPS-2");
+  assert.equal(movedStory.project, "OPS");
+  assert.equal(movedStory.id, storyId, "identity survives the move");
+  assert.equal(movedStory.parent, undefined, "the parent stayed behind");
+  assert.equal(movedSub.parent, "OPS-1", "the subtree keeps its own shape");
+  assert.equal(vault.hasItem(story.key), false);
+  assert.equal(vault.hasItem(sub.key), false);
+
+  const reopened = await Vault.open(vault.root);
+  assert.deepEqual((await reopened.load()).errors, []);
+});
+
+test("moveItemsToProject respects an explicit new parent, and guards subtasks", async () => {
+  const vault = await tmpVault();
+  await vault.createProject({ key: "OPS", name: "Ops" });
+  const opsEpic = await vault.createItem({ project: "OPS", type: "epic", summary: "Ops epic" });
+  const acmeEpic = await vault.createItem({ project: "ACME", type: "epic", summary: "Acme epic" });
+  const task = await vault.createItem({
+    project: "ACME",
+    type: "task",
+    summary: "Task",
+    parent: acmeEpic.key,
+  });
+  const sub = await vault.createItem({
+    project: "ACME",
+    type: "subtask",
+    summary: "Subtask",
+    parent: task.key,
+  });
+
+  // A subtask cannot be moved alone: clearing its parent would be invalid.
+  await assert.rejects(() => vault.moveItemsToProject(sub.key, "OPS"), /Name a parent in OPS/);
+  // Nor onto a parent in the wrong project.
+  await assert.rejects(
+    () => vault.moveItemsToProject(task.key, "OPS", { parent: acmeEpic.key }),
+    /is in ACME, not OPS/,
+  );
+
+  const result = await vault.moveItemsToProject(task.key, "OPS", { parent: opsEpic.key });
+  assert.equal(result.parentDropped, undefined);
+  const moved = vault.getItem(result.rekeyed[0].to);
+  assert.equal(moved.parent, opsEpic.key);
+  assert.deepEqual((await Vault.open(vault.root).then((v) => v.load())).errors, []);
+});
+
+test("deleteProject will not quietly take its items with it", async () => {
+  const vault = await tmpVault();
+  const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });
+  await vault.createItem({ project: "ACME", type: "story", summary: "Story", parent: epic.key });
+
+  await assert.rejects(() => vault.deleteProject("ACME"), /still holds 2 item/);
+  assert.equal(vault.listProjects().length, 1, "the refusal deleted nothing");
+
+  const result = await vault.deleteProject("ACME", { cascade: true });
+  assert.equal(result.items.length, 2);
+  assert.match(result.trashedTo, /^\.trash\/projects\//);
+  assert.equal(vault.listProjects().length, 0);
+  assert.equal(vault.listItems().total, 0);
+
+  // Project and item trash are listed separately, and the project filename is
+  // not mistaken for an item key.
+  const projects = await vault.listTrashedProjects();
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].key, "ACME");
+  const items = await vault.listTrash();
+  assert.equal(items.length, 2);
+  assert.ok(items.every((e) => e.key.startsWith("ACME-")), "item keys keep their numbers");
+
+  const restored = await vault.restoreProject(projects[0].file);
+  assert.equal(restored.key, "ACME");
+  assert.equal(vault.listItems().total, 0, "items stay in the trash, restored separately");
+
+  await vault.restoreItem(items[0].file);
+  assert.equal(vault.listItems().total, 1);
 });
 
 // ------------------------------------------------------- portability and git

@@ -8,12 +8,15 @@ import {
   CreateItemInput,
   DONE_STATUSES,
   FRONTMATTER_ORDER,
+  ITEM_KEY_RE,
   ItemFilter,
   ItemFrontmatterSchema,
   PROJECT_FRONTMATTER_ORDER,
+  PROJECT_KEY_RE,
   ProjectSchema,
   TRANSITIONS,
   UpdateItemInput,
+  UpdateProjectInput,
   type Cadence,
   type Item,
   type Project,
@@ -56,7 +59,14 @@ interface Counters {
 }
 
 export interface AgendaSection {
-  scope: "overdue" | "today" | "week" | "month";
+  /**
+   * What the section is, kept separate from the window it covers. "due" is
+   * dated work landing inside the window; "recurring" is cadence work that has
+   * no date and simply comes round again. Interleaving the two reads as though
+   * the recurring items were also due, which they are not.
+   */
+  kind: "overdue" | "due" | "recurring";
+  scope: "today" | "week" | "month";
   from?: string;
   to?: string;
   items: Item[];
@@ -70,6 +80,20 @@ export interface DeleteResult {
   attachmentsTrashedTo?: string;
   /** Items that linked to this one and now have a dangling link. */
   danglingBacklinks: string[];
+}
+
+export interface DeleteProjectResult {
+  key: string;
+  trashedTo: string;
+  /** Items trashed alongside it, each restorable on its own. */
+  items: DeleteResult[];
+}
+
+export interface MoveProjectResult {
+  /** Every key that changed, old to new. */
+  rekeyed: Array<{ from: string; to: string }>;
+  /** Set when the moved item's parent stayed behind and the link was dropped. */
+  parentDropped?: string;
 }
 
 export interface TrashEntry {
@@ -145,6 +169,19 @@ export class Vault {
 
   get trashDir(): string {
     return path.join(this.root, ".trash");
+  }
+
+  /**
+   * Items and projects are trashed into separate folders. A project trashed
+   * alongside items would produce `.trash/ACME-2026-07-25T...md`, which reads as
+   * item key "ACME-2026" to anything parsing those filenames.
+   */
+  get itemTrashDir(): string {
+    return path.join(this.trashDir, "items");
+  }
+
+  get projectTrashDir(): string {
+    return path.join(this.trashDir, "projects");
   }
 
   /**
@@ -342,17 +379,31 @@ export class Vault {
     };
 
     const { from, to, cadences } = ranges[scope];
-    const inWindow = open
-      .filter(
-        (i) =>
-          (i.dueDate && i.dueDate >= from && i.dueDate <= to) ||
-          cadences.includes(i.cadence),
-      )
+
+    // Each item lands in exactly one section, or the day's work gets
+    // double-counted. Something due last Tuesday is inside this week's window
+    // *and* overdue; overdue is the more useful framing, and it is listed first,
+    // so it wins.
+    const isOverdue = new Set(overdue.map((i) => i.key));
+    const due = open
+      .filter((i) => i.dueDate && i.dueDate >= from && i.dueDate <= to && !isOverdue.has(i.key))
+      .sort(sortByWorkOrder);
+
+    // A recurring item that also carries a due date belongs under "due" — that
+    // is the one with a deadline attached.
+    const alreadyListed = new Set([...overdue, ...due].map((i) => i.key));
+    const recurring = open
+      .filter((i) => cadences.includes(i.cadence) && !alreadyListed.has(i.key))
       .sort(sortByWorkOrder);
 
     const sections: AgendaSection[] = [];
-    if (overdue.length) sections.push({ scope: "overdue", to: reference, items: overdue });
-    sections.push({ scope, from, to, items: inWindow });
+    if (overdue.length) {
+      sections.push({ kind: "overdue", scope, to: reference, items: overdue });
+    }
+    sections.push({ kind: "due", scope, from, to, items: due });
+    if (recurring.length) {
+      sections.push({ kind: "recurring", scope, from, to, items: recurring });
+    }
     return sections;
   }
 
@@ -776,27 +827,27 @@ export class Vault {
   }
 
   private async trashOne(item: Item): Promise<DeleteResult> {
-    await fs.mkdir(this.trashDir, { recursive: true });
+    await fs.mkdir(this.itemTrashDir, { recursive: true });
     // Colons are illegal in Windows filenames, so the ISO stamp gets flattened.
     const stamp = nowIso().replace(/[:.]/g, "-");
     const danglingBacklinks = this.backlinks(item.key).map((i) => i.key);
 
     const trashName = `${item.key}-${stamp}.md`;
-    await fs.rename(this.itemPath(item.key), path.join(this.trashDir, trashName));
+    await fs.rename(this.itemPath(item.key), path.join(this.itemTrashDir, trashName));
 
     let attachmentsTrashedTo: string | undefined;
     const attachDir = this.attachmentDir(item.key);
     if (await pathExists(attachDir)) {
       const dirName = `${item.key}-${stamp}-attachments`;
-      await fs.rename(attachDir, path.join(this.trashDir, dirName));
-      attachmentsTrashedTo = `.trash/${dirName}`;
+      await fs.rename(attachDir, path.join(this.itemTrashDir, dirName));
+      attachmentsTrashedTo = `.trash/items/${dirName}`;
     }
 
     this.items.delete(item.key);
 
     return {
       key: item.key,
-      trashedTo: `.trash/${trashName}`,
+      trashedTo: `.trash/items/${trashName}`,
       attachmentsTrashedTo,
       danglingBacklinks,
     };
@@ -805,7 +856,7 @@ export class Vault {
   async listTrash(): Promise<TrashEntry[]> {
     let entries: string[] = [];
     try {
-      entries = await fs.readdir(this.trashDir);
+      entries = await fs.readdir(this.itemTrashDir);
     } catch {
       return [];
     }
@@ -818,7 +869,7 @@ export class Vault {
 
       let summary: string | undefined;
       try {
-        const raw = await fs.readFile(path.join(this.trashDir, file), "utf8");
+        const raw = await fs.readFile(path.join(this.itemTrashDir, file), "utf8");
         const { data } = parseFrontmatter(raw);
         const value = (data as { summary?: unknown }).summary;
         if (typeof value === "string") summary = value;
@@ -845,7 +896,7 @@ export class Vault {
       throw new VaultError(`Expected a filename from listTrash(), got a path: ${file}`);
     }
 
-    const source = path.join(this.trashDir, file);
+    const source = path.join(this.itemTrashDir, file);
     let raw: string;
     try {
       raw = await fs.readFile(source, "utf8");
@@ -875,7 +926,7 @@ export class Vault {
     await fs.rename(source, this.itemPath(frontmatter.key));
 
     const stamp = file.slice(frontmatter.key.length + 1, -3);
-    const attachSource = path.join(this.trashDir, `${frontmatter.key}-${stamp}-attachments`);
+    const attachSource = path.join(this.itemTrashDir, `${frontmatter.key}-${stamp}-attachments`);
     if (await pathExists(attachSource)) {
       await fs.rename(attachSource, this.attachmentDir(frontmatter.key));
     }
@@ -884,6 +935,373 @@ export class Vault {
     this.items.set(item.key, item);
     await this.commit(`Restore ${item.key} from trash`);
     return item;
+  }
+
+  // -------------------------------------------------------------- projects
+
+  async updateProject(key: string, rawPatch: unknown): Promise<Project> {
+    const existing = this.getProject(key);
+    const patch = UpdateProjectInput.parse(rawPatch);
+
+    const merged: Record<string, unknown> = { ...existing };
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      if (field === "description") continue;
+      merged[field] = value === null ? undefined : value;
+    }
+    merged.updated = nowIso();
+
+    const { description: _drop, ...frontmatterInput } = merged;
+    const frontmatter = ProjectSchema.parse(frontmatterInput);
+    const next: Project = {
+      ...frontmatter,
+      description: patch.description ?? existing.description,
+    };
+
+    await this.writeProject(next);
+    this.projects.set(key, next);
+    await this.commit(`Update project ${key}`);
+    return next;
+  }
+
+  /**
+   * Change a project's key, re-keying every item in it.
+   *
+   * This is the one operation that breaks the "keys are issued once" rule, so it
+   * is deliberately explicit rather than a side effect of an update. Item numbers
+   * are preserved — ACME-42 becomes NEW-42 — and every `id` stays put, so
+   * identity survives even though the human-facing key does not. Anything
+   * outside the vault that quoted the old key (an email, a Jira issue) will not
+   * be updated; `sync.jiraKey` is left alone because that one is Jira's.
+   */
+  async renameProject(oldKey: string, newKey: string): Promise<Project> {
+    const project = this.getProject(oldKey);
+    if (oldKey === newKey) return project;
+    if (!PROJECT_KEY_RE.test(newKey)) {
+      throw new VaultError(`${newKey} is not a valid project key (2-10 uppercase letters/digits)`);
+    }
+    if (this.projects.has(newKey)) {
+      throw new VaultError(`Project ${newKey} already exists`);
+    }
+
+    const mapping = new Map<string, string>();
+    for (const item of this.items.values()) {
+      if (item.project === oldKey) {
+        mapping.set(item.key, `${newKey}-${item.key.split("-")[1]}`);
+      }
+    }
+    await this.rekeyItems(mapping);
+
+    const frontmatter = ProjectSchema.parse({
+      ...stripDescription({ ...project }),
+      key: newKey,
+      updated: nowIso(),
+    });
+    const renamed: Project = { ...frontmatter, description: project.description };
+    await this.writeProject(renamed);
+    await fs.rm(this.projectPath(oldKey), { force: true });
+    this.projects.delete(oldKey);
+    this.projects.set(newKey, renamed);
+
+    // Carry the high-water mark across, so numbers are never reissued under the
+    // new key either.
+    const counters = await this.readCounters();
+    if (counters[oldKey] !== undefined) {
+      counters[newKey] = Math.max(counters[newKey] ?? 0, counters[oldKey]);
+      delete counters[oldKey];
+      await this.writeCounters(counters);
+    }
+
+    await this.commit(`Rename project ${oldKey} to ${newKey}`);
+    return renamed;
+  }
+
+  /**
+   * Move an item, and everything beneath it, into another project.
+   *
+   * Jira calls this Move, and like Jira it issues fresh keys in the target: a
+   * key belongs to a project, so ACME-5 cannot stay ACME-5 once it lives in OPS.
+   * The subtree moves together, because an epic without its stories is rarely
+   * what anyone means.
+   */
+  async moveItemsToProject(
+    key: string,
+    targetProject: string,
+    opts: { parent?: string | null } = {},
+  ): Promise<MoveProjectResult> {
+    const item = this.getItem(key);
+    if (!this.projects.has(targetProject)) {
+      const known = [...this.projects.keys()].join(", ") || "none yet";
+      throw new VaultError(`No project ${targetProject}. Known projects: ${known}`);
+    }
+    if (item.project === targetProject) {
+      throw new VaultError(`${key} is already in ${targetProject}`);
+    }
+
+    const subtree = [item, ...this.descendants(key)];
+    const inSubtree = new Set(subtree.map((i) => i.key));
+
+    // The root's parent stays behind in the old project, which would leave a
+    // cross-project parent link. Decide what happens to it before writing.
+    const leavingParent = item.parent && !inSubtree.has(item.parent);
+    let finalParent: string | undefined;
+
+    if (opts.parent) {
+      const candidate = this.getItem(opts.parent);
+      if (candidate.project !== targetProject) {
+        throw new VaultError(
+          `Parent ${opts.parent} is in ${candidate.project}, not ${targetProject}`,
+        );
+      }
+      if (inSubtree.has(opts.parent)) {
+        throw new VaultError(`${opts.parent} is inside the subtree being moved`);
+      }
+      this.assertParentValid(item.type, opts.parent, key);
+      finalParent = opts.parent;
+    } else if (leavingParent) {
+      if (item.type === "subtask") {
+        throw new VaultError(
+          `${key} is a subtask of ${item.parent}, which stays in ${item.project}. ` +
+            `Name a parent in ${targetProject} to move it under.`,
+        );
+      }
+      finalParent = undefined; // dropped, and reported back
+    } else {
+      finalParent = item.parent;
+    }
+
+    const mapping = new Map<string, string>();
+    for (const member of subtree) {
+      mapping.set(member.key, await this.allocateKey(targetProject));
+    }
+
+    await this.rekeyItems(
+      mapping,
+      new Map([[key, { parent: finalParent } as Partial<Item>]]),
+    );
+
+    const rekeyed = [...mapping].map(([from, to]) => ({ from, to }));
+    await this.commit(
+      `Move ${key} to ${targetProject} as ${mapping.get(key)}` +
+        (subtree.length > 1 ? ` with ${subtree.length - 1} descendant(s)` : ""),
+    );
+
+    return {
+      rekeyed,
+      parentDropped: Boolean(leavingParent && !opts.parent) ? item.parent : undefined,
+    };
+  }
+
+  /**
+   * Trash a project. Its items are trashed alongside it but as separate entries,
+   * so they can be restored one at a time.
+   */
+  async deleteProject(
+    key: string,
+    opts: { cascade?: boolean } = {},
+  ): Promise<DeleteProjectResult> {
+    const project = this.getProject(key);
+    const owned = [...this.items.values()].filter((i) => i.project === key);
+
+    if (owned.length && !opts.cascade) {
+      throw new VaultError(
+        `Project ${key} still holds ${owned.length} item(s). Move them to another project, ` +
+          `or pass cascade to trash the project and everything in it.`,
+      );
+    }
+
+    // Deepest first, so nothing is ever left pointing at something already gone.
+    const byDepth = [...owned].sort((a, b) => this.depthOf(b) - this.depthOf(a));
+    const items: DeleteResult[] = [];
+    for (const member of byDepth) {
+      items.push(await this.trashOne(member));
+    }
+
+    await fs.mkdir(this.projectTrashDir, { recursive: true });
+    const stamp = nowIso().replace(/[:.]/g, "-");
+    const trashName = `${key}-${stamp}.md`;
+    await fs.rename(this.projectPath(key), path.join(this.projectTrashDir, trashName));
+    this.projects.delete(key);
+
+    await this.commit(
+      `Trash project ${key}` + (items.length ? ` and ${items.length} item(s)` : ""),
+    );
+
+    return {
+      key: project.key,
+      trashedTo: `.trash/projects/${trashName}`,
+      items,
+    };
+  }
+
+  async listTrashedProjects(): Promise<TrashEntry[]> {
+    let entries: string[] = [];
+    try {
+      entries = await fs.readdir(this.projectTrashDir);
+    } catch {
+      return [];
+    }
+
+    const out: TrashEntry[] = [];
+    for (const file of entries) {
+      if (!file.endsWith(".md")) continue;
+      const match = /^([A-Z][A-Z0-9]{1,9})-(\d{4}-.+)\.md$/.exec(file);
+      if (!match) continue;
+
+      let summary: string | undefined;
+      try {
+        const raw = await fs.readFile(path.join(this.projectTrashDir, file), "utf8");
+        const value = (parseFrontmatter(raw).data as { name?: unknown }).name;
+        if (typeof value === "string") summary = value;
+      } catch {
+        // Listed unlabelled rather than hidden.
+      }
+
+      out.push({ file, key: match[1], trashedAt: match[2], summary, hasAttachments: false });
+    }
+    return out.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt));
+  }
+
+  /**
+   * Restore a trashed project. Its items stay in the trash — restore them
+   * individually, so a project can come back without everything that was in it.
+   */
+  async restoreProject(file: string): Promise<Project> {
+    if (file.includes("/") || file.includes("\\") || file.includes("..")) {
+      throw new VaultError(`Expected a filename from listTrashedProjects(), got a path: ${file}`);
+    }
+
+    const source = path.join(this.projectTrashDir, file);
+    let raw: string;
+    try {
+      raw = await fs.readFile(source, "utf8");
+    } catch {
+      throw new VaultError(`Nothing called ${file} in the project trash`);
+    }
+
+    const { data, body } = parseFrontmatter(raw);
+    let frontmatter;
+    try {
+      frontmatter = ProjectSchema.parse(data);
+    } catch (err) {
+      throw new VaultError(`${file} no longer matches the schema: ${formatZodError(err)}`);
+    }
+    if (this.projects.has(frontmatter.key)) {
+      throw new VaultError(`Project ${frontmatter.key} exists again — restoring would overwrite it`);
+    }
+
+    await fs.rename(source, this.projectPath(frontmatter.key));
+    const project: Project = { ...frontmatter, description: body };
+    this.projects.set(project.key, project);
+    await this.commit(`Restore project ${project.key} from trash`);
+    return project;
+  }
+
+  /** How many ancestors an item has. Used to trash children before parents. */
+  private depthOf(item: Item): number {
+    let depth = 0;
+    let cursor = item.parent;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      depth += 1;
+      cursor = this.items.get(cursor)?.parent;
+    }
+    return depth;
+  }
+
+  /**
+   * Rewrite item keys and every reference to them, in one pass.
+   *
+   * Shared by renameProject and moveItemsToProject, which both have to fix the
+   * same five things: the item's own key and project, its filename, its
+   * attachment folder plus the paths recorded inside it, and every `parent` and
+   * item-link elsewhere in the vault that pointed at the old key.
+   *
+   * `overrides` are keyed by the OLD key and applied as the item is rewritten —
+   * needed because some changes cannot be made before or after. Clearing a
+   * subtask's parent in a separate write would fail validation on its own.
+   */
+  private async rekeyItems(
+    mapping: Map<string, string>,
+    overrides: Map<string, Partial<Item>> = new Map(),
+  ): Promise<void> {
+    if (!mapping.size && !overrides.size) return;
+
+    for (const [from, to] of mapping) {
+      if (!this.items.has(from)) throw new VaultError(`No item with key ${from}`);
+      if (!ITEM_KEY_RE.test(to)) throw new VaultError(`${to} is not a valid item key`);
+      if (this.items.has(to) && !mapping.has(to)) {
+        throw new VaultError(`Cannot re-key ${from} to ${to} — ${to} already exists`);
+      }
+    }
+
+    const rewritten: Item[] = [];
+    const vacated: string[] = [];
+    const attachMoves: Array<{ from: string; to: string }> = [];
+
+    for (const item of this.items.values()) {
+      const newKey = mapping.get(item.key) ?? item.key;
+      const keyChanged = newKey !== item.key;
+
+      const mappedParent = item.parent ? mapping.get(item.parent) ?? item.parent : undefined;
+      const links = item.links.map((l) =>
+        l.type === "item" && mapping.has(l.target)
+          ? { ...l, target: mapping.get(l.target) as string }
+          : l,
+      );
+      const attachments = keyChanged
+        ? item.attachments.map((a) => ({
+            ...a,
+            path: a.path.startsWith(`attachments/${item.key}/`)
+              ? `attachments/${newKey}/${a.path.slice(`attachments/${item.key}/`.length)}`
+              : a.path,
+          }))
+        : item.attachments;
+
+      const override = overrides.get(item.key);
+      const linksChanged = links.some((l, i) => l.target !== item.links[i].target);
+      if (!keyChanged && !linksChanged && mappedParent === item.parent && !override) continue;
+
+      if (keyChanged) {
+        vacated.push(this.itemPath(item.key));
+        attachMoves.push({
+          from: this.attachmentDir(item.key),
+          to: this.attachmentDir(newKey),
+        });
+      }
+
+      rewritten.push({
+        ...item,
+        key: newKey,
+        project: newKey.split("-")[0],
+        parent: mappedParent,
+        links,
+        attachments,
+        ...override,
+        updated: nowIso(),
+      });
+    }
+
+    // Attachment folders first: the paths written into frontmatter should point
+    // at something real by the time the file lands.
+    for (const move of attachMoves) {
+      if (await pathExists(move.from)) {
+        await fs.mkdir(path.dirname(move.to), { recursive: true });
+        await fs.rename(move.from, move.to);
+      }
+    }
+
+    for (const item of rewritten) await this.writeAndIndex(item);
+
+    // Drop the files left behind, but never one that is now someone's new home.
+    const live = new Set(rewritten.map((i) => this.itemPath(i.key)));
+    for (const filePath of vacated) {
+      if (!live.has(filePath)) await fs.rm(filePath, { force: true });
+    }
+    for (const from of mapping.keys()) {
+      if (!rewritten.some((i) => i.key === from)) this.items.delete(from);
+    }
   }
 
   // ------------------------------------------------------------------- git
@@ -1033,13 +1451,20 @@ export class Vault {
    * and the highest key on disk so a deleted item never has its key reused —
    * important once keys have been referenced in Jira or in an email.
    */
-  private async allocateKey(projectKey: string): Promise<string> {
-    let counters: Counters = {};
+  private async readCounters(): Promise<Counters> {
     try {
-      counters = JSON.parse(await fs.readFile(this.countersPath, "utf8")) as Counters;
+      return JSON.parse(await fs.readFile(this.countersPath, "utf8")) as Counters;
     } catch {
-      counters = {};
+      return {};
     }
+  }
+
+  private async writeCounters(counters: Counters): Promise<void> {
+    await writeFileAtomic(this.countersPath, `${JSON.stringify(counters, null, 2)}\n`);
+  }
+
+  private async allocateKey(projectKey: string): Promise<string> {
+    const counters = await this.readCounters();
 
     let highestOnDisk = 0;
     for (const key of this.items.keys()) {
@@ -1050,7 +1475,7 @@ export class Vault {
 
     const next = Math.max(counters[projectKey] ?? 0, highestOnDisk) + 1;
     counters[projectKey] = next;
-    await writeFileAtomic(this.countersPath, `${JSON.stringify(counters, null, 2)}\n`);
+    await this.writeCounters(counters);
     return `${projectKey}-${next}`;
   }
 

@@ -3,6 +3,8 @@ export type {
   VaultOptions,
   AgendaSection,
   DeleteResult,
+  DeleteProjectResult,
+  MoveProjectResult,
   TrashEntry,
   GitStatus,
 } from "./vault.js";

@@ -210,6 +210,25 @@ export const ProjectSchema = z
 export type ProjectFrontmatter = z.infer<typeof ProjectSchema>;
 export type Project = ProjectFrontmatter & { description: string };
 
+/**
+ * Fields an update may touch. `key` is absent on purpose — changing it re-keys
+ * every item in the project, so that goes through Vault.renameProject.
+ */
+export const UpdateProjectInput = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    description: z.string().optional(),
+    category: z.string().max(60).nullable().optional(),
+    lead: z.string().max(120).nullable().optional(),
+    startDate: isoDate.nullable().optional(),
+    dueDate: isoDate.nullable().optional(),
+    status: z.enum(["active", "on_hold", "complete", "archived"]).optional(),
+    jiraProjectKey: z.string().nullable().optional(),
+  })
+  .strict();
+
+export type UpdateProjectInput = z.infer<typeof UpdateProjectInput>;
+
 /** Input accepted when creating an item — the vault fills in the rest. */
 export const CreateItemInput = z
   .object({

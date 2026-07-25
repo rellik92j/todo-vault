@@ -2,10 +2,11 @@
 
 Stack is decided: **Electron**. This is the plan for phases 3, 4, and 6.
 
-**Phases 0 and 0.5 are complete.** Node 24.18 is installed, the tree is split
-into `src/` and `test/`, both git repos exist, the example vault is seeded, and
-the suite is at 26 green tests. `rank` and trash-based deletion are in the schema
-and the CLI. What follows below Phase 0.5 is the remaining work.
+**Phases 0, 0.5, and 0.6 are complete.** Node 24.18 is installed, the tree is
+split into `src/` and `test/`, both git repos exist, the example vault is seeded,
+and the suite is at 33 green tests. `rank`, trash-based deletion, the full set of
+project operations, and the three-way agenda split are in the core, the CLI, and
+the MCP server. Phase 1 onwards is the remaining work.
 
 ## Phase 0 — make the existing code run ✅
 
@@ -110,6 +111,9 @@ board, item detail. Filters by project, status, cadence, category. Plain React
 state and a `useVault()` hook over the snapshot — no TanStack Query, there's no
 network and no cache to invalidate. No router for three views.
 
+**Agenda view.** Three sections, not one list: overdue, due, recurring. The core
+already returns them tagged with `kind`, so this is layout.
+
 **Surface the load errors.** `load()` returns an `errors[]` that currently
 nothing reads. When an external Claude writes broken YAML, those items silently
 vanish from every view. A persistent banner — "2 files failed to parse" with the
@@ -160,26 +164,53 @@ action. Also implement `vault jira discover`: both the README and a warning
 string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
 subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
-## Loose ends worth knowing about
+## Phase 0.6 — parity across the three surfaces ✅
 
-**The MCP surface is now behind the CLI.** `moveItem`, `deleteItem`,
-`restoreItem`, and `listTrash` exist on `Vault` and in the CLI but are not
-registered as MCP tools, so an external Claude can create and update but cannot
-reorder or delete. Four more `registerTool` blocks. Deliberately left for a
-decision rather than assumed: exposing delete to an agent is a choice, even with
-a trash directory behind it.
+**MCP is level with the CLI again**, at 22 tools from 13. The nine additions are
+`move_item`, `delete_item`, `restore_item`, `list_trash`, `update_project`,
+`rename_project`, `move_item_to_project`, `delete_project`, `restore_project`.
+The destructive ones carry `destructiveHint` and refuse rather than guess:
+deleting something with children returns the list of what is in the way. Verified
+by driving the server over stdio — handshake, `tools/list`, then a delete, a
+trash listing, a restore, and a refusal.
+
+**Project operations.** `updateProject`, `renameProject`, `deleteProject`,
+`restoreProject`, `listTrashedProjects`, and `moveItemsToProject`.
+
+Rename and cross-project move share one `rekeyItems` primitive, because both have
+to fix the same five kinds of reference — the item's key and project, its
+filename, its attachment folder and the paths inside it, and every `parent` and
+item link pointing at it from anywhere in the vault. Both preserve every `id`, so
+identity survives a key change; neither touches `sync.jiraKey`, which is Jira's.
+
+Trash moved to `.trash/items/` and `.trash/projects/`. A project trashed
+alongside items would have produced `.trash/ACME-2026-07-25T…md`, which parses as
+item key "ACME-2026".
+
+**Agenda split into `overdue` / `due` / `recurring`.** Sections now carry a `kind`
+separate from the window. Recurring work has no deadline, so listing it with
+dated work implied a due date it does not have.
+
+Worth noting what running it caught: every item now lands in exactly one section.
+Something due last Tuesday is both inside this week's window *and* overdue, and
+until it was on screen with real data I had deduped `recurring` against the others
+but left `due` and `overdue` double-listing the same three items.
+
+## Loose ends worth knowing about
 
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
 
-**No `updateProject` or `deleteProject`.** Projects can be created and read but
-not edited. The UI will want at least a rename.
+**Project ordering.** Projects sort by key. If "move project" was meant to be
+about arranging them in a sidebar rather than moving items between them, that
+wants a `rank` on `ProjectSchema` — the same treatment items got, and about
+thirty lines.
 
-**Cadence items appear outside their date window.** In the seeded vault, OPS-2 is
-due 2026-07-29 but shows in the 20th–26th week agenda because it is `weekly` —
-correct per the code, since a section matches on date *or* cadence, but visually
-odd. The UI should separate "due this week" from "recurring this week" rather
-than interleaving them.
+**Recurring items still show a due date outside the window.** In the seeded
+vault, OPS-2 appears under "recurring this week" carrying `due:2026-07-29`. That
+is honest — it recurs this week and is due next — but the UI should render the
+distinction rather than printing a date that looks like it contradicts the
+heading.
 
 ## The risk that stays
 
