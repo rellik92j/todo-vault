@@ -4,8 +4,10 @@ A local, Jira-shaped task tracker that lives in plain markdown files, so the
 desktop app, an in-app assistant, and any Claude on the outside can all read and
 write the same data without a server.
 
-Phases 1, 2, and 5 of the plan: schema, vault core, CLI, and MCP server. The
-desktop UI comes next and sits on top of `Vault` without changing any of this.
+The schema, vault core, CLI, and MCP server are done, and so is the desktop app
+through editing — it reads and writes the vault without holding any state of its
+own. Global search, keyboard shortcuts, an in-app assistant, and the Jira push
+UI are still ahead; `PLAN.md` has the detail.
 
 ## Layout
 
@@ -85,7 +87,7 @@ stories, tasks, a subtask and a bug, recurring daily/weekly/monthly items, and
 examples of every link type. Rebuild it from scratch at any time:
 
 ```bash
-npx tsx scripts/seed-vault.ts ./vault --force
+npm run seed -- ./vault --force
 ```
 
 It is also the fixture the desktop UI is developed against. `--force` clears the
@@ -197,7 +199,7 @@ Push only. The vault is upstream of Jira, never a mirror of it.
 ```bash
 cp jira-map.example.yaml vault/jira-map.yaml
 # fill in your instance's custom field ids — see the comments in the file
-npx tsx src/cli.ts jira plan --vault ./vault --out plan.json
+npm run vault -- jira plan --vault ./vault --out plan.json
 ```
 
 `plan.json` contains ordered issue drafts with descriptions already converted to
@@ -223,7 +225,7 @@ silently dropping your dates.
 ## Tests
 
 ```bash
-npx tsx --test test/vault.test.ts
+npm test
 ```
 
 Thirty-six tests covering key allocation, disk round-trips, frontmatter
@@ -269,4 +271,4 @@ apps/desktop/src/
 └── renderer/       React: backlog, board, agenda, detail
 ```
 
-Read `SCHEMA.md` before changing anything in `src/schema.ts`.
+Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.

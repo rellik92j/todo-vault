@@ -7,11 +7,12 @@
  * than a sequence of CLI calls — resetting to a known state should be one
  * command.
  *
- *   npx tsx scripts/seed-vault.ts ./vault
+ *   npm run seed -- ./vault
  *
  * Refuses to run over an existing vault unless --force is passed.
  */
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -271,21 +272,32 @@ async function main(): Promise<void> {
   // ----------------------------------------------------------- attachments
   // One copied into the vault, one left where it lives — the distinction
   // SCHEMA.md draws between attachments and file links.
-  const scratch = path.join(root, "..", `seed-spec-${Date.now()}.md`);
-  await fs.writeFile(
-    scratch,
-    "# Target reporting schema\n\nDraft for review. Column names are not final.\n",
-    "utf8",
-  );
-  await vault.addAttachment(schemaStory.key, scratch, {
-    copy: true,
-    title: "Target schema draft",
-  });
+  // The scratch source goes in the OS temp directory rather than beside the
+  // vault. It used to land in the repo root, where nothing gitignores it, so any
+  // failure between writing it and removing it left a file behind — which is how
+  // one ended up committed. `finally` closes the rest of that gap, and a private
+  // temp directory means the name no longer has to be unique, so a reseed now
+  // produces an identical vault instead of a fresh attachment filename.
+  const scratchDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-vault-seed-"));
+  const scratch = path.join(scratchDir, "target-schema-draft.md");
+  try {
+    await fs.writeFile(
+      scratch,
+      "# Target reporting schema\n\nDraft for review. Column names are not final.\n",
+      "utf8",
+    );
+    await vault.addAttachment(schemaStory.key, scratch, {
+      copy: true,
+      title: "Target schema draft",
+    });
+  } finally {
+    await fs.rm(scratchDir, { recursive: true, force: true });
+  }
+
   await vault.addAttachment(bug.key, path.join(repoRoot, "README.md"), {
     copy: false,
     title: "Project README (left in place)",
   });
-  await fs.rm(scratch, { force: true });
 
   // ----------------------------------------------------------------- report
   const { items, projects, errors } = await vault.load();
@@ -296,7 +308,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  process.stdout.write("Next: npx tsx src/cli.ts agenda week --vault ./vault\n");
+  process.stdout.write("Next: npm run vault -- agenda week --vault ./vault\n");
 }
 
 main().catch((err: unknown) => {
