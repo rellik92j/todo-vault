@@ -47,7 +47,11 @@ async function main(): Promise<void> {
   }
 
   const vault = await Vault.init(root);
-  const repoRoot = path.resolve(import.meta.dirname, "..");
+  // scripts/ -> packages/core -> packages -> repo root. The link fixtures below
+  // point at real files, so these have to be right or `doctor` reports dangling
+  // links on a freshly seeded vault.
+  const coreRoot = path.resolve(import.meta.dirname, "..");
+  const repoRoot = path.resolve(coreRoot, "../..");
 
   // ------------------------------------------------------------- projects
   await vault.createProject({
@@ -251,7 +255,7 @@ async function main(): Promise<void> {
   });
   await vault.addLink(backfillStory.key, {
     type: "folder",
-    target: path.join(repoRoot, "src"),
+    target: path.join(coreRoot, "src"),
     label: "Core library source",
   });
   await vault.addLink(sowTask.key, {

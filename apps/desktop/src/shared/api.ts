@@ -1,4 +1,16 @@
-import type { AgendaSection, GitStatus, Item, ItemFilter, Project } from "todo-vault";
+import type {
+  AgendaSection,
+  CreateItemInput,
+  DeleteResult,
+  GitStatus,
+  Item,
+  ItemFilter,
+  Project,
+  Status,
+  TrashEntry,
+  UpdateItemInput,
+  UpdateProjectInput,
+} from "todo-vault";
 
 /**
  * The contract between the main process and the renderer.
@@ -75,6 +87,61 @@ export interface VaultApi {
   /** Reveal an item's markdown, or an attachment, in the OS file manager. */
   revealPath(target: { kind: "item" | "attachment" | "vault"; value?: string }): Promise<Result<null>>;
 
+  // ------------------------------------------------------------- mutations
+  // Each returns a fresh snapshot, so the renderer never reconciles a delta.
+
+  createItem(input: CreateItemInput): Promise<Result<{ snapshot: VaultSnapshot; key: string }>>;
+  updateItem(key: string, patch: UpdateItemInput): Promise<Result<VaultSnapshot>>;
+  transitionItem(key: string, status: Status): Promise<Result<VaultSnapshot>>;
+  /** Manual reorder. Positions are list positions — see Vault.moveItem. */
+  moveItem(
+    key: string,
+    position: { after?: string; before?: string },
+  ): Promise<Result<VaultSnapshot>>;
+
+  addComment(key: string, body: string): Promise<Result<VaultSnapshot>>;
+  addLink(
+    key: string,
+    link: { type: string; target: string; label?: string },
+  ): Promise<Result<VaultSnapshot>>;
+  removeLink(key: string, target: string): Promise<Result<VaultSnapshot>>;
+
+  /** Opens a native file picker in main, then attaches what was chosen. */
+  attachViaDialog(key: string, copy: boolean): Promise<Result<MaybeSnapshot>>;
+  /** For files dropped onto the window, whose real paths the renderer resolved. */
+  attachPaths(key: string, paths: string[], copy: boolean): Promise<Result<VaultSnapshot>>;
+
+  /**
+   * Trash an item. Without `cascade` this fails when the item has children, and
+   * the message lists them — the renderer turns that into a confirmation rather
+   * than deciding on the user's behalf.
+   */
+  deleteItem(
+    key: string,
+    cascade: boolean,
+  ): Promise<Result<{ snapshot: VaultSnapshot; trashed: DeleteResult[] }>>;
+  restoreItem(file: string): Promise<Result<VaultSnapshot>>;
+  listTrash(): Promise<Result<TrashEntry[]>>;
+
+  createProject(input: {
+    key: string;
+    name: string;
+    description?: string;
+    category?: string;
+    lead?: string;
+  }): Promise<Result<VaultSnapshot>>;
+  updateProject(key: string, patch: UpdateProjectInput): Promise<Result<VaultSnapshot>>;
+  moveProject(
+    key: string,
+    position: { after?: string; before?: string },
+  ): Promise<Result<VaultSnapshot>>;
+
+  /**
+   * Real filesystem paths for dropped File objects. Electron removed
+   * `File.path`, and `webUtils` is only reachable from the preload.
+   */
+  pathsForFiles(files: File[]): string[];
+
   /** Subscribe to disk changes. Returns an unsubscribe function. */
   onChanged(listener: (snapshot: VaultSnapshot) => void): () => void;
 
@@ -94,6 +161,23 @@ export const CHANNELS = {
   getRelated: "vault:get-related",
   revealPath: "vault:reveal-path",
   getSuggestedVault: "vault:suggested",
+
+  createItem: "vault:create-item",
+  updateItem: "vault:update-item",
+  transitionItem: "vault:transition-item",
+  moveItem: "vault:move-item",
+  addComment: "vault:add-comment",
+  addLink: "vault:add-link",
+  removeLink: "vault:remove-link",
+  attachViaDialog: "vault:attach-dialog",
+  attachPaths: "vault:attach-paths",
+  deleteItem: "vault:delete-item",
+  restoreItem: "vault:restore-item",
+  listTrash: "vault:list-trash",
+  createProject: "vault:create-project",
+  updateProject: "vault:update-project",
+  moveProject: "vault:move-project",
+
   /** main -> renderer push */
   changed: "vault:changed",
 } as const;

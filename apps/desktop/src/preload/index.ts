@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import { CHANNELS, type VaultApi, type VaultSnapshot } from "../shared/api.js";
 
@@ -18,6 +18,31 @@ const api: VaultApi = {
   getRelated: (key) => ipcRenderer.invoke(CHANNELS.getRelated, key),
   revealPath: (target) => ipcRenderer.invoke(CHANNELS.revealPath, target),
   getSuggestedVault: () => ipcRenderer.invoke(CHANNELS.getSuggestedVault),
+
+  createItem: (input) => ipcRenderer.invoke(CHANNELS.createItem, input),
+  updateItem: (key, patch) => ipcRenderer.invoke(CHANNELS.updateItem, key, patch),
+  transitionItem: (key, status) => ipcRenderer.invoke(CHANNELS.transitionItem, key, status),
+  moveItem: (key, position) => ipcRenderer.invoke(CHANNELS.moveItem, key, position),
+  addComment: (key, body) => ipcRenderer.invoke(CHANNELS.addComment, key, body),
+  addLink: (key, link) => ipcRenderer.invoke(CHANNELS.addLink, key, link),
+  removeLink: (key, target) => ipcRenderer.invoke(CHANNELS.removeLink, key, target),
+  attachViaDialog: (key, copy) => ipcRenderer.invoke(CHANNELS.attachViaDialog, key, copy),
+  attachPaths: (key, paths, copy) => ipcRenderer.invoke(CHANNELS.attachPaths, key, paths, copy),
+  deleteItem: (key, cascade) => ipcRenderer.invoke(CHANNELS.deleteItem, key, cascade),
+  restoreItem: (file) => ipcRenderer.invoke(CHANNELS.restoreItem, file),
+  listTrash: () => ipcRenderer.invoke(CHANNELS.listTrash),
+  createProject: (input) => ipcRenderer.invoke(CHANNELS.createProject, input),
+  updateProject: (key, patch) => ipcRenderer.invoke(CHANNELS.updateProject, key, patch),
+  moveProject: (key, position) => ipcRenderer.invoke(CHANNELS.moveProject, key, position),
+
+  /**
+   * Real filesystem paths for dropped files.
+   *
+   * `File.path` was removed from Electron, so this is the only way to learn where
+   * a dropped file actually lives — and it has to happen in the preload, since
+   * webUtils is not exposed to the renderer.
+   */
+  pathsForFiles: (files) => files.map((file) => webUtils.getPathForFile(file)),
 
   onChanged: (listener: (snapshot: VaultSnapshot) => void) => {
     const wrapped = (_event: unknown, snapshot: VaultSnapshot): void => listener(snapshot);

@@ -41,7 +41,23 @@ always passes it.
 ## The desktop app
 
 Backlog table, board, agenda, and an item detail panel, over a project sidebar in
-manual rank order. Read-only for now; editing is next.
+manual rank order.
+
+Editing is in place, with no save button: every field commits straight to the
+file, because the markdown is the document and there is no draft state worth
+keeping. Status dropdowns and board columns are gated on the core's own
+`TRANSITIONS` table, so an illegal move is *prevented* rather than attempted and
+reported — a card that springs back with an error reads as a bug even when the
+message is right. Deleting offers an undo backed by `.trash`, and refuses to
+orphan children until you confirm the cascade.
+
+Board columns are grouped by project and then by manual rank, since ranks are per
+project — comparing two projects' rank numbers directly is meaningless, and doing
+so made a single drag look like it reshuffled everything.
+
+The renderer imports runtime values from `todo-vault/constants`, never from the
+package root: the root pulls in `vault.ts` and with it `node:fs`, which cannot be
+bundled for a browser context. Types are erased, so those come from the root.
 
 The shape that matters: `Vault` imports `node:fs` and `node:child_process`, so it
 lives in the **main** process and the renderer reaches it only through a
@@ -218,15 +234,16 @@ cross-project moves, path portability, and git health reporting.
 
 ## What is not here yet
 
-- **Editing in the app.** Forms, status transitions, drag and drop, comments.
-  The core and the MCP server can already do all of it; the UI reads only.
 - **In-app Claude.** One line of text to a filled draft, using the Messages API
   with tool-use for structured output, validated against `CreateItemInput` and
   shown as a preview before it writes. The API key would live in the main
   process only, never in the renderer bundle.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
-- **`updateProject` in the UI**, and project reordering by drag rather than CLI.
+- **Editing projects in the app.** They can be reordered by drag, but renaming,
+  creating and deleting a project are CLI- and MCP-only.
+- **Global search and keyboard shortcuts** beyond `n` for a new item and `Esc` to
+  close. Phase 3.
 - **The actual Jira POST.** By design.
 
 ## Files

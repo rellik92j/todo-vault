@@ -2,6 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
+import type { Status } from "todo-vault";
 import { CHANNELS, type MaybeSnapshot, type Result, type VaultSnapshot } from "../shared/api.js";
 import { VaultService } from "./vault-service.js";
 import { readSettings, rememberVault } from "./settings.js";
@@ -180,6 +181,99 @@ function registerHandlers(): void {
   handle(CHANNELS.getAgenda, (scope: "today" | "week" | "month") => service.getAgenda(scope));
   handle(CHANNELS.getRelated, (key: string) => service.getRelated(key));
   handle(CHANNELS.getSuggestedVault, () => suggestedVault());
+
+  // --------------------------------------------------------------- mutations
+  // Each returns a fresh snapshot so the renderer replaces rather than merges.
+
+  handle(CHANNELS.createItem, async (input: unknown) => {
+    const item = await service.createItem(input);
+    return { snapshot: await service.snapshot(), key: item.key };
+  });
+
+  handle(CHANNELS.updateItem, async (key: string, patch: unknown) => {
+    await service.updateItem(key, patch);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.transitionItem, async (key: string, status: Status) => {
+    await service.transition(key, status);
+    return service.snapshot();
+  });
+
+  handle(
+    CHANNELS.moveItem,
+    async (key: string, position: { after?: string; before?: string }) => {
+      await service.moveItem(key, position);
+      return service.snapshot();
+    },
+  );
+
+  handle(CHANNELS.addComment, async (key: string, body: string) => {
+    await service.addComment(key, body);
+    return service.snapshot();
+  });
+
+  handle(
+    CHANNELS.addLink,
+    async (key: string, link: { type: string; target: string; label?: string }) => {
+      await service.addLink(key, link);
+      return service.snapshot();
+    },
+  );
+
+  handle(CHANNELS.removeLink, async (key: string, target: string) => {
+    await service.removeLink(key, target);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.attachViaDialog, async (key: string, copy: boolean) => {
+    const result = await dialog.showOpenDialog({
+      title: copy ? "Attach a copy" : "Link a file, leaving it where it is",
+      properties: ["openFile", "multiSelections"],
+      buttonLabel: copy ? "Copy in" : "Link",
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    await service.attachPaths(key, result.filePaths, copy);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.attachPaths, async (key: string, paths: string[], copy: boolean) => {
+    await service.attachPaths(key, paths, copy);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.deleteItem, async (key: string, cascade: boolean) => {
+    const trashed = await service.deleteItem(key, cascade);
+    return { snapshot: await service.snapshot(), trashed };
+  });
+
+  handle(CHANNELS.restoreItem, async (file: string) => {
+    await service.restoreItem(file);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.listTrash, () => service.listTrash());
+
+  handle(
+    CHANNELS.createProject,
+    async (input: { key: string; name: string; description?: string }) => {
+      await service.createProject(input);
+      return service.snapshot();
+    },
+  );
+
+  handle(CHANNELS.updateProject, async (key: string, patch: unknown) => {
+    await service.updateProject(key, patch);
+    return service.snapshot();
+  });
+
+  handle(
+    CHANNELS.moveProject,
+    async (key: string, position: { after?: string; before?: string }) => {
+      await service.moveProject(key, position);
+      return service.snapshot();
+    },
+  );
 
   handle(
     CHANNELS.revealPath,

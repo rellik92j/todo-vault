@@ -1,41 +1,26 @@
 import { z } from "zod";
 
+import {
+  CADENCES,
+  ITEM_KEY_RE,
+  ITEM_TYPES,
+  LINK_TYPES,
+  PRIORITIES,
+  PROJECT_KEY_RE,
+  STATUSES,
+  SYNC_STATES,
+} from "./constants.js";
+
 /**
  * The single source of truth for the vault data model.
  * Field names deliberately mirror Jira's so the export is a mapping, not a translation.
+ *
+ * The enums, the transition table and the key formats live in constants.ts,
+ * which imports nothing, so the desktop renderer can use the same values without
+ * dragging zod or node:fs into a browser bundle. Re-exported here so every
+ * existing consumer still gets them from this module.
  */
-
-export const ITEM_TYPES = ["epic", "story", "task", "bug", "subtask"] as const;
-export const STATUSES = ["todo", "in_progress", "in_review", "blocked", "done"] as const;
-export const PRIORITIES = ["highest", "high", "medium", "low", "lowest"] as const;
-export const CADENCES = ["daily", "weekly", "monthly", "quarterly", "none"] as const;
-export const LINK_TYPES = ["url", "file", "folder", "item", "outlook", "note"] as const;
-export const SYNC_STATES = ["never", "pending", "pushed", "drifted"] as const;
-
-export type ItemType = (typeof ITEM_TYPES)[number];
-export type Status = (typeof STATUSES)[number];
-export type Priority = (typeof PRIORITIES)[number];
-export type Cadence = (typeof CADENCES)[number];
-
-/** Statuses that mean "no longer needs attention". */
-export const DONE_STATUSES: readonly Status[] = ["done"];
-
-/**
- * Allowed status transitions. Kept deliberately permissive except that
- * nothing jumps straight from todo to done without passing through work,
- * which is what makes the daily/weekly rollups meaningful.
- */
-export const TRANSITIONS: Record<Status, readonly Status[]> = {
-  todo: ["in_progress", "blocked", "done"],
-  in_progress: ["in_review", "blocked", "done", "todo"],
-  in_review: ["in_progress", "done", "blocked"],
-  blocked: ["todo", "in_progress"],
-  done: ["todo", "in_progress"],
-};
-
-/** Item keys look like PROJ-42. Project keys look like PROJ. */
-export const PROJECT_KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/;
-export const ITEM_KEY_RE = /^[A-Z][A-Z0-9]{1,9}-\d+$/;
+export * from "./constants.js";
 
 const isoDate = z
   .string()
@@ -317,47 +302,5 @@ export const ItemFilter = z
 
 export type ItemFilter = z.infer<typeof ItemFilter>;
 
-/**
- * Frontmatter key order. Fixed so that every write produces a stable file and
- * git diffs show only what actually changed.
- */
-export const FRONTMATTER_ORDER: readonly string[] = [
-  "id",
-  "key",
-  "project",
-  "type",
-  "summary",
-  "status",
-  "priority",
-  "parent",
-  "category",
-  "labels",
-  "components",
-  "assignee",
-  "reporter",
-  "startDate",
-  "dueDate",
-  "estimate",
-  "cadence",
-  "rank",
-  "links",
-  "attachments",
-  "comments",
-  "sync",
-  "created",
-  "updated",
-];
-
-export const PROJECT_FRONTMATTER_ORDER: readonly string[] = [
-  "key",
-  "name",
-  "category",
-  "lead",
-  "status",
-  "rank",
-  "startDate",
-  "dueDate",
-  "jiraProjectKey",
-  "created",
-  "updated",
-];
+/* FRONTMATTER_ORDER and PROJECT_FRONTMATTER_ORDER now live in constants.ts and
+   are re-exported above, so a new field is added in one place. */

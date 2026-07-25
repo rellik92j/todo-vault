@@ -3,7 +3,14 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 
 import chokidar, { type FSWatcher } from "chokidar";
-import { Vault, type Item } from "todo-vault";
+import {
+  Vault,
+  type DeleteResult,
+  type Item,
+  type Project,
+  type Status,
+  type TrashEntry,
+} from "todo-vault";
 
 import type { AgendaScope, AgendaView, ProjectSummary, VaultSnapshot } from "../shared/api.js";
 
@@ -161,6 +168,90 @@ export class VaultService extends EventEmitter {
   getRelated(key: string): { children: Item[]; backlinks: Item[] } {
     const vault = this.requireVault();
     return { children: vault.children(key), backlinks: vault.backlinks(key) };
+  }
+
+  // ----------------------------------------------------------- mutations
+
+  /**
+   * Reload before every write, then hand the vault to the caller.
+   *
+   * The MCP server does the same thing for the same reason: an external Claude
+   * may have changed a file since this process last read it, and writing back
+   * stale state would clobber it. Last-write-wins is the accepted trade, but
+   * only over state that was fresh a moment ago.
+   */
+  private async write<T>(fn: (vault: Vault) => Promise<T>): Promise<T> {
+    const vault = this.requireVault();
+    await vault.load();
+    return fn(vault);
+  }
+
+  createItem(input: unknown): Promise<Item> {
+    return this.write((v) => v.createItem(input));
+  }
+
+  updateItem(key: string, patch: unknown): Promise<Item> {
+    return this.write((v) => v.updateItem(key, patch));
+  }
+
+  transition(key: string, status: Status): Promise<Item> {
+    return this.write((v) => v.transition(key, status));
+  }
+
+  moveItem(key: string, position: { after?: string; before?: string }): Promise<Item> {
+    return this.write((v) => v.moveItem(key, position));
+  }
+
+  addComment(key: string, body: string): Promise<Item> {
+    return this.write((v) => v.addComment(key, body));
+  }
+
+  addLink(key: string, link: { type: string; target: string; label?: string }): Promise<Item> {
+    return this.write((v) => v.addLink(key, link));
+  }
+
+  removeLink(key: string, target: string): Promise<Item> {
+    return this.write((v) => v.removeLink(key, target));
+  }
+
+  async attachPaths(key: string, paths: string[], copy: boolean): Promise<Item> {
+    return this.write(async (v) => {
+      let item = v.getItem(key);
+      for (const source of paths) {
+        item = await v.addAttachment(key, source, { copy });
+      }
+      return item;
+    });
+  }
+
+  deleteItem(key: string, cascade: boolean): Promise<DeleteResult[]> {
+    return this.write((v) => v.deleteItem(key, { cascade }));
+  }
+
+  restoreItem(file: string): Promise<Item> {
+    return this.write((v) => v.restoreItem(file));
+  }
+
+  listTrash(): Promise<TrashEntry[]> {
+    return this.write((v) => v.listTrash());
+  }
+
+  createProject(input: {
+    key: string;
+    name: string;
+    description?: string;
+    category?: string;
+    lead?: string;
+  }): Promise<Project> {
+    return this.write((v) => v.createProject(input));
+  }
+
+  updateProject(key: string, patch: unknown): Promise<Project> {
+    return this.write((v) => v.updateProject(key, patch));
+  }
+
+  moveProject(key: string, position: { after?: string; before?: string }): Promise<Project> {
+    return this.write((v) => v.moveProject(key, position));
   }
 
   itemPath(key: string): string {

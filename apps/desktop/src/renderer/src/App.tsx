@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Item, Status } from "todo-vault";
-import type { AgendaScope } from "@shared/api";
+import type { AgendaScope, ProjectSummary } from "@shared/api";
 
 import { useVault } from "./useVault";
 import { BacklogTable } from "./BacklogTable";
@@ -8,6 +8,8 @@ import { Board } from "./Board";
 import { Agenda } from "./Agenda";
 import { ItemDetail } from "./ItemDetail";
 import { Welcome } from "./Welcome";
+import { CreateDialog } from "./CreateDialog";
+import { TrashPanel } from "./TrashPanel";
 import { BOARD_ORDER, STATUS_LABELS } from "./pieces";
 
 type View = "backlog" | "board" | "agenda";
@@ -22,8 +24,16 @@ export function App(): React.JSX.Element {
   const [text, setText] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [scope, setScope] = useState<AgendaScope>("week");
+  const [creating, setCreating] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [dragProject, setDragProject] = useState<string | null>(null);
 
   const snapshot = vault.snapshot;
+
+  // Select whatever was just created, so the detail panel opens on it.
+  useEffect(() => {
+    if (vault.lastCreated) setSelected(vault.lastCreated);
+  }, [vault.lastCreated]);
 
   // A selection that no longer exists — deleted, or re-keyed by a project
   // rename — must not leave a stale panel open.
@@ -35,11 +45,22 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setSelected(null);
+      const typing =
+        event.target instanceof HTMLElement &&
+        ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName);
+
+      if (event.key === "Escape") {
+        if (creating || showTrash) return; // those close themselves
+        setSelected(null);
+      }
+      if (!typing && event.key === "n" && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        setCreating(true);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [creating, showTrash]);
 
   const filtered = useMemo<Item[]>(() => {
     if (!snapshot) return [];
@@ -58,6 +79,44 @@ export function App(): React.JSX.Element {
   }, [snapshot, project, status, cadence, openOnly, text]);
 
   const selectedItem = snapshot?.items.find((i) => i.key === selected) ?? null;
+
+  /**
+   * Delete, turning the core's refusal into a question.
+   *
+   * `deleteItem` fails when the item has children and the message lists them.
+   * That is a decision for the user, not an error, so it becomes a confirm and a
+   * retry with cascade.
+   */
+  const handleDelete = useCallback(
+    async (item: Item) => {
+      const first = await vault.deleteItem(item.key, false);
+      if (!first.error) return;
+
+      if (/beneath it/.test(first.error)) {
+        if (window.confirm(`${first.error}\n\nTrash all of them together?`)) {
+          await vault.deleteItem(item.key, true);
+        }
+        return;
+      }
+      window.alert(first.error);
+    },
+    [vault],
+  );
+
+  const onProjectDrop = (target: ProjectSummary): void => {
+    if (!dragProject || dragProject === target.key) return;
+    const order = snapshot?.projects.map((p) => p.key) ?? [];
+    const from = order.indexOf(dragProject);
+    const to = order.indexOf(target.key);
+    setDragProject(null);
+    if (from === -1 || to === -1) return;
+    void vault.mutate(() =>
+      window.vault.moveProject(
+        dragProject,
+        from < to ? { after: target.key } : { before: target.key },
+      ),
+    );
+  };
 
   if (!snapshot) {
     return (
@@ -90,14 +149,19 @@ export function App(): React.JSX.Element {
             </span>
           </button>
 
-          {/* Already in manual order: listProjects honours rank, falling back to key. */}
+          {/* Drag to reorder. listProjects already returns manual order. */}
           {snapshot.projects.map((p) => (
             <button
-              className="project"
+              className={`project ${dragProject === p.key ? "project-dragging" : ""}`}
               key={p.key}
               aria-current={project === p.key}
               onClick={() => setProject(p.key)}
-              title={`${p.name} — ${p.totalItems} items, ${p.openItems} open${p.rank !== undefined ? `, rank ${p.rank}` : ""}`}
+              draggable
+              onDragStart={() => setDragProject(p.key)}
+              onDragEnd={() => setDragProject(null)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => onProjectDrop(p)}
+              title={`${p.name} — ${p.totalItems} items, ${p.openItems} open${p.rank !== undefined ? `, rank ${p.rank}` : ""}\nDrag to reorder`}
             >
               <span className="project-key">{p.key}</span>
               <span className="project-name">{p.name}</span>
@@ -118,11 +182,13 @@ export function App(): React.JSX.Element {
             <span title={gitTitle(snapshot.git)}>
               {snapshot.git.healthy ? "history on" : "history off"}
             </span>
-            {snapshot.trashCount > 0 && <span>· {snapshot.trashCount} in trash</span>}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button className="btn" onClick={() => void window.vault.revealPath({ kind: "vault" })}>
-              Open folder
+              Folder
+            </button>
+            <button className="btn" onClick={() => setShowTrash(true)}>
+              Trash{snapshot.trashCount > 0 ? ` (${snapshot.trashCount})` : ""}
             </button>
             <button className="btn" onClick={vault.chooseVault}>
               Switch
@@ -190,8 +256,12 @@ export function App(): React.JSX.Element {
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <button className="btn" onClick={vault.reload} title="Re-read from disk">
-            Refresh
+          <button
+            className="btn btn-primary"
+            onClick={() => setCreating(true)}
+            title="New item (n)"
+          >
+            + New
           </button>
         </div>
 
@@ -242,7 +312,18 @@ export function App(): React.JSX.Element {
             <BacklogTable items={filtered} selected={selected} onSelect={setSelected} />
           )}
           {view === "board" && (
-            <Board items={filtered} selected={selected} onSelect={setSelected} />
+            <Board
+              items={filtered}
+              projectOrder={snapshot.projects.map((p) => p.key)}
+              selected={selected}
+              onSelect={setSelected}
+              onTransition={(key, next) =>
+                void vault.mutate(() => window.vault.transitionItem(key, next))
+              }
+              onReorder={(key, position) =>
+                void vault.mutate(() => window.vault.moveItem(key, position))
+              }
+            />
           )}
           {view === "agenda" && (
             <Agenda
@@ -260,7 +341,42 @@ export function App(): React.JSX.Element {
           item={selectedItem}
           onClose={() => setSelected(null)}
           onSelect={setSelected}
+          onDelete={handleDelete}
+          mutate={vault.mutate}
         />
+      )}
+
+      {creating && (
+        <CreateDialog
+          projects={snapshot.projects}
+          items={snapshot.items}
+          defaultProject={project}
+          onClose={() => setCreating(false)}
+          onCreate={vault.createItem}
+        />
+      )}
+
+      {showTrash && (
+        <TrashPanel
+          onClose={() => setShowTrash(false)}
+          onRestore={(file) => vault.restore([file])}
+        />
+      )}
+
+      {vault.undo && (
+        <div className="toast">
+          <span style={{ flex: 1 }}>{vault.undo.message}</span>
+          <button
+            className="btn"
+            onClick={() => void vault.restore(vault.undo?.files ?? [])}
+            disabled={vault.busy}
+          >
+            Undo
+          </button>
+          <button className="banner-close" onClick={vault.dismissUndo} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );

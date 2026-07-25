@@ -1,27 +1,47 @@
 import { useEffect, useState } from "react";
+import {
+  CADENCES,
+  ITEM_TYPES,
+  PRIORITIES,
+  type Cadence,
+  type ItemType,
+  type Priority,
+  type Status,
+} from "todo-vault/constants";
 import type { Item } from "todo-vault";
-import { Cadence, DueDate, PriorityMark, StatusPill } from "./pieces";
+import type { Result, VaultSnapshot } from "@shared/api";
+
+import { EditableDate, EditableList, EditableSelect, EditableText } from "./Editable";
+import { Cadence as CadencePill, DueDate, STATUS_LABELS, legalTransitions } from "./pieces";
 
 /**
- * Everything the vault knows about one item.
+ * Everything the vault knows about one item, editable in place.
  *
- * Read-only for now — editing is the next phase. The reveal-in-folder buttons
- * matter more than they look: they make the point that the item *is* a markdown
- * file, and that the app is a view over it rather than the thing holding it.
+ * Every field commits straight through to the vault — there is no local draft
+ * state to get out of sync, and no save button, because the file on disk is the
+ * document. The reveal buttons make that point: the app is a view over markdown.
  */
 export function ItemDetail({
   item,
   onClose,
   onSelect,
+  onDelete,
+  mutate,
 }: {
   item: Item;
   onClose: () => void;
   onSelect: (key: string) => void;
+  onDelete: (item: Item) => void;
+  mutate: (call: () => Promise<Result<VaultSnapshot | null>>) => Promise<string | null>;
 }): React.JSX.Element {
   const [related, setRelated] = useState<{ children: Item[]; backlinks: Item[] }>({
     children: [],
     backlinks: [],
   });
+  const [comment, setComment] = useState("");
+  const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
+  const [showLinkForm, setShowLinkForm] = useState(false);
+  const [dropping, setDropping] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -33,18 +53,50 @@ export function ItemDetail({
     };
   }, [item.key, item.updated]);
 
+  const patch = (fields: Record<string, unknown>): void => {
+    void mutate(() => window.vault.updateItem(item.key, fields));
+  };
+
   const reveal = (kind: "item" | "attachment", value: string): void => {
     void window.vault.revealPath({ kind, value });
   };
 
+  // Only legal destinations, plus the current one, so a rejected write is
+  // impossible rather than merely reported.
+  const statusOptions = [item.status, ...legalTransitions(item.status)] as Status[];
+
+  const onDrop = (event: React.DragEvent): void => {
+    event.preventDefault();
+    setDropping(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (!files.length) return;
+    const paths = window.vault.pathsForFiles(files);
+    void mutate(() => window.vault.attachPaths(item.key, paths, true));
+  };
+
   return (
-    <aside className="detail">
+    <aside
+      className={`detail ${dropping ? "detail-dropping" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={onDrop}
+    >
       <header className="detail-head">
         <span className="cell-key">{item.key}</span>
-        <span className="type">{item.type}</span>
+        <EditableSelect<ItemType>
+          value={item.type}
+          options={ITEM_TYPES}
+          onCommit={(type) => patch({ type })}
+        />
         <div className="spacer" />
         <button className="btn" onClick={() => reveal("item", item.key)} title="Show the markdown file">
-          Reveal file
+          Reveal
+        </button>
+        <button className="btn btn-danger" onClick={() => onDelete(item)} title="Move to .trash">
+          Delete
         </button>
         <button className="btn" onClick={onClose} aria-label="Close">
           ✕
@@ -52,87 +104,121 @@ export function ItemDetail({
       </header>
 
       <div className="detail-body">
-        <h2 className="detail-summary">{item.summary}</h2>
+        <h2 className="detail-summary">
+          <EditableText value={item.summary} onCommit={(summary) => patch({ summary })} />
+        </h2>
 
         <dl className="fields">
           <dt>Status</dt>
           <dd>
-            <StatusPill status={item.status} />
+            <EditableSelect<Status>
+              value={item.status}
+              options={statusOptions}
+              labels={STATUS_LABELS}
+              onCommit={(status) => void mutate(() => window.vault.transitionItem(item.key, status))}
+            />
+            {legalTransitions(item.status).length === 0 && (
+              <span className="field-note">no moves from here</span>
+            )}
           </dd>
+
           <dt>Priority</dt>
           <dd>
-            <PriorityMark priority={item.priority} />
+            <EditableSelect<Priority>
+              value={item.priority}
+              options={PRIORITIES}
+              onCommit={(priority) => patch({ priority })}
+            />
           </dd>
+
           <dt>Project</dt>
           <dd>{item.project}</dd>
-          {item.parent && (
-            <>
-              <dt>Parent</dt>
-              <dd>
+
+          <dt>Parent</dt>
+          <dd>
+            {item.parent ? (
+              <>
                 <button className="link-btn" onClick={() => onSelect(item.parent as string)}>
                   {item.parent}
                 </button>
-              </dd>
-            </>
-          )}
-          {item.category && (
-            <>
-              <dt>Category</dt>
-              <dd>{item.category}</dd>
-            </>
-          )}
-          {item.dueDate && (
-            <>
-              <dt>Due</dt>
-              <dd>
+                <button
+                  className="clear-btn"
+                  title="Detach from parent"
+                  onClick={() => patch({ parent: null })}
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <span className="field-note">none</span>
+            )}
+          </dd>
+
+          <dt>Category</dt>
+          <dd>
+            <EditableText
+              value={item.category ?? ""}
+              placeholder="none"
+              onCommit={(category) => patch({ category: category || null })}
+            />
+          </dd>
+
+          <dt>Labels</dt>
+          <dd>
+            <EditableList
+              value={item.labels}
+              placeholder="none"
+              onCommit={(labels) => patch({ labels })}
+            />
+          </dd>
+
+          <dt>Start</dt>
+          <dd>
+            <EditableDate value={item.startDate} onCommit={(startDate) => patch({ startDate })} />
+          </dd>
+
+          <dt>Due</dt>
+          <dd>
+            <EditableDate value={item.dueDate} onCommit={(dueDate) => patch({ dueDate })} />
+            {item.dueDate && (
+              <span className="field-note">
                 <DueDate item={item} />
-              </dd>
-            </>
-          )}
-          {item.startDate && (
-            <>
-              <dt>Start</dt>
-              <dd>{item.startDate}</dd>
-            </>
-          )}
-          {item.cadence !== "none" && (
-            <>
-              <dt>Cadence</dt>
-              <dd>
-                <Cadence cadence={item.cadence} />
-              </dd>
-            </>
-          )}
-          {item.estimate !== undefined && (
-            <>
-              <dt>Estimate</dt>
-              <dd>{item.estimate}</dd>
-            </>
-          )}
-          {item.assignee && (
-            <>
-              <dt>Assignee</dt>
-              <dd>{item.assignee}</dd>
-            </>
-          )}
-          {item.rank !== undefined && (
-            <>
-              <dt>Rank</dt>
-              <dd className="mono-path">{item.rank}</dd>
-            </>
-          )}
-          {item.labels.length > 0 && (
-            <>
-              <dt>Labels</dt>
-              <dd>
-                {item.labels.map((l) => (
-                  <span className="label" key={l}>
-                    {l}
-                  </span>
-                ))}
-              </dd>
-            </>
-          )}
+              </span>
+            )}
+          </dd>
+
+          <dt>Cadence</dt>
+          <dd>
+            <EditableSelect<Cadence>
+              value={item.cadence}
+              options={CADENCES}
+              onCommit={(cadence) => patch({ cadence })}
+            />
+            <CadencePill cadence={item.cadence} />
+          </dd>
+
+          <dt>Estimate</dt>
+          <dd>
+            <EditableText
+              value={item.estimate === undefined ? "" : String(item.estimate)}
+              placeholder="none"
+              onCommit={(raw) => {
+                if (!raw) return patch({ estimate: null });
+                const parsed = Number(raw);
+                if (Number.isFinite(parsed) && parsed >= 0) patch({ estimate: parsed });
+              }}
+            />
+          </dd>
+
+          <dt>Assignee</dt>
+          <dd>
+            <EditableText
+              value={item.assignee ?? ""}
+              placeholder="none"
+              onCommit={(assignee) => patch({ assignee: assignee || null })}
+            />
+          </dd>
+
           <dt>Jira</dt>
           <dd>
             {item.sync.jiraKey ? (
@@ -140,19 +226,23 @@ export function ItemDetail({
                 {item.sync.jiraKey} <span className="pill">{item.sync.state}</span>
               </>
             ) : (
-              <span style={{ color: "var(--text-faint)" }}>not pushed</span>
+              <span className="field-note">not pushed</span>
             )}
           </dd>
+
           <dt>Updated</dt>
           <dd className="mono-path">{item.updated.replace("T", " ").slice(0, 19)}</dd>
         </dl>
 
-        {item.description.trim() && (
-          <div className="detail-section">
-            <h3>Description</h3>
-            <pre className="description">{item.description.trim()}</pre>
-          </div>
-        )}
+        <div className="detail-section">
+          <h3>Description</h3>
+          <EditableText
+            value={item.description}
+            placeholder="Click to add a description…"
+            multiline
+            onCommit={(description) => patch({ description })}
+          />
+        </div>
 
         {related.children.length > 0 && (
           <div className="detail-section">
@@ -162,65 +252,131 @@ export function ItemDetail({
                 <button type="button" className="row" key={child.key} onClick={() => onSelect(child.key)}>
                   <span className="cell-key">{child.key}</span>
                   <span className="row-summary">{child.summary}</span>
-                  <StatusPill status={child.status} />
+                  <span className="pill">{STATUS_LABELS[child.status]}</span>
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        {item.links.length > 0 && (
-          <div className="detail-section">
-            <h3>Links</h3>
-            {item.links.map((link, index) => (
-              <div className="link-row" key={`${link.type}-${link.target}-${index}`}>
-                <span className="link-type">{link.type}</span>
-                <span className="link-target">
-                  {link.type === "item" ? (
-                    <button className="link-btn" onClick={() => onSelect(link.target)}>
-                      {link.label ?? link.target}
-                    </button>
-                  ) : link.type === "url" ? (
-                    <a
-                      className="link-btn"
-                      href={link.target}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={link.target}
-                    >
-                      {link.label ?? link.target}
-                    </a>
-                  ) : (
-                    <>
-                      {link.label && <div>{link.label}</div>}
-                      <div className="mono-path">{link.target}</div>
-                    </>
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="detail-section">
+          <h3>
+            Links
+            <button className="add-btn" onClick={() => setShowLinkForm((v) => !v)}>
+              {showLinkForm ? "cancel" : "+ add"}
+            </button>
+          </h3>
 
-        {item.attachments.length > 0 && (
-          <div className="detail-section">
-            <h3>Attachments</h3>
-            {item.attachments.map((attachment) => (
-              <div className="link-row" key={attachment.path}>
-                <span className="link-type">file</span>
-                <span className="link-target">
-                  <button className="link-btn" onClick={() => reveal("attachment", attachment.path)}>
-                    {attachment.title ?? attachment.path.split("/").pop()}
+          {showLinkForm && (
+            <form
+              className="mini-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!linkDraft.target.trim()) return;
+                void mutate(() =>
+                  window.vault.addLink(item.key, {
+                    type: linkDraft.type,
+                    target: linkDraft.target.trim(),
+                    label: linkDraft.label.trim() || undefined,
+                  }),
+                ).then((err) => {
+                  if (!err) {
+                    setLinkDraft({ type: "url", target: "", label: "" });
+                    setShowLinkForm(false);
+                  }
+                });
+              }}
+            >
+              <select
+                value={linkDraft.type}
+                onChange={(e) => setLinkDraft({ ...linkDraft, type: e.target.value })}
+              >
+                {["url", "item", "file", "folder", "outlook", "note"].map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <input
+                placeholder={linkDraft.type === "item" ? "ACME-42" : "target"}
+                value={linkDraft.target}
+                onChange={(e) => setLinkDraft({ ...linkDraft, target: e.target.value })}
+              />
+              <input
+                placeholder="label (optional)"
+                value={linkDraft.label}
+                onChange={(e) => setLinkDraft({ ...linkDraft, label: e.target.value })}
+              />
+              <button className="btn btn-primary" type="submit">
+                Add
+              </button>
+            </form>
+          )}
+
+          {item.links.map((link, index) => (
+            <div className="link-row" key={`${link.type}-${link.target}-${index}`}>
+              <span className="link-type">{link.type}</span>
+              <span className="link-target">
+                {link.type === "item" ? (
+                  <button className="link-btn" onClick={() => onSelect(link.target)}>
+                    {link.label ?? link.target}
                   </button>
-                  <div className="mono-path">
-                    {attachment.path}
-                    {attachment.bytes !== undefined && ` · ${formatBytes(attachment.bytes)}`}
-                  </div>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+                ) : link.type === "url" ? (
+                  <a className="link-btn" href={link.target} target="_blank" rel="noreferrer">
+                    {link.label ?? link.target}
+                  </a>
+                ) : (
+                  <>
+                    {link.label && <div>{link.label}</div>}
+                    <div className="mono-path">{link.target}</div>
+                  </>
+                )}
+              </span>
+              <button
+                className="clear-btn"
+                title="Remove link"
+                onClick={() => void mutate(() => window.vault.removeLink(item.key, link.target))}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          {item.links.length === 0 && !showLinkForm && (
+            <div className="field-note">No links.</div>
+          )}
+        </div>
+
+        <div className="detail-section">
+          <h3>
+            Attachments
+            <button className="add-btn" onClick={() => void mutate(() => window.vault.attachViaDialog(item.key, true))}>
+              + copy in
+            </button>
+            <button className="add-btn" onClick={() => void mutate(() => window.vault.attachViaDialog(item.key, false))}>
+              + link in place
+            </button>
+          </h3>
+
+          {item.attachments.map((attachment) => (
+            <div className="link-row" key={attachment.path}>
+              <span className="link-type">file</span>
+              <span className="link-target">
+                <button className="link-btn" onClick={() => reveal("attachment", attachment.path)}>
+                  {attachment.title ?? attachment.path.split("/").pop()}
+                </button>
+                <div className="mono-path">
+                  {attachment.path}
+                  {attachment.bytes !== undefined && ` · ${formatBytes(attachment.bytes)}`}
+                </div>
+              </span>
+            </div>
+          ))}
+          {item.attachments.length === 0 && (
+            <div className="field-note">
+              None. Drop files anywhere on this panel to copy them in.
+            </div>
+          )}
+        </div>
 
         {related.backlinks.length > 0 && (
           <div className="detail-section">
@@ -236,19 +392,37 @@ export function ItemDetail({
           </div>
         )}
 
-        {item.comments.length > 0 && (
-          <div className="detail-section">
-            <h3>Comments</h3>
-            {item.comments.map((comment, index) => (
-              <div className="comment" key={`${comment.at}-${index}`}>
-                <div className="comment-meta">
-                  {comment.author} · {comment.at.replace("T", " ").slice(0, 16)}
-                </div>
-                <div className="comment-body">{comment.body}</div>
+        <div className="detail-section">
+          <h3>Comments</h3>
+          {item.comments.map((entry, index) => (
+            <div className="comment" key={`${entry.at}-${index}`}>
+              <div className="comment-meta">
+                {entry.author} · {entry.at.replace("T", " ").slice(0, 16)}
               </div>
-            ))}
-          </div>
-        )}
+              <div className="comment-body">{entry.body}</div>
+            </div>
+          ))}
+
+          <form
+            className="mini-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!comment.trim()) return;
+              void mutate(() => window.vault.addComment(item.key, comment)).then((err) => {
+                if (!err) setComment("");
+              });
+            }}
+          >
+            <input
+              placeholder="Add to the running log…"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+            />
+            <button className="btn" type="submit" disabled={!comment.trim()}>
+              Comment
+            </button>
+          </form>
+        </div>
       </div>
     </aside>
   );

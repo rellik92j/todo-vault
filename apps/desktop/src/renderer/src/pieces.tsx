@@ -1,4 +1,23 @@
+// Runtime values come from the constants subpath, which imports nothing.
+// Importing them from the package root would pull vault.js — and node:fs — into
+// the renderer bundle. Types are erased, so they can come from the root.
+import { TRANSITIONS, type Status } from "todo-vault/constants";
 import type { Item } from "todo-vault";
+
+/**
+ * Which statuses an item can actually move to, straight from the core's table.
+ *
+ * The UI reads this rather than offering everything and letting the write fail:
+ * todo → in_review is rejected by design, and a rejected drag looks like a bug
+ * even when the error message is perfect.
+ */
+export function legalTransitions(from: Status): readonly Status[] {
+  return TRANSITIONS[from] ?? [];
+}
+
+export function canTransition(from: Status, to: Status): boolean {
+  return from === to || legalTransitions(from).includes(to);
+}
 
 /** Small presentational pieces shared by the table, board, agenda, and detail. */
 

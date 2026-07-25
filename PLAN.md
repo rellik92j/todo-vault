@@ -174,7 +174,42 @@ paths — is a thirty-minute job that saves an afternoon of confusion.
 **Gate:** launch the app, see the example vault, edit an item's `.md` in Notepad,
 watch the board update without touching the app.
 
-## Phase 2 — editing
+## Phase 2 — editing ✅
+
+Built and verified by driving the real app: create through the form, edit every
+field in place, drag on the board, delete with undo, and a trash view.
+
+Verification note worth keeping: the app cannot be driven by synthetic OS clicks,
+because Windows refuses `SetForegroundWindow` to a process launched this way and
+the clicks land on whatever is actually on top. Screenshots still work
+(`PrintWindow` ignores focus), which makes it look like input is working when it
+is not. The reliable approach is a script that requires the built main process
+and drives the renderer with `executeJavaScript` plus `webContents.sendInputEvent`
+— real Chromium input, which dnd-kit's pointer sensors accept and synthetic DOM
+events do not.
+
+Three problems this turned up:
+
+- **The renderer cannot import runtime values from the package root.** Phase 1
+  only imported types, which are erased. Phase 2 needs `TRANSITIONS` and the
+  enums as real values, and importing them from `todo-vault` drags in `vault.js`
+  and with it `node:fs`, `node:crypto` and `node:child_process`, which fails the
+  browser build. Fixed by moving the pure constants into `constants.ts`, which
+  imports nothing, exposed as `todo-vault/constants`. Still one source of truth —
+  the schema re-exports it.
+- **A board column mixes projects, but rank is per project.** Dragging within a
+  column asked the vault to rank across projects, which it rightly refused; and
+  sorting a column by raw rank compared numbers from different rank spaces, so
+  one drag appeared to reshuffle every project. Columns are now grouped by
+  project in sidebar order, then by rank inside each, and a reorder attaches to
+  the nearest same-project neighbour in the direction of travel.
+- **Failed mutations were silent.** `mutate` returned the message but every
+  caller passed the result to `void`, so a rejected reorder looked like a card
+  that just refused to move. It now surfaces the error as well as returning it;
+  the delete flow uses a dedicated helper because there a refusal is a question,
+  not an error.
+
+## Phase 2 — as designed
 
 - Item detail form covering every field; create dialog built on `CreateItemInput`.
 - **Transition-aware controls.** `TRANSITIONS` is exported — import it in the

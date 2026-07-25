@@ -1,83 +1,285 @@
-import type { Item } from "todo-vault";
-import { BOARD_ORDER, Cadence, STATUS_LABELS, isOverdue } from "./pieces";
+import { useMemo, useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import type { Item, Status } from "todo-vault";
+
+import { BOARD_ORDER, Cadence, STATUS_LABELS, canTransition, isOverdue } from "./pieces";
 
 /**
- * Status columns, each in manual rank order.
+ * Status columns in manual rank order, with drag to reorder or transition.
  *
- * Read with rank order rather than work order, because a column shows the
- * sequence you arranged, not what is most urgent. Items with no rank fall to the
- * bottom of their column.
+ * Two different operations depending on where a card lands:
+ *   across columns  -> transition, which the core validates
+ *   within a column -> moveItem, using the neighbours it landed between
+ *
+ * Columns an item cannot legally reach are dimmed and refuse the drop while it
+ * is being dragged, rather than accepting it and surfacing an error afterwards.
+ * todo -> in_review is rejected by design, and a card that springs back with a
+ * toast reads as a bug even when the message is exactly right.
  */
 export function Board({
   items,
+  projectOrder,
   selected,
   onSelect,
+  onTransition,
+  onReorder,
 }: {
+  items: Item[];
+  /** Project keys in sidebar order, used to group each column. */
+  projectOrder: string[];
+  selected: string | null;
+  onSelect: (key: string) => void;
+  onTransition: (key: string, status: Status) => void;
+  onReorder: (key: string, position: { after?: string; before?: string }) => void;
+}): React.JSX.Element {
+  const [dragging, setDragging] = useState<Item | null>(null);
+  const sensors = useSensors(
+    // A small threshold so a click still selects rather than starting a drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  /**
+   * Columns grouped by project, then by manual rank inside each project.
+   *
+   * Ranks are per project, so two ranks from different projects are numbers from
+   * different spaces — comparing them directly made a single drag appear to
+   * reshuffle every project at once. Grouping first gives a stable order that can
+   * be explained: project blocks in the order the sidebar shows, each internally
+   * in the order you dragged.
+   */
+  const columns = useMemo(() => {
+    const projectRank = new Map(projectOrder.map((key, index) => [key, index]));
+
+    return BOARD_ORDER.map((status) => ({
+      status,
+      items: items
+        .filter((i) => i.status === status)
+        .sort((a, b) => {
+          const byProject =
+            (projectRank.get(a.project) ?? Number.MAX_SAFE_INTEGER) -
+            (projectRank.get(b.project) ?? Number.MAX_SAFE_INTEGER);
+          if (byProject !== 0) return byProject;
+
+          if (a.rank !== undefined && b.rank !== undefined && a.rank !== b.rank) {
+            return a.rank - b.rank;
+          }
+          if (a.rank !== undefined && b.rank === undefined) return -1;
+          if (a.rank === undefined && b.rank !== undefined) return 1;
+          return a.key.localeCompare(b.key, undefined, { numeric: true });
+        }),
+    }));
+  }, [items, projectOrder]);
+
+  const onDragStart = (event: DragStartEvent): void => {
+    setDragging(items.find((i) => i.key === event.active.id) ?? null);
+  };
+
+  const onDragEnd = (event: DragEndEvent): void => {
+    const active = dragging;
+    setDragging(null);
+    if (!active || !event.over) return;
+
+    const overId = String(event.over.id);
+
+    // Dropped on a column body: a status change, or a no-op onto its own column.
+    if (overId.startsWith("column:")) {
+      const status = overId.slice("column:".length) as Status;
+      if (status !== active.status && canTransition(active.status, status)) {
+        onTransition(active.key, status);
+      }
+      return;
+    }
+
+    // Dropped on another card.
+    const target = items.find((i) => i.key === overId);
+    if (!target || target.key === active.key) return;
+
+    if (target.status !== active.status) {
+      if (canTransition(active.status, target.status)) onTransition(active.key, target.status);
+      return;
+    }
+
+    // Same column, so this is a reorder. Ranks are per project, but a column
+    // interleaves every project, so the card physically above may belong to a
+    // different one — asking the vault to rank across projects is rejected, and
+    // rightly. Reorder against the nearest card of the *same* project in the
+    // direction of travel, which is the closest thing to what the drop implied.
+    const column = columns.find((c) => c.status === active.status);
+    if (!column) return;
+    const from = column.items.findIndex((i) => i.key === active.key);
+    const to = column.items.findIndex((i) => i.key === target.key);
+    if (from === -1 || to === -1) return;
+
+    const sameProject = (candidate: Item): boolean =>
+      candidate.project === active.project && candidate.key !== active.key;
+
+    if (from < to) {
+      // Moving down: sit after the last same-project card at or above the drop.
+      for (let i = to; i >= 0; i -= 1) {
+        const candidate = column.items[i];
+        if (sameProject(candidate)) {
+          onReorder(active.key, { after: candidate.key });
+          return;
+        }
+      }
+    } else {
+      // Moving up: sit before the first same-project card at or below the drop.
+      for (let i = to; i < column.items.length; i += 1) {
+        const candidate = column.items[i];
+        if (sameProject(candidate)) {
+          onReorder(active.key, { before: candidate.key });
+          return;
+        }
+      }
+    }
+    // No same-project neighbour on that side: nothing meaningful to do.
+  };
+
+  return (
+    <DndContext
+      sensors={sensors}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={() => setDragging(null)}
+    >
+      <div className="board">
+        {columns.map((column) => (
+          <Column
+            key={column.status}
+            status={column.status}
+            items={column.items}
+            selected={selected}
+            onSelect={onSelect}
+            dragging={dragging}
+          />
+        ))}
+      </div>
+
+      <DragOverlay dropAnimation={null}>
+        {dragging && <Card item={dragging} selected={false} overlay />}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function Column({
+  status,
+  items,
+  selected,
+  onSelect,
+  dragging,
+}: {
+  status: Status;
   items: Item[];
   selected: string | null;
   onSelect: (key: string) => void;
+  dragging: Item | null;
 }): React.JSX.Element {
-  const columns = BOARD_ORDER.map((status) => ({
-    status,
-    items: items
-      .filter((i) => i.status === status)
-      .sort((a, b) => {
-        if (a.rank !== undefined && b.rank !== undefined) return a.rank - b.rank;
-        if (a.rank !== undefined) return -1;
-        if (b.rank !== undefined) return 1;
-        return a.key.localeCompare(b.key, undefined, { numeric: true });
-      }),
-  }));
+  const allowed = !dragging || canTransition(dragging.status, status);
+  const { setNodeRef, isOver } = useDroppable({ id: `column:${status}`, disabled: !allowed });
 
   return (
-    <div className="board">
-      {columns.map((column) => (
-        <section className="column" key={column.status}>
-          <header className="column-head">
-            <span className="dot" style={{ background: `var(--${column.status})` }} />
-            {STATUS_LABELS[column.status]}
-            <span className="column-count">{column.items.length}</span>
-          </header>
-          <div className="column-body">
-            {column.items.map((item) => (
-              <button
-                type="button"
-                className="card"
-                key={item.key}
-                aria-selected={item.key === selected}
-                onClick={() => onSelect(item.key)}
-                style={{ borderLeftColor: `var(--${item.priority})` }}
-              >
-                <div className="card-top">
-                  <span className="card-key">{item.key}</span>
-                  <span className="type">{item.type}</span>
-                </div>
-                <div className="card-summary">{item.summary}</div>
-                {(item.dueDate || item.cadence !== "none" || item.labels.length > 0) && (
-                  <div className="card-foot">
-                    {item.dueDate && (
-                      <span className={isOverdue(item) ? "due-overdue" : undefined}>
-                        {item.dueDate}
-                      </span>
-                    )}
-                    <Cadence cadence={item.cadence} />
-                    {item.labels.slice(0, 2).map((label) => (
-                      <span className="label" key={label}>
-                        {label}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </button>
-            ))}
-            {column.items.length === 0 && (
-              <div style={{ padding: "10px 2px", color: "var(--text-faint)", fontSize: 11.5 }}>
-                nothing here
-              </div>
-            )}
+    <section
+      className={`column ${dragging && !allowed ? "column-blocked" : ""} ${
+        isOver && allowed ? "column-over" : ""
+      }`}
+      ref={setNodeRef}
+    >
+      <header className="column-head">
+        <span className="dot" style={{ background: `var(--${status})` }} />
+        {STATUS_LABELS[status]}
+        <span className="column-count">{items.length}</span>
+      </header>
+      <div className="column-body">
+        {items.map((item) => (
+          <DraggableCard
+            key={item.key}
+            item={item}
+            selected={item.key === selected}
+            onSelect={onSelect}
+          />
+        ))}
+        {items.length === 0 && (
+          <div className="column-empty">
+            {dragging && !allowed ? "not a legal move" : "nothing here"}
           </div>
-        </section>
-      ))}
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DraggableCard({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: Item;
+  selected: boolean;
+  onSelect: (key: string) => void;
+}): React.JSX.Element {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.key });
+  const { setNodeRef: setDropRef } = useDroppable({ id: item.key });
+
+  return (
+    <div
+      ref={(node) => {
+        setNodeRef(node);
+        setDropRef(node);
+      }}
+      {...attributes}
+      {...listeners}
+      className={isDragging ? "card-placeholder" : undefined}
+      onClick={() => onSelect(item.key)}
+    >
+      <Card item={item} selected={selected} />
+    </div>
+  );
+}
+
+function Card({
+  item,
+  selected,
+  overlay,
+}: {
+  item: Item;
+  selected: boolean;
+  overlay?: boolean;
+}): React.JSX.Element {
+  return (
+    <div
+      className={`card ${overlay ? "card-overlay" : ""}`}
+      aria-selected={selected}
+      style={{ borderLeftColor: `var(--${item.priority})` }}
+    >
+      <div className="card-top">
+        <span className="card-key">{item.key}</span>
+        <span className="type">{item.type}</span>
+      </div>
+      <div className="card-summary">{item.summary}</div>
+      {(item.dueDate || item.cadence !== "none" || item.labels.length > 0) && (
+        <div className="card-foot">
+          {item.dueDate && (
+            <span className={isOverdue(item) ? "due-overdue" : undefined}>{item.dueDate}</span>
+          )}
+          <Cadence cadence={item.cadence} />
+          {item.labels.slice(0, 2).map((label) => (
+            <span className="label" key={label}>
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
