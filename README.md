@@ -40,6 +40,12 @@ init [dir]                        Create a vault
 doctor                            Validate every file, find dangling links
 projects                          List projects with open counts
 project new KEY "Name"            Create a project
+project set KEY --name "..."      Update project fields
+project rename OLD NEW            Change the key, re-keying every item
+project reorder KEY --before K    Reorder the project list by hand
+project move ITEM TARGET          Move an item + subtree to another project
+project delete KEY [--cascade]    Trash a project
+project restore FILE              Restore a trashed project
 new --project KEY --summary "..." Create an item
 list [--project --status --open]  List items
 show KEY                          Full item, children, backlinks, comments
@@ -87,14 +93,14 @@ Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
 note that legal signed off"*.
 
-Twenty-two tools are registered:
+Twenty-three tools are registered:
 
 | Tool | |
 |---|---|
 | `vault_list_items` | Filtered list, compact projection |
 | `vault_get_item` | Full record plus children and backlinks |
 | `vault_get_agenda` | Overdue, due, and recurring, kept separate |
-| `vault_list_projects` | Portfolio view with open counts |
+| `vault_list_projects` | Portfolio view, in manual order |
 | `vault_create_item` | Create, with hierarchy validation |
 | `vault_update_item` | Patch fields |
 | `vault_transition_item` | Move through the workflow |
@@ -108,6 +114,7 @@ Twenty-two tools are registered:
 | `vault_create_project` | New project |
 | `vault_update_project` | Patch project fields |
 | `vault_rename_project` | Change the key, re-keying every item |
+| `vault_reorder_project` | Reorder the project list |
 | `vault_move_item_to_project` | Move an item and its subtree across |
 | `vault_delete_project` | To `.trash/projects/`, recoverable |
 | `vault_restore_project` | Back out of `.trash/projects/` |
@@ -161,11 +168,11 @@ silently dropping your dates.
 npx tsx --test test/vault.test.ts
 ```
 
-Thirty-three tests covering key allocation, disk round-trips, frontmatter
+Thirty-six tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, backlinks, attachments,
 agenda sectioning, ADF conversion, push ordering, drift detection, manual
-reordering, trash and restore, project rename and cross-project moves, path
-portability, and git health reporting.
+reordering of both items and projects, trash and restore, project rename and
+cross-project moves, path portability, and git health reporting.
 
 ## What is not here yet
 

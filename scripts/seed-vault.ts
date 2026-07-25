@@ -69,6 +69,10 @@ async function main(): Promise<void> {
     lead: "me",
   });
 
+  // Deliberately not alphabetical, so the fixture exercises manual project order
+  // rather than accidentally agreeing with the fallback sort.
+  await vault.moveProject("OPS", { before: "ACME" });
+
   // ------------------------------------------------- ACME: epic and children
   const epic = await vault.createItem({
     project: "ACME",

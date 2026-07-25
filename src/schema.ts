@@ -198,6 +198,14 @@ export const ProjectSchema = z
     startDate: isoDate.optional(),
     dueDate: isoDate.optional(),
     status: z.enum(["active", "on_hold", "complete", "archived"]).default("active"),
+    rank: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Manual position in the project list. Sparse by design — gaps of ~1000. Local only.",
+      ),
     jiraProjectKey: z
       .string()
       .optional()
@@ -224,6 +232,8 @@ export const UpdateProjectInput = z
     dueDate: isoDate.nullable().optional(),
     status: z.enum(["active", "on_hold", "complete", "archived"]).optional(),
     jiraProjectKey: z.string().nullable().optional(),
+    /** Normally set via Vault.moveProject, which keeps the gaps sane. Null clears it. */
+    rank: z.number().int().nonnegative().nullable().optional(),
   })
   .strict();
 
@@ -344,6 +354,7 @@ export const PROJECT_FRONTMATTER_ORDER: readonly string[] = [
   "category",
   "lead",
   "status",
+  "rank",
   "startDate",
   "dueDate",
   "jiraProjectKey",

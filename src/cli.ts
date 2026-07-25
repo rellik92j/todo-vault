@@ -49,6 +49,7 @@ Usage: vault <command> [options]
   project new KEY "Name"            Create a project
   project set KEY --name "..."      Update project fields
   project rename OLD NEW            Change the key, re-keying every item
+  project reorder KEY --before K    Reorder the project list by hand
   project move ITEM TARGET          Move an item + subtree to another project
   project delete KEY [--cascade]    Trash a project
   project restore FILE              Restore a trashed project
@@ -275,6 +276,22 @@ async function main(): Promise<void> {
           return;
         }
 
+        case "reorder": {
+          const key = _[2];
+          if (!key) {
+            throw new VaultError("Usage: vault project reorder KEY [--after KEY] [--before KEY]");
+          }
+          const moved = await vault.moveProject(key, {
+            after: str(flags, "after"),
+            before: str(flags, "before"),
+          });
+          process.stdout.write(`${moved.key} now ranked ${moved.rank}\n`);
+          for (const p of vault.listProjects()) {
+            process.stdout.write(`  ${p.key.padEnd(8)} ${p.name}\n`);
+          }
+          return;
+        }
+
         case "delete": {
           const key = _[2];
           if (!key) throw new VaultError("Usage: vault project delete KEY [--cascade]");
@@ -300,7 +317,7 @@ async function main(): Promise<void> {
 
         default:
           throw new VaultError(
-            "Usage: vault project new|set|rename|move|delete|restore — see: vault help",
+            "Usage: vault project new|set|rename|reorder|move|delete|restore — see: vault help",
           );
       }
     }

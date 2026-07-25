@@ -246,7 +246,9 @@ server.registerTool(
     title: "List projects",
     description: `List every project in the vault with its open item count.
 
-Returns: { projects: [{ key, name, status, category?, lead?, dueDate?, openItems }] }
+Returned in manual order where one has been set with vault_reorder_project, alphabetically by key otherwise.
+
+Returns: { projects: [{ key, name, status, category?, lead?, dueDate?, rank?, openItems }] }
 
 Use when: you need a project key before creating an item, or want a portfolio-level view.`,
     inputSchema: {},
@@ -263,6 +265,7 @@ Use when: you need a project key before creating an item, or want a portfolio-le
           category: p.category,
           lead: p.lead,
           dueDate: p.dueDate,
+          rank: p.rank,
           openItems: vault.listItems({ project: p.key, open: true, limit: 500 }).total,
         })),
       });
@@ -641,6 +644,43 @@ Returns: { rekeyed: [{ from, to }], parentDropped? }`,
           (result.rekeyed.length > 1 ? ` with ${result.rekeyed.length - 1} descendant(s).` : ".") +
           (result.parentDropped ? ` Parent ${result.parentDropped} stayed behind, link dropped.` : ""),
       );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_reorder_project",
+  {
+    title: "Reorder the project list",
+    description: `Set a project's manual position in the project list — the order vault_list_projects returns, and what a sidebar would show.
+
+This reorders PROJECTS. To move work between projects, use vault_move_item_to_project. To reorder items inside a project, use vault_move_item.
+
+Positions are list positions, not rank numbers: name the neighbours it should land between. One side is enough — 'before' means IMMEDIATELY before that project. Naming neither sends it to the end.
+
+Projects with no manual position sort alphabetically after ranked ones, so a vault where nothing has been reordered reads as it always did.
+
+Args:
+  - key (string, required)
+  - after (string, optional): the project it should follow
+  - before (string, optional): the project it should precede
+
+Returns: { key, rank, order: [<keys in the new order>] }`,
+    inputSchema: { key: projectKey, after: projectKey.optional(), before: projectKey.optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key, after, before }) => {
+    try {
+      return await withFreshVault(async () => {
+        const project = await vault.moveProject(key, { after, before });
+        const order = vault.listProjects().map((p) => p.key);
+        return ok(
+          { key: project.key, rank: project.rank, order },
+          `${project.key} repositioned. Order is now ${order.join(", ")}.`,
+        );
+      });
     } catch (err) {
       return fail(err);
     }

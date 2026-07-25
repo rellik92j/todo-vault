@@ -573,6 +573,86 @@ test("updateProject patches fields and clears them with null", async () => {
   assert.equal(reopened.getProject("ACME").lead, undefined);
 });
 
+test("moveProject reorders the project list by hand", async () => {
+  const vault = await tmpVault(); // ACME
+  for (const [key, name] of [["BETA", "Beta"], ["OPS", "Ops"], ["ZED", "Zed"]] as const) {
+    await vault.createProject({ key, name });
+  }
+  const order = () => vault.listProjects().map((p) => p.key);
+
+  // Nothing ranked yet, so the list reads exactly as it did before ranks existed.
+  assert.deepEqual(order(), ["ACME", "BETA", "OPS", "ZED"]);
+
+  // Only `before` given: immediately before ZED, not merely somewhere above it.
+  await vault.moveProject("ACME", { before: "ZED" });
+  assert.deepEqual(order(), ["BETA", "OPS", "ACME", "ZED"]);
+
+  await vault.moveProject("ZED", { after: "BETA" });
+  assert.deepEqual(order(), ["BETA", "ZED", "OPS", "ACME"]);
+
+  // Neither side: to the end.
+  await vault.moveProject("BETA", {});
+  assert.deepEqual(order(), ["ZED", "OPS", "ACME", "BETA"]);
+
+  const ranks = vault.listProjects().map((p) => p.rank);
+  assert.equal(new Set(ranks).size, ranks.length, `ranks must be distinct: ${ranks.join(", ")}`);
+
+  // A new project lands at the end rather than in the middle of a hand-arranged
+  // list, because unranked sorts after ranked.
+  await vault.createProject({ key: "NEW", name: "New" });
+  assert.deepEqual(order(), ["ZED", "OPS", "ACME", "BETA", "NEW"]);
+
+  // And the order survives a round trip through disk.
+  const reopened = await Vault.open(vault.root);
+  assert.deepEqual(reopened.listProjects().map((p) => p.key), [
+    "ZED",
+    "OPS",
+    "ACME",
+    "BETA",
+    "NEW",
+  ]);
+});
+
+test("moveProject respaces a closed gap and refuses nonsense", async () => {
+  const vault = await tmpVault();
+  await vault.createProject({ key: "BETA", name: "Beta" });
+  await vault.createProject({ key: "OPS", name: "Ops" });
+
+  await assert.rejects(() => vault.moveProject("ACME", { after: "ACME" }), /relative to itself/);
+  await assert.rejects(
+    () => vault.moveProject("ACME", { before: "NOPE" }),
+    /No project with key NOPE/,
+  );
+
+  await vault.updateProject("ACME", { rank: 1000 });
+  await vault.updateProject("BETA", { rank: 1001 });
+  await vault.updateProject("OPS", { rank: 2000 });
+
+  const moved = await vault.moveProject("OPS", { after: "ACME", before: "BETA" });
+  const acme = vault.getProject("ACME").rank as number;
+  const beta = vault.getProject("BETA").rank as number;
+  assert.ok(
+    acme < (moved.rank as number) && (moved.rank as number) < beta,
+    `expected ${acme} < ${moved.rank} < ${beta} after respacing`,
+  );
+  assert.deepEqual(vault.listProjects().map((p) => p.key), ["ACME", "OPS", "BETA"]);
+});
+
+test("project rank survives a rename", async () => {
+  const vault = await tmpVault();
+  await vault.createProject({ key: "BETA", name: "Beta" });
+  await vault.moveProject("BETA", { before: "ACME" });
+  assert.deepEqual(vault.listProjects().map((p) => p.key), ["BETA", "ACME"]);
+
+  const renamed = await vault.renameProject("BETA", "GAMMA");
+  assert.equal(typeof renamed.rank, "number");
+  assert.deepEqual(
+    vault.listProjects().map((p) => p.key),
+    ["GAMMA", "ACME"],
+    "a rename must not silently send the project to the back of the list",
+  );
+});
+
 test("renameProject re-keys every item and every reference to them", async () => {
   const vault = await tmpVault();
   const epic = await vault.createItem({ project: "ACME", type: "epic", summary: "Epic" });

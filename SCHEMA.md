@@ -138,7 +138,22 @@ of ~1000, so moving one card rewrites one file. Items without a rank sort after
 ranked ones in work order, which puts a newly created item at the end of its
 column rather than in the middle. Pass `sort: "rank"` to get it.
 
-Ranks are per project. Set them with `Vault.moveItem(key, { after, before })`
+Projects carry a `rank` of their own, for the order the project list is shown
+in. `listProjects()` returns manual order where one has been set and
+alphabetical by key otherwise, so a vault where nothing has been dragged reads
+exactly as it did before ranks existed, and a newly created project appears at
+the end rather than in the middle of a hand-arranged list. Set it with
+`Vault.moveProject(key, { after, before })`.
+
+Three operations sound similar and are not:
+
+| | |
+|---|---|
+| `moveItem` | Reorder an item within its project |
+| `moveProject` | Reorder the project list itself |
+| `moveItemsToProject` | Move work from one project into another, re-keying it |
+
+Item ranks are per project. Set them with `Vault.moveItem(key, { after, before })`
 rather than by patching `rank` directly — it derives whichever neighbour you
 leave out, so `{ before: "ACME-7" }` means *immediately* before ACME-7, and it
 respaces the project when a gap closes. Sparse integers rather than fractional

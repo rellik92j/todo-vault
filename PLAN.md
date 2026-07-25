@@ -4,9 +4,9 @@ Stack is decided: **Electron**. This is the plan for phases 3, 4, and 6.
 
 **Phases 0, 0.5, and 0.6 are complete.** Node 24.18 is installed, the tree is
 split into `src/` and `test/`, both git repos exist, the example vault is seeded,
-and the suite is at 33 green tests. `rank`, trash-based deletion, the full set of
-project operations, and the three-way agenda split are in the core, the CLI, and
-the MCP server. Phase 1 onwards is the remaining work.
+and the suite is at 36 green tests. Ranking for items and projects, trash-based
+deletion, the full set of project operations, and the three-way agenda split are
+in the core, the CLI, and the MCP server. Phase 1 onwards is the remaining work.
 
 ## Phase 0 — make the existing code run ✅
 
@@ -132,7 +132,8 @@ watch the board update without touching the app.
   a card snapping back with an error toast, which reads as a bug.
 - Board drag-and-drop with `@dnd-kit/core`. Cross-column → `transition`,
   intra-column → `moveItem(key, { after, before })` with the two neighbours the
-  drop landed between. Read columns with `sort: "rank"`.
+  drop landed between. Read columns with `sort: "rank"`. The project sidebar
+  is draggable the same way, via `moveProject`.
 - Delete via the trash, with an undo affordance backed by `restoreItem`, and a
   trash view. Deleting a parent must surface the cascade prompt rather than
   swallowing the refusal.
@@ -166,16 +167,26 @@ subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
 ## Phase 0.6 — parity across the three surfaces ✅
 
-**MCP is level with the CLI again**, at 22 tools from 13. The nine additions are
+**MCP is level with the CLI again**, at 23 tools from 13. The ten additions are
 `move_item`, `delete_item`, `restore_item`, `list_trash`, `update_project`,
-`rename_project`, `move_item_to_project`, `delete_project`, `restore_project`.
+`rename_project`, `reorder_project`, `move_item_to_project`, `delete_project`,
+`restore_project`.
 The destructive ones carry `destructiveHint` and refuse rather than guess:
 deleting something with children returns the list of what is in the way. Verified
 by driving the server over stdio — handshake, `tools/list`, then a delete, a
 trash listing, a restore, and a refusal.
 
 **Project operations.** `updateProject`, `renameProject`, `deleteProject`,
-`restoreProject`, `listTrashedProjects`, and `moveItemsToProject`.
+`restoreProject`, `listTrashedProjects`, `moveProject`, and
+`moveItemsToProject`.
+
+Projects rank too, so the list order is yours. `listProjects()` honours manual
+order where one is set and falls back to alphabetical, which means a vault where
+nothing has been dragged reads exactly as it did before, and a new project lands
+at the end instead of the middle of an arranged list. Three verbs stay distinct
+and are named to stop a model conflating them: `moveItem` reorders within a
+project, `moveProject` reorders the list, `moveItemsToProject` moves work
+between projects.
 
 Rename and cross-project move share one `rekeyItems` primitive, because both have
 to fix the same five kinds of reference — the item's key and project, its
@@ -200,11 +211,6 @@ but left `due` and `overdue` double-listing the same three items.
 
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
-
-**Project ordering.** Projects sort by key. If "move project" was meant to be
-about arranging them in a sidebar rather than moving items between them, that
-wants a `rank` on `ProjectSchema` — the same treatment items got, and about
-thirty lines.
 
 **Recurring items still show a due date outside the window.** In the seeded
 vault, OPS-2 appears under "recurring this week" carrying `due:2026-07-29`. That

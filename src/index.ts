@@ -1,4 +1,10 @@
-export { Vault, VaultError, pushableFields, compareByRank } from "./vault.js";
+export {
+  Vault,
+  VaultError,
+  pushableFields,
+  compareByRank,
+  compareProjectsByRank,
+} from "./vault.js";
 export type {
   VaultOptions,
   AgendaSection,

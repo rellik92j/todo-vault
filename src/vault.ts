@@ -290,9 +290,14 @@ export class Vault {
     return project;
   }
 
+  /**
+   * Projects in manual order where one has been set, alphabetical by key
+   * otherwise. No sort option, because the fallback already covers both: a vault
+   * where nothing has been dragged reads exactly as it did before ranks existed.
+   */
   listProjects(): Project[] {
     this.assertLoaded();
-    return [...this.projects.values()].sort((a, b) => a.key.localeCompare(b.key));
+    return [...this.projects.values()].sort(compareProjectsByRank);
   }
 
   private nearestKey(key: string): string | undefined {
@@ -431,6 +436,20 @@ export class Vault {
     return item;
   }
 
+  private async writeAndIndexProject(next: Project): Promise<Project> {
+    const frontmatter = ProjectSchema.parse(stripDescription({ ...next }));
+    const project: Project = { ...frontmatter, description: next.description };
+    await this.writeProject(project);
+    this.projects.set(project.key, project);
+    return project;
+  }
+
+  private async persistProject(next: Project, message: string): Promise<Project> {
+    const project = await this.writeAndIndexProject(next);
+    await this.commit(message);
+    return project;
+  }
+
   async createProject(input: {
     key: string;
     name: string;
@@ -458,11 +477,10 @@ export class Vault {
       created: now,
       updated: now,
     });
-    const project: Project = { ...frontmatter, description: input.description ?? "" };
-    await this.writeProject(project);
-    this.projects.set(project.key, project);
-    await this.commit(`Add project ${project.key}`);
-    return project;
+    return this.persistProject(
+      { ...frontmatter, description: input.description ?? "" },
+      `Add project ${frontmatter.key}`,
+    );
   }
 
   async createItem(rawInput: unknown): Promise<Item> {
@@ -951,17 +969,89 @@ export class Vault {
     }
     merged.updated = nowIso();
 
-    const { description: _drop, ...frontmatterInput } = merged;
-    const frontmatter = ProjectSchema.parse(frontmatterInput);
-    const next: Project = {
-      ...frontmatter,
-      description: patch.description ?? existing.description,
+    return this.persistProject(
+      { ...(merged as unknown as Project), description: patch.description ?? existing.description },
+      `Update project ${key}`,
+    );
+  }
+
+  /**
+   * Reorder the project list by hand — the sidebar order, not the items inside.
+   *
+   * Same shape as moveItem: positions are list positions, and naming one side is
+   * enough, because "before X" means immediately before X. Distinct from
+   * moveItemsToProject, which moves work between projects.
+   */
+  async moveProject(
+    key: string,
+    position: { after?: string; before?: string } = {},
+  ): Promise<Project> {
+    const project = this.getProject(key);
+    if (position.after === key || position.before === key) {
+      throw new VaultError(`Cannot position ${key} relative to itself`);
+    }
+    for (const neighbour of [position.after, position.before]) {
+      if (neighbour) this.getProject(neighbour);
+    }
+
+    if ([...this.projects.values()].some((p) => p.rank === undefined)) {
+      await this.renumberProjects();
+    }
+
+    const bounds = (): { lower?: number; upper?: number } => {
+      const list = [...this.projects.values()]
+        .filter((p) => p.key !== key)
+        .sort(compareProjectsByRank);
+
+      let above = position.after ? list.find((p) => p.key === position.after) : undefined;
+      let below = position.before ? list.find((p) => p.key === position.before) : undefined;
+
+      if (below && !above) {
+        const at = list.indexOf(below);
+        above = at > 0 ? list[at - 1] : undefined;
+      } else if (above && !below) {
+        const at = list.indexOf(above);
+        below = at >= 0 && at + 1 < list.length ? list[at + 1] : undefined;
+      } else if (!above && !below) {
+        above = list[list.length - 1]; // no position given: send it to the end
+      }
+
+      return { lower: above?.rank, upper: below?.rank };
     };
 
-    await this.writeProject(next);
-    this.projects.set(key, next);
-    await this.commit(`Update project ${key}`);
-    return next;
+    let { lower, upper } = bounds();
+    let rank = rankBetween(lower, upper);
+
+    if (rank === undefined) {
+      await this.renumberProjects();
+      ({ lower, upper } = bounds());
+      rank = rankBetween(lower, upper);
+      if (rank === undefined) {
+        throw new VaultError(
+          `Could not find a rank between ${lower ?? "start"} and ${upper ?? "end"} even after renumbering`,
+        );
+      }
+    }
+
+    return this.persistProject(
+      { ...this.getProject(key), rank, updated: nowIso() },
+      `Reorder project ${key}`,
+    );
+  }
+
+  /** Respace every project rank to multiples of RANK_GAP, preserving order. */
+  private async renumberProjects(): Promise<void> {
+    const ordered = [...this.projects.values()].sort(compareProjectsByRank);
+    let rank = RANK_GAP;
+    let changed = 0;
+    for (const project of ordered) {
+      if (project.rank !== rank) {
+        await this.writeAndIndexProject({ ...project, rank, updated: nowIso() });
+        changed += 1;
+      }
+      rank += RANK_GAP;
+    }
+    if (changed) await this.commit("Respace project ranks");
   }
 
   /**
@@ -1554,6 +1644,23 @@ export function compareByRank(a: Item, b: Item): number {
   if (b.rank !== undefined) return 1;
 
   return sortByWorkOrder(a, b);
+}
+
+/**
+ * Manual project order, falling back to alphabetical.
+ *
+ * Ranked projects lead, in the order they were dragged; unranked ones follow by
+ * key, so a newly created project appears at the end of the list rather than
+ * jumping into the middle of a hand-arranged sidebar.
+ */
+export function compareProjectsByRank(a: Project, b: Project): number {
+  if (a.rank !== undefined && b.rank !== undefined) {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.key.localeCompare(b.key);
+  }
+  if (a.rank !== undefined) return -1;
+  if (b.rank !== undefined) return 1;
+  return a.key.localeCompare(b.key);
 }
 
 function stripDescription(obj: Record<string, unknown>): Record<string, unknown> {
