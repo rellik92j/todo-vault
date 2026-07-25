@@ -74,6 +74,32 @@ Also fixed, both found by running the code rather than reading it:
 
 ## Phase 1 — the shell, read-only
 
+**Dependencies — pin these.** Installing the latest of everything fails outright:
+`electron-vite@5` accepts Vite `^5 || ^6 || ^7`, while the current
+`@vitejs/plugin-react@6` requires Vite `^8`, so npm exits with `ERESOLVE`. This
+combination is verified to resolve and run on this machine:
+
+| | |
+|---|---|
+| `electron` | `^43` |
+| `electron-vite` | `^5` |
+| `vite` | `^7` — **not 8**, until electron-vite catches up |
+| `@vitejs/plugin-react` | `^5` — 6.x demands Vite 8 |
+| `react` / `react-dom` | `^19` |
+| `typescript` | `^5` |
+| `chokidar` | `^4` |
+| `@dnd-kit/core` + `@dnd-kit/sortable` | latest |
+
+Nothing in that set compiles native code, so no Visual Studio Build Tools,
+Python, or node-gyp are needed. The only `.node` files in the tree are prebuilt
+binaries shipped inside Electron's zip extractor.
+
+**Electron downloads on first run, not on install.** Electron 43 declares no
+install scripts; `require('electron')` lazily triggers `install.js`. So
+`npm install` finishes in seconds and the first `npm run dev` pauses to fetch
+~350 MB. The zip is cached in `%LOCALAPPDATA%\electron\Cache`, so a second
+project extracts from cache rather than re-downloading.
+
 **Structure.** Convert to npm workspaces: `packages/core` (everything that exists
 now) and `apps/desktop`. The CLI and MCP server stay independently shippable,
 and the app depends on `core`'s built `dist/` with its type declarations — which
