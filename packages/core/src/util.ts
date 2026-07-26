@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 export { randomUUID };
 
@@ -87,16 +88,61 @@ export function contentHash(input: Record<string, unknown>): string {
 }
 
 /**
+ * True for the three codes a transient, Windows-style file lock produces:
+ * `EPERM`, `EACCES`, `EBUSY`. `EPERM` is the awkward one — a scanner or search
+ * indexer holding the target open reports the exact same code as a genuine
+ * permissions failure, and nothing in the error tells them apart. This
+ * predicate does not try; instead the retry it guards is kept short and always
+ * rethrows on its last attempt, so a real permissions problem still comes back
+ * as a failure, just a few milliseconds later rather than instantly.
+ */
+export function isTransientRenameError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+
+const RENAME_RETRY_DELAYS_MS = [10, 40];
+
+/**
+ * Three attempts total, ~10ms then ~40ms apart. A scanner or indexer's hold on
+ * the file clears in milliseconds, so that is enough to ride out the transient
+ * case. The backoff is deliberately short rather than exponential: `EPERM` also
+ * covers a genuine permissions failure (see `isTransientRenameError`), and a
+ * real one should still surface almost immediately instead of reading as a
+ * hang while it is retried away.
+ */
+async function renameWithRetry(tmp: string, filePath: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(tmp, filePath);
+      return;
+    } catch (err) {
+      if (attempt >= RENAME_RETRY_DELAYS_MS.length || !isTransientRenameError(err)) throw err;
+      await delay(RENAME_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
+/**
  * Write via a temp file in the same directory, then rename. Rename is atomic on
  * POSIX, so an external Claude reading the vault mid-write sees either the old
  * file or the new one, never a half-written one.
+ *
+ * The rename alone is wrapped in a short retry: on Windows an antivirus
+ * scanner or search indexer can briefly hold the target file open, which fails
+ * `fs.rename` with a transient error, and the desktop app's file watcher now
+ * keeps a handle open on these files almost continuously, which makes that
+ * window real rather than theoretical. `fs.writeFile` above is left alone —
+ * it has no equivalent failure mode, and retrying it too could write the temp
+ * file's contents twice for no benefit.
  */
 export async function writeFileAtomic(filePath: string, contents: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   try {
     await fs.writeFile(tmp, contents, "utf8");
-    await fs.rename(tmp, filePath);
+    await renameWithRetry(tmp, filePath);
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => {});
     throw err;

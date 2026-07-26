@@ -7,7 +7,7 @@ import test from "node:test";
 import { Vault } from "../src/vault.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
-import { RANK_GAP, rankBetween } from "../src/util.js";
+import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-test-"));
@@ -884,4 +884,52 @@ test("gitStatus tells the truth about whether history is being kept", async () =
   assert.equal(status.isRepo, false);
   assert.equal(status.healthy, false, "must not claim health outside a repo");
   assert.ok(status.lastError, "and must say why, rather than staying quiet");
+});
+
+// ------------------------------------------------------------- atomic writes
+
+// Staging a real EPERM by holding a file handle open is not attempted here:
+// on Windows it depends on how the OS and antivirus schedule things, varies
+// machine to machine, and would make this suite flaky for no honest gain.
+// What can be tested straightforwardly is the predicate that decides what
+// counts as transient, and that writeFileAtomic's happy path — now wrapped in
+// a retry it should never need — still writes, overwrites, creates missing
+// directories, and leaves no temp file behind.
+
+function errorWithCode(code: string): NodeJS.ErrnoException {
+  const err = new Error(code) as NodeJS.ErrnoException;
+  err.code = code;
+  return err;
+}
+
+test("isTransientRenameError recognizes only the transient Windows codes", () => {
+  assert.equal(isTransientRenameError(errorWithCode("EPERM")), true);
+  assert.equal(isTransientRenameError(errorWithCode("EACCES")), true);
+  assert.equal(isTransientRenameError(errorWithCode("EBUSY")), true);
+  assert.equal(isTransientRenameError(errorWithCode("ENOENT")), false, "a real missing-file error is not transient");
+
+  assert.equal(isTransientRenameError(new Error("no code here")), false, "an Error without a code is not transient");
+  assert.equal(isTransientRenameError("EPERM"), false, "a bare string is not an Error, however it reads");
+  assert.equal(isTransientRenameError(null), false);
+  assert.equal(isTransientRenameError(undefined), false);
+});
+
+test("writeFileAtomic writes, overwrites, creates missing directories, and leaves no temp file", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "write-atomic-"));
+  const target = path.join(dir, "nested", "deeper", "note.md");
+
+  // The parent directories do not exist yet.
+  await writeFileAtomic(target, "first");
+  assert.equal(await fs.readFile(target, "utf8"), "first");
+
+  // A second write overwrites in place rather than appending or refusing.
+  await writeFileAtomic(target, "second");
+  assert.equal(await fs.readFile(target, "utf8"), "second");
+
+  const leftInParent = await fs.readdir(path.join(dir, "nested", "deeper"));
+  assert.deepEqual(
+    leftInParent.filter((f) => f.includes(".tmp-")),
+    [],
+    "no .tmp-* file should survive either the first write or the overwrite",
+  );
 });
