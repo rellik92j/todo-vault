@@ -416,12 +416,21 @@ distinct: a rejected key, a refusal, a truncated reply, a non-JSON reply, and a
 draft the vault would refuse each read differently, and the last of those quotes
 the core's own field-level complaint.
 
-**Two live risks worth naming.** The model ID is pinned to `claude-opus-5` in
+**Two live risks worth naming.** The model ID is pinned to `claude-sonnet-5` in
 one constant, `CLAUDE_MODEL` — if the account cannot reach it, that is a
 `PermissionDeniedError` with a clear message and a one-line fix. And nothing
 bounds cost: there is no request timeout and no cap on how many drafts a session
 can trigger. Fine for one person pressing a button; worth revisiting before this
 is ever automatic.
+
+**On the model choice.** Sonnet rather than Opus, because drafting one task from
+one sentence is small structured extraction, not reasoning. Haiku 4.5 would be
+cheaper again and is a fair fit, but it predates `output_config.effort` and
+would 400 on every call until that parameter came out — so switching down is two
+edits, not one. The tier to watch is judgement under vagueness: if a vague
+prompt starts coming back with invented specifics rather than blank fields and
+an honest note, that is the signal to raise `effort` first and change tier
+second.
 
 ## The risk that stays
 

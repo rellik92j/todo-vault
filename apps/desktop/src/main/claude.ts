@@ -21,8 +21,13 @@ import { getApiKey } from "./secrets.js";
  * model's output is a suggestion the user accepts, never an action it took.
  */
 
-/** Named so the UI can say what it is about to call. */
-export const CLAUDE_MODEL = "claude-opus-5";
+/**
+ * Named so the UI can say what it is about to call, and so changing it is a
+ * one-line edit. Sonnet rather than Opus: drafting one task from one sentence
+ * is a small structured-extraction job, not a reasoning problem, and this tier
+ * is several times cheaper for it.
+ */
+export const CLAUDE_MODEL = "claude-sonnet-5";
 
 /**
  * The wire shape, as a JSON Schema rather than the core's zod schema.
@@ -166,9 +171,11 @@ export async function draftItem(prompt: string, context: DraftContext): Promise<
       model: CLAUDE_MODEL,
       max_tokens: 16000,
       system: systemPrompt(context),
-      // Low effort with thinking left on. Drafting one task is not hard, and
-      // disabling thinking on this model is the more expensive lever — it can
-      // put a tool call or a <thinking> tag into the visible text.
+      // Adaptive thinking is this model's default and calibrates depth to the
+      // task, so it is left alone. `effort: low` is respected strictly here —
+      // the work gets scoped to what was asked, which is what a one-sentence
+      // draft wants. If drafts come back shallow, a date resolved carelessly or
+      // a project picked at random, raise this before touching the prompt.
       output_config: {
         effort: "low",
         format: { type: "json_schema", schema: DRAFT_SCHEMA },
