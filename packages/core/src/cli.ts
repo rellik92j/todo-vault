@@ -64,7 +64,7 @@ Usage: vault <command> [options]
   comment KEY "text"                Append a comment
   link KEY --url|--item|--file X    Attach a link
   attach KEY <path> [--no-copy]     Attach a file
-  agenda [today|week|month]         What needs attention
+  agenda [today|week|nextWeek|month] What needs attention
   move KEY --after K --before K     Reorder by hand (rank)
   delete KEY [--cascade]            Move to .trash (recoverable)
   trash [--projects]                List trashed items, or trashed projects
@@ -483,19 +483,25 @@ async function main(): Promise<void> {
     }
 
     case "agenda": {
-      const scope = (_[1] ?? "today") as "today" | "week" | "month";
+      const scope = (_[1] ?? "today") as "today" | "week" | "nextWeek" | "month";
       const sections = vault.agenda(scope);
       if (asJson) {
         process.stdout.write(`${JSON.stringify(sections, null, 2)}\n`);
         return;
       }
+      const scopePhrase: Record<typeof scope, string> = {
+        today: "today",
+        week: "this week",
+        nextWeek: "next week",
+        month: "this month",
+      };
       for (const section of sections) {
         const label =
           section.kind === "overdue"
             ? `Overdue as of ${todayIso()}`
             : section.kind === "recurring"
-              ? `Recurring this ${section.scope === "today" ? "day" : section.scope}`
-              : `Due this ${section.scope === "today" ? "day" : section.scope} (${section.from} to ${section.to})`;
+              ? `Recurring ${scopePhrase[section.scope]}`
+              : `Due ${scopePhrase[section.scope]} (${section.from} to ${section.to})`;
         process.stdout.write(`\n${label}\n${"-".repeat(label.length)}\n`);
         if (!section.items.length) process.stdout.write("  nothing\n");
         for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);

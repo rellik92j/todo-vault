@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { formatZodError, type Status } from "todo-vault";
 import {
   CHANNELS,
+  type AgendaScope,
   type ClaudeStatus,
   type MaybeSnapshot,
   type Result,
@@ -192,7 +193,7 @@ function registerHandlers(): void {
   );
 
   handle(CHANNELS.listItems, (filter: Record<string, unknown>) => service.listItems(filter ?? {}));
-  handle(CHANNELS.getAgenda, (scope: "today" | "week" | "month") => service.getAgenda(scope));
+  handle(CHANNELS.getAgenda, (scope: AgendaScope) => service.getAgenda(scope));
   handle(CHANNELS.getRelated, (key: string) => service.getRelated(key));
   handle(CHANNELS.getSuggestedVault, () => suggestedVault());
 

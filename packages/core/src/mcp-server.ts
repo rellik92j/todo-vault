@@ -206,15 +206,15 @@ reporting them as one list implies the recurring items are due, which they are
 not. An item that is both due and recurring appears only under 'due'.
 
 Args:
-  - scope ('today'|'week'|'month', default 'today')
+  - scope ('today'|'week'|'nextWeek'|'month', default 'today')
   - reference (YYYY-MM-DD, optional): treat this as the current date
 
 Returns: { sections: [{ kind, scope, from?, to?, count, items: [...] }] }
 Weeks run Monday to Sunday.
 
-Use when: "what's on for today", "what's due this week", "give me a monthly status rollup".`,
+Use when: "what's on for today", "what's due this week", "what's coming up next week", "give me a monthly status rollup".`,
     inputSchema: {
-      scope: z.enum(["today", "week", "month"]).default("today"),
+      scope: z.enum(["today", "week", "nextWeek", "month"]).default("today"),
       reference: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
