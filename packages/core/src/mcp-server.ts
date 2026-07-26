@@ -248,6 +248,8 @@ server.registerTool(
 
 Returned in manual order where one has been set with vault_reorder_project, alphabetically by key otherwise.
 
+Deliberately unfiltered: a project with status 'archived' is hidden from the desktop app's sidebar but still listed here, because hiding is about that one window and must not narrow what you can see.
+
 Returns: { projects: [{ key, name, status, category?, lead?, dueDate?, rank?, openItems }] }
 
 Use when: you need a project key before creating an item, or want a portfolio-level view.`,
@@ -552,8 +554,10 @@ Args (all optional; pass null to clear a field):
   - key (string, required): the project to update
   - name, description, category, lead (string)
   - startDate / dueDate (YYYY-MM-DD)
-  - status ('active'|'on_hold'|'complete'|'archived')
+  - status ('active'|'on_hold'|'complete')
   - jiraProjectKey (string): target project in Jira
+
+'archived' is rejected here on purpose: it is what hides a project from the desktop app, and hiding refuses while the project still holds open work. Use vault_hide_project so that check runs.
 
 Returns: { updated: { key, name, status, ... } }`,
     inputSchema: {
@@ -686,6 +690,65 @@ Returns: { key, rank, order: [<keys in the new order>] }`,
           `${project.key} repositioned. Order is now ${order.join(", ")}.`,
         );
       });
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_hide_project",
+  {
+    title: "Hide a project",
+    description: `Take a project out of the desktop app's sidebar, without deleting anything.
+
+This is NOT a delete. The project file, its items, and its history all stay exactly where they are, and vault_list_projects keeps returning it — hiding is a decision about one window, so it must not change what you can see. It is stored as status 'archived'.
+
+Refuses while the project still holds items that are not done or disregarded, and the error names them. That refusal is the point: hiding pulls every one of the project's items out of the app's views, so live work would go quiet rather than get finished. Report the named items rather than looking for a way round.
+
+Args:
+  - key (string, required)
+
+Returns: { project }
+
+Use when: the user wants a finished or dormant project out of the way.
+Don't use when: they want it gone — that is vault_delete_project, which is recoverable from .trash.`,
+    inputSchema: { key: projectKey },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key }) => {
+    try {
+      const project = await withFreshVault(() => vault.hideProject(key));
+      return ok(
+        { project },
+        `Hid project ${project.key}. Nothing was deleted — it is still in vault_list_projects, ` +
+          `and vault_unhide_project puts it back in the sidebar.`,
+      );
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_unhide_project",
+  {
+    title: "Unhide a project",
+    description: `Put a hidden project back in the desktop app's sidebar. No preconditions.
+
+It comes back 'active' even if it was 'on_hold' or 'complete' before it was hidden — status is the only field that held that, and hiding overwrote it. Say so if the user cared about the old value.
+
+Args:
+  - key (string, required)
+
+Returns: { project }`,
+    inputSchema: { key: projectKey },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key }) => {
+    try {
+      const project = await withFreshVault(() => vault.unhideProject(key));
+      return ok({ project }, `Project ${project.key} is visible again, with status ${project.status}.`);
     } catch (err) {
       return fail(err);
     }

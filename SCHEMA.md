@@ -185,6 +185,31 @@ Keys are never recycled: `.counters.json` holds the high-water mark, so trashing
 trashes them alongside, but as separate entries, so a project can be restored
 without everything that was once in it.
 
+## Hiding a project
+
+`hideProject(key)` / `unhideProject(key)` are the not-deleting option: a project
+that is finished with, out of the desktop app's sidebar, with nothing moved and
+nothing removed. It is stored as `status: "archived"` — the fourth value in the
+project status enum, which nothing else reads — so there is no extra field and
+the state round-trips through `vault project set` and the MCP project tools like
+any other.
+
+Two things follow from that, both deliberate:
+
+- **`listProjects()` stays unfiltered.** Filtering there would take hidden
+  projects out of the CLI and the MCP server too, and hiding is a decision about
+  one window, not about what the vault will admit exists. The desktop app drops
+  them from its sidebar, and from the items, agenda, palette, and create dialog
+  along with them. `vault projects` marks them `[hidden]` instead.
+- **`updateProject` refuses to set `archived`.** Hiding refuses while the
+  project still holds items outside `DONE_STATUSES`, and naming those items is
+  the whole value of the refusal. Left reachable from the generic setter, the
+  rule would hold on one path and be bypassable from the other two.
+
+Unhiding restores `active`. A project that was `on_hold` or `complete` before
+being hidden does not come back as either, because `status` is the only field
+that held that and hiding overwrote it.
+
 ## Re-keying
 
 Two operations change item keys, and both go through the same primitive because

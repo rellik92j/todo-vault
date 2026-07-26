@@ -289,6 +289,16 @@ function registerHandlers(): void {
     },
   );
 
+  handle(CHANNELS.hideProject, async (key: string) => {
+    await service.hideProject(key);
+    return service.snapshot();
+  });
+
+  handle(CHANNELS.unhideProject, async (key: string) => {
+    await service.unhideProject(key);
+    return service.snapshot();
+  });
+
   // --------------------------------------------------------- optional Claude
   // Every one of these answers even when nothing is configured, so the renderer
   // can explain the state rather than the feature simply not being there.

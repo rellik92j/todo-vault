@@ -51,6 +51,8 @@ Usage: vault <command> [options]
   project rename OLD NEW            Change the key, re-keying every item
   project reorder KEY --before K    Reorder the project list by hand
   project move ITEM TARGET          Move an item + subtree to another project
+  project hide KEY                  Drop it from the desktop app's sidebar
+  project unhide KEY                Put it back
   project delete KEY [--cascade]    Trash a project
   project restore FILE              Restore a trashed project
   new --project KEY --summary "..." Create an item
@@ -200,7 +202,11 @@ async function main(): Promise<void> {
       }
       for (const p of projects) {
         const open = vault.listItems({ project: p.key, open: true, limit: 500 }).total;
-        process.stdout.write(`${p.key.padEnd(8)} ${p.name} (${open} open)\n`);
+        // Hidden ones are still listed — hiding is the desktop app's business,
+        // not the vault's — but silently listing them identically would make
+        // "why is this not in the sidebar" unanswerable from here.
+        const hidden = p.status === "archived" ? " [hidden]" : "";
+        process.stdout.write(`${p.key.padEnd(8)} ${p.name} (${open} open)${hidden}\n`);
       }
       return;
     }
@@ -301,6 +307,25 @@ async function main(): Promise<void> {
           return;
         }
 
+        case "hide": {
+          const key = _[2];
+          if (!key) throw new VaultError("Usage: vault project hide KEY");
+          const hidden = await vault.hideProject(key);
+          process.stdout.write(
+            `Hid project ${hidden.key}. It is still here and still listed by 'vault projects' — ` +
+              `only the desktop app's sidebar drops it. Undo with: vault project unhide ${hidden.key}\n`,
+          );
+          return;
+        }
+
+        case "unhide": {
+          const key = _[2];
+          if (!key) throw new VaultError("Usage: vault project unhide KEY");
+          const shown = await vault.unhideProject(key);
+          process.stdout.write(`Project ${shown.key} is visible again, with status ${shown.status}.\n`);
+          return;
+        }
+
         case "delete": {
           const key = _[2];
           if (!key) throw new VaultError("Usage: vault project delete KEY [--cascade]");
@@ -326,7 +351,7 @@ async function main(): Promise<void> {
 
         default:
           throw new VaultError(
-            "Usage: vault project new|set|rename|reorder|move|delete|restore — see: vault help",
+            "Usage: vault project new|set|rename|reorder|move|hide|unhide|delete|restore — see: vault help",
           );
       }
     }

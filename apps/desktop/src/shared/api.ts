@@ -34,6 +34,15 @@ export type Result<T> = { ok: true; value: T } | { ok: false; message: string };
 export interface ProjectSummary extends Project {
   openItems: number;
   totalItems: number;
+  /**
+   * Whether this project is hidden from the sidebar.
+   *
+   * Derived in main from `status === "archived"`, so the renderer never learns
+   * the encoding and never has to remember which of the four status values is
+   * load-bearing. The raw `status` still comes across on the Project fields —
+   * this is the interpretation of it, not a replacement for it.
+   */
+  hidden: boolean;
 }
 
 /**
@@ -165,6 +174,17 @@ export interface VaultApi {
     key: string,
     position: { after?: string; before?: string },
   ): Promise<Result<VaultSnapshot>>;
+  /**
+   * Drop a project from the sidebar. Nothing is deleted and the CLI and MCP
+   * server still list it — see Vault.hideProject.
+   *
+   * Fails while the project holds items that are not done or disregarded, and
+   * the message names them. The sidebar disables the button before it gets that
+   * far, so this is the backstop for the case where the last open item was
+   * reopened from outside the app between render and click.
+   */
+  hideProject(key: string): Promise<Result<VaultSnapshot>>;
+  unhideProject(key: string): Promise<Result<VaultSnapshot>>;
 
   // ------------------------------------------------------- optional Claude
   // Absent or unconfigured, every one of these still answers; the UI degrades
@@ -222,6 +242,8 @@ export const CHANNELS = {
   createProject: "vault:create-project",
   updateProject: "vault:update-project",
   moveProject: "vault:move-project",
+  hideProject: "vault:hide-project",
+  unhideProject: "vault:unhide-project",
 
   claudeStatus: "claude:status",
   setClaudeKey: "claude:set-key",

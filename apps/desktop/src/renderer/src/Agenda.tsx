@@ -59,16 +59,32 @@ export function Agenda({
   }, [scope, items]);
 
   const byKey = useMemo(() => new Map(items.map((i) => [i.key, i])), [items]);
-  const populated = useMemo(() => (sections ?? []).filter((s) => s.keys.length > 0), [sections]);
 
   /**
-   * The keys actually on screen, in display order. A key whose item is missing
-   * from the snapshot is skipped by the render below, so it is skipped here too —
-   * otherwise keyboard navigation would stop on a row that is not there.
+   * Sections narrowed to the keys this view will actually draw.
+   *
+   * The core builds the agenda over the whole vault, so a key can come back
+   * that is not in `items`: one deleted since the call, or one belonging to a
+   * project the window is hiding. The render already skipped those. Narrowing
+   * here too means the header count matches the rows beneath it, and a section
+   * emptied by the filtering disappears rather than drawing an empty box under
+   * its own heading.
+   */
+  const populated = useMemo(
+    () =>
+      (sections ?? [])
+        .map((section) => ({ ...section, keys: section.keys.filter((key) => byKey.has(key)) }))
+        .filter((section) => section.keys.length > 0),
+    [sections, byKey],
+  );
+
+  /**
+   * The keys actually on screen, in display order — what `j`/`k` walk. A cursor
+   * that stops on a row that is not there is worse than no cursor at all.
    */
   const visibleKeys = useMemo(
-    () => populated.flatMap((section) => section.keys.filter((key) => byKey.has(key))),
-    [populated, byKey],
+    () => populated.flatMap((section) => section.keys),
+    [populated],
   );
 
   const orderKey = visibleKeys.join("\n");

@@ -961,6 +961,20 @@ export class Vault {
     const existing = this.getProject(key);
     const patch = UpdateProjectInput.parse(rawPatch);
 
+    // `archived` is what hiding writes, and hiding refuses while the project
+    // still holds live work. Left reachable here, that rule would hold on one
+    // path and be bypassable from `vault project set` and vault_update_project,
+    // which is the same as not having it. The value stays in the enum rather
+    // than being dropped from it so this sentence is what a caller sees,
+    // instead of zod's "Invalid enum value".
+    if (patch.status === "archived") {
+      throw new VaultError(
+        `Setting status to 'archived' is how a project is hidden, and hiding refuses while ` +
+          `the project still holds items that are not done or disregarded. Use hideProject ` +
+          `(vault project hide ${key}, or vault_hide_project) so that check runs.`,
+      );
+    }
+
     const merged: Record<string, unknown> = { ...existing };
     for (const [field, value] of Object.entries(patch)) {
       if (value === undefined) continue;
@@ -972,6 +986,67 @@ export class Vault {
     return this.persistProject(
       { ...(merged as unknown as Project), description: patch.description ?? existing.description },
       `Update project ${key}`,
+    );
+  }
+
+  /**
+   * Take a project out of the desktop app's sidebar without trashing it.
+   *
+   * Encoded as `status: "archived"` — the one ProjectSchema value nothing else
+   * in the codebase reads — so there is no new field, no migration, and the
+   * state round-trips through the project tools the CLI and MCP server already
+   * have. The desktop app is the only thing that acts on it; `listProjects`
+   * stays unfiltered, because filtering there would make hidden projects vanish
+   * from an external Claude's view of the vault as well, and hiding is a
+   * decision about one window, not about the data.
+   *
+   * Refuses while the project still holds live work, and names it. Same
+   * reasoning as deleteProject's refusal: hiding a project pulls its items out
+   * of every view in the app, and open work that disappears silently is how a
+   * commitment gets forgotten. Closed items — done or disregarded, both of them —
+   * are precisely what you want out of sight, so they are no obstacle.
+   */
+  async hideProject(key: string): Promise<Project> {
+    const project = this.getProject(key);
+    if (project.status === "archived") return project;
+
+    const open = [...this.items.values()]
+      .filter((i) => i.project === key && !DONE_STATUSES.includes(i.status))
+      // Numeric, or ACME-10 sorts above ACME-4 and the list reads as nonsense.
+      .sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+
+    if (open.length) {
+      // Capped, because the message is read in a terminal and in an MCP result,
+      // and a project with two hundred open items would drown both.
+      const named = open.slice(0, 10).map((i) => i.key).join(", ");
+      const rest = open.length > 10 ? `, and ${open.length - 10} more` : "";
+      throw new VaultError(
+        `Project ${key} still has ${open.length} item(s) that are not done or disregarded: ` +
+          `${named}${rest}. Close them, disregard them, or move them to another project first.`,
+      );
+    }
+
+    return this.persistProject(
+      { ...project, status: "archived", updated: nowIso() },
+      `Hide project ${key}`,
+    );
+  }
+
+  /**
+   * Put a hidden project back in the sidebar. No preconditions — nothing about
+   * being hidden can make unhiding the unsafe direction.
+   *
+   * It comes back `active` even if it was `on_hold` or `complete` before it was
+   * hidden, because `status` is the only place that value lived and hiding
+   * overwrote it. That is what "effectively reactivating" costs, and nothing in
+   * the app sets either of those two today.
+   */
+  async unhideProject(key: string): Promise<Project> {
+    const project = this.getProject(key);
+    if (project.status !== "archived") return project;
+    return this.persistProject(
+      { ...project, status: "active", updated: nowIso() },
+      `Unhide project ${key}`,
     );
   }
 

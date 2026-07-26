@@ -11,6 +11,7 @@ import { Welcome } from "./Welcome";
 import { CreateDialog } from "./CreateDialog";
 import { ProjectDialog } from "./ProjectDialog";
 import { TrashPanel } from "./TrashPanel";
+import { HiddenPanel } from "./HiddenPanel";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
@@ -32,6 +33,7 @@ export function App(): React.JSX.Element {
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const [dragProject, setDragProject] = useState<string | null>(null);
 
   /**
@@ -59,7 +61,51 @@ export function App(): React.JSX.Element {
 
   /** Any overlay that owns the keyboard while it is up. */
   const overlaid =
-    creating || creatingProject || showTrash || paletteOpen || helpOpen || claudeOpen;
+    creating || creatingProject || showTrash || showHidden || paletteOpen || helpOpen || claudeOpen;
+
+  /**
+   * The hiding split, computed once.
+   *
+   * The snapshot carries every project, hidden or not — `listProjects()` stays
+   * unfiltered so the CLI and MCP server keep seeing the whole vault. Dropping
+   * them is this window's job, and it has to happen in both directions: the
+   * project list, and the items belonging to those projects. Hiding a project
+   * while leaving its cards on the board would be worse than not hiding it.
+   */
+  const visibleProjects = useMemo<ProjectSummary[]>(
+    () => snapshot?.projects.filter((p) => !p.hidden) ?? [],
+    [snapshot],
+  );
+  const hiddenProjects = useMemo<ProjectSummary[]>(
+    () => snapshot?.projects.filter((p) => p.hidden) ?? [],
+    [snapshot],
+  );
+  const hiddenKeys = useMemo(
+    () => new Set(hiddenProjects.map((p) => p.key)),
+    [hiddenProjects],
+  );
+
+  /** Every item this window will admit exists. The agenda works from this too. */
+  const visibleItems = useMemo<Item[]>(
+    () => snapshot?.items.filter((i) => !hiddenKeys.has(i.project)) ?? [],
+    [snapshot, hiddenKeys],
+  );
+
+  /**
+   * Open items per project, for the Hide button's tooltip. The count alone is
+   * already on ProjectSummary; this is what the core's refusal would name, so
+   * the reason is readable before the click rather than after it.
+   */
+  const openByProject = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const item of snapshot?.items ?? []) {
+      if (isClosed(item.status)) continue;
+      const list = map.get(item.project);
+      if (list) list.push(item.key);
+      else map.set(item.project, [item.key]);
+    }
+    return map;
+  }, [snapshot]);
 
   // Select whatever was just created, so the detail panel opens on it.
   useEffect(() => {
@@ -73,16 +119,25 @@ export function App(): React.JSX.Element {
   // rename — must not leave a stale panel open.
   useEffect(() => {
     if (!snapshot) return;
+    // Against the visible set, not the whole snapshot: an item can also leave
+    // the window by having its project hidden, and a detail panel left open on
+    // one is a card from a project the sidebar says is not there.
     const gone = (key: string | null): boolean =>
-      Boolean(key) && !snapshot.items.some((i) => i.key === key);
+      Boolean(key) && !visibleItems.some((i) => i.key === key);
     if (gone(selected)) setSelected(null);
     if (gone(detailKey)) setDetailKey(null);
-  }, [snapshot, selected, detailKey]);
+    // A project filter pointing at something no longer in the sidebar — hidden,
+    // deleted, or renamed — leaves every view empty with nothing saying why.
+    // Falling back to All is the same recovery in all three cases.
+    if (project && !snapshot.projects.some((p) => p.key === project && !p.hidden)) {
+      setProject(null);
+    }
+  }, [snapshot, visibleItems, selected, detailKey, project]);
 
   const filtered = useMemo<Item[]>(() => {
     if (!snapshot) return [];
     const needle = text.trim().toLowerCase();
-    return snapshot.items.filter((item) => {
+    return visibleItems.filter((item) => {
       if (project && item.project !== project) return false;
       if (status !== "all" && item.status !== status) return false;
       if (cadence !== "all" && item.cadence !== cadence) return false;
@@ -93,11 +148,11 @@ export function App(): React.JSX.Element {
       }
       return true;
     });
-  }, [snapshot, project, status, cadence, openOnly, text]);
+  }, [snapshot, visibleItems, project, status, cadence, openOnly, text]);
 
   const projectOrder = useMemo(
-    () => snapshot?.projects.map((p) => p.key) ?? [],
-    [snapshot],
+    () => visibleProjects.map((p) => p.key),
+    [visibleProjects],
   );
 
   /**
@@ -115,8 +170,8 @@ export function App(): React.JSX.Element {
     return agendaOrder;
   }, [view, filtered, projectOrder, agendaOrder]);
 
-  const selectedItem = snapshot?.items.find((i) => i.key === selected) ?? null;
-  const detailItem = snapshot?.items.find((i) => i.key === detailKey) ?? null;
+  const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
+  const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
 
   /** Open an item in the detail panel, and put the cursor on it. */
   const open = useCallback((key: string) => {
@@ -288,6 +343,27 @@ export function App(): React.JSX.Element {
   };
 
   /**
+   * Hide and unhide. Both are plain mutations: the core refuses a hide that
+   * would take live work out of view, and `mutate` already puts that refusal in
+   * the banner naming the items. The sidebar disables the button before it gets
+   * that far, so the banner is for the case where the last open item was
+   * reopened from outside the app since this render.
+   */
+  const handleHideProject = useCallback(
+    (key: string) => {
+      void vault.mutate(() => window.vault.hideProject(key));
+    },
+    [vault],
+  );
+
+  const handleUnhideProject = useCallback(
+    (key: string) => {
+      void vault.mutate(() => window.vault.unhideProject(key));
+    },
+    [vault],
+  );
+
+  /**
    * Create, then filter to what was just created. A new project lands at the
    * bottom of an unranked list and is empty besides, so leaving the view on
    * "All projects" would make a successful create look like nothing happened.
@@ -321,7 +397,7 @@ export function App(): React.JSX.Element {
             baseline, and an empty div has nothing to align to.
           */}
           <span className="project-count" style={{ marginLeft: "auto" }}>
-            {snapshot.items.length} items
+            {visibleItems.length} items
           </span>
           <button
             className="add-btn"
@@ -340,29 +416,66 @@ export function App(): React.JSX.Element {
           >
             <span className="project-name">All projects</span>
             <span className="project-count">
-              {snapshot.items.filter((i) => !isClosed(i.status)).length}
+              {visibleItems.filter((i) => !isClosed(i.status)).length}
             </span>
           </button>
 
-          {/* Drag to reorder. listProjects already returns manual order. */}
-          {snapshot.projects.map((p) => (
-            <button
-              className={`project ${dragProject === p.key ? "project-dragging" : ""}`}
-              key={p.key}
-              aria-current={project === p.key}
-              onClick={() => setProject(p.key)}
-              draggable
-              onDragStart={() => setDragProject(p.key)}
-              onDragEnd={() => setDragProject(null)}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => onProjectDrop(p)}
-              title={`${p.name} — ${p.totalItems} items, ${p.openItems} open${p.rank !== undefined ? `, rank ${p.rank}` : ""}\nDrag to reorder`}
-            >
-              <span className="project-key">{p.key}</span>
-              <span className="project-name">{p.name}</span>
-              <span className="project-count">{p.openItems}</span>
-            </button>
-          ))}
+          {/*
+            Drag to reorder. listProjects already returns manual order, and
+            hidden ones are dropped here rather than in the core.
+
+            A row is a div wrapping two buttons, not one button, because a
+            button cannot contain a button and the Hide control has to live on
+            the row it acts on. The drag handlers moved out to the wrapper with
+            it, so dragging still grabs the whole row.
+          */}
+          {visibleProjects.map((p) => {
+            const blockers = openByProject.get(p.key) ?? [];
+            return (
+              <div
+                className={`project-row ${dragProject === p.key ? "project-dragging" : ""}`}
+                key={p.key}
+                draggable
+                onDragStart={() => setDragProject(p.key)}
+                onDragEnd={() => setDragProject(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => onProjectDrop(p)}
+              >
+                <button
+                  className="project"
+                  aria-current={project === p.key}
+                  onClick={() => setProject(p.key)}
+                  title={`${p.name} — ${p.totalItems} items, ${p.openItems} open${p.rank !== undefined ? `, rank ${p.rank}` : ""}\nDrag to reorder`}
+                >
+                  <span className="project-key">{p.key}</span>
+                  <span className="project-name">{p.name}</span>
+                  <span className="project-count">{p.openItems}</span>
+                </button>
+                {/*
+                  The title sits on the span rather than the button: a disabled
+                  button takes no pointer events, so its own tooltip never
+                  appears — which is exactly the case that needs explaining.
+                */}
+                <span
+                  className="project-hide-slot"
+                  title={
+                    blockers.length
+                      ? `Cannot hide ${p.key}: ${blockers.slice(0, 6).join(", ")}${blockers.length > 6 ? `, and ${blockers.length - 6} more` : ""} ${blockers.length === 1 ? "is" : "are"} not done or disregarded`
+                      : `Hide ${p.key} from this sidebar. Nothing is deleted, and the CLI and MCP server still see it.`
+                  }
+                >
+                  <button
+                    className="project-hide"
+                    disabled={blockers.length > 0 || vault.busy}
+                    aria-label={`Hide project ${p.key}`}
+                    onClick={() => handleHideProject(p.key)}
+                  >
+                    Hide
+                  </button>
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         <div className="sidebar-foot">
@@ -384,6 +497,18 @@ export function App(): React.JSX.Element {
             </button>
             <button className="btn" onClick={() => setShowTrash(true)} title="Trash (t)">
               Trash{snapshot.trashCount > 0 ? ` (${snapshot.trashCount})` : ""}
+            </button>
+            {/*
+              Always here, even at zero, and beside Trash on purpose: the two
+              are the same promise. Something left this window and there is one
+              place that says where it went.
+            */}
+            <button
+              className="btn"
+              onClick={() => setShowHidden(true)}
+              title="Projects dropped from this sidebar. Nothing is deleted."
+            >
+              Hidden{hiddenProjects.length > 0 ? ` (${hiddenProjects.length})` : ""}
             </button>
             <button className="btn" onClick={vault.chooseVault}>
               Switch
@@ -551,7 +676,14 @@ export function App(): React.JSX.Element {
           {view === "agenda" && (
             <Agenda
               scope={scope}
-              items={snapshot.items}
+              /*
+                Not snapshot.items: the agenda's sections are computed in the
+                core, over the whole vault, so this is the only thing keeping a
+                hidden project's overdue work off the agenda. Without it, hiding
+                would silence the board and the backlog but not the one view
+                that leads with "Overdue".
+              */
+              items={visibleItems}
               selected={selected}
               onSelect={open}
               onOrder={setAgendaOrder}
@@ -574,8 +706,13 @@ export function App(): React.JSX.Element {
 
       {paletteOpen && (
         <CommandPalette
-          items={snapshot.items}
-          projects={snapshot.projects}
+          /*
+            Hidden projects and their items are out of the palette too. It sets
+            the sidebar filter, and jumping to a project that is not in the
+            sidebar would land on an empty view with nothing explaining it.
+          */
+          items={visibleItems}
+          projects={visibleProjects}
           onClose={() => setPaletteOpen(false)}
           onSelectItem={open}
           onSelectProject={setProject}
@@ -588,8 +725,9 @@ export function App(): React.JSX.Element {
 
       {creating && (
         <CreateDialog
-          projects={snapshot.projects}
-          items={snapshot.items}
+          /* No creating work into a project you cannot see it land in. */
+          projects={visibleProjects}
+          items={visibleItems}
           defaultProject={project}
           onClose={() => setCreating(false)}
           onCreate={vault.createItem}
@@ -598,6 +736,10 @@ export function App(): React.JSX.Element {
 
       {creatingProject && (
         <ProjectDialog
+          /*
+            Every project, hidden included — this list is only used to catch a
+            key that is already taken, and a hidden project's key is still taken.
+          */
           projects={snapshot.projects}
           onClose={() => setCreatingProject(false)}
           onCreate={handleCreateProject}
@@ -608,6 +750,15 @@ export function App(): React.JSX.Element {
         <TrashPanel
           onClose={() => setShowTrash(false)}
           onRestore={(file) => vault.restore([file])}
+        />
+      )}
+
+      {showHidden && (
+        <HiddenPanel
+          projects={hiddenProjects}
+          busy={vault.busy}
+          onClose={() => setShowHidden(false)}
+          onUnhide={handleUnhideProject}
         />
       )}
 

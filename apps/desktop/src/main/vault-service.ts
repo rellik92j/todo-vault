@@ -125,10 +125,15 @@ export class VaultService extends EventEmitter {
     const vault = this.requireVault();
     const { errors } = await vault.load();
 
+    // listProjects() is unfiltered by design, so hidden projects arrive here
+    // like any other. `hidden` is decoded once, here, and the renderer works
+    // from that — nothing over the boundary needs to know that "archived" is
+    // the value carrying it.
     const projects: ProjectSummary[] = vault.listProjects().map((project) => ({
       ...project,
       openItems: vault.listItems({ project: project.key, open: true, limit: 500 }).total,
       totalItems: vault.listItems({ project: project.key, limit: 500 }).total,
+      hidden: project.status === "archived",
     }));
 
     const { items } = vault.listItems({ limit: 500 });
@@ -252,6 +257,14 @@ export class VaultService extends EventEmitter {
 
   moveProject(key: string, position: { after?: string; before?: string }): Promise<Project> {
     return this.write((v) => v.moveProject(key, position));
+  }
+
+  hideProject(key: string): Promise<Project> {
+    return this.write((v) => v.hideProject(key));
+  }
+
+  unhideProject(key: string): Promise<Project> {
+    return this.write((v) => v.unhideProject(key));
   }
 
   itemPath(key: string): string {

@@ -96,7 +96,7 @@ run.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 39 core tests
+npm test               # 41 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -122,6 +122,8 @@ project set KEY --name "..."      Update project fields
 project rename OLD NEW            Change the key, re-keying every item
 project reorder KEY --before K    Reorder the project list by hand
 project move ITEM TARGET          Move an item + subtree to another project
+project hide KEY                  Drop it from the desktop app's sidebar
+project unhide KEY                Put it back
 project delete KEY [--cascade]    Trash a project
 project restore FILE              Restore a trashed project
 new --project KEY --summary "..." Create an item
@@ -194,6 +196,8 @@ Twenty-three tools are registered:
 | `vault_update_project` | Patch project fields |
 | `vault_rename_project` | Change the key, re-keying every item |
 | `vault_reorder_project` | Reorder the project list |
+| `vault_hide_project` | Drop it from the desktop sidebar. Deletes nothing. |
+| `vault_unhide_project` | Put it back |
 | `vault_move_item_to_project` | Move an item and its subtree across |
 | `vault_delete_project` | To `.trash/projects/`, recoverable |
 | `vault_restore_project` | Back out of `.trash/projects/` |
@@ -247,12 +251,13 @@ silently dropping your dates.
 npm test
 ```
 
-Thirty-nine tests covering key allocation, disk round-trips, frontmatter
+Forty-one tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
 backlinks, attachments, agenda sectioning, ADF conversion, push ordering, drift
 detection, manual reordering of both items and projects, trash and restore,
-project rename and cross-project moves, path portability, git health reporting,
-atomic writes, and which Windows rename failures are worth retrying.
+hiding and unhiding a project, project rename and cross-project moves, path
+portability, git health reporting, atomic writes, and which Windows rename
+failures are worth retrying.
 
 ## What is not here yet
 
@@ -262,7 +267,8 @@ atomic writes, and which Windows rename failures are worth retrying.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
 - **Renaming and deleting projects in the app.** They can be created from the
-  sidebar and reordered by drag; the other two are CLI- and MCP-only.
+  sidebar, reordered by drag, and hidden and unhidden; the other two are CLI-
+  and MCP-only.
 - **The actual Jira POST.** By design.
 
 ## Files

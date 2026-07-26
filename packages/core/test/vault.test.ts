@@ -620,6 +620,57 @@ test("updateProject patches fields and clears them with null", async () => {
   assert.equal(reopened.getProject("ACME").lead, undefined);
 });
 
+test("hideProject refuses while the project still holds live work, and names it", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "Still going" });
+  await vault.createItem({ project: "ACME", summary: "Also going" });
+
+  await assert.rejects(
+    () => vault.hideProject("ACME"),
+    /still has 2 item\(s\) that are not done or disregarded: ACME-1, ACME-2/,
+  );
+  assert.equal(vault.getProject("ACME").status, "active", "the refusal changed nothing");
+
+  // Both endings count as closed, not just `done` — disregarded work is
+  // finished with too, and a project full of it is exactly what you hide.
+  await vault.transition("ACME-1", "done");
+  await vault.transition("ACME-2", "disregard");
+
+  const hidden = await vault.hideProject("ACME");
+  assert.equal(hidden.status, "archived");
+  assert.equal((await Vault.open(vault.root)).getProject("ACME").status, "archived");
+
+  // Hiding is not deleting: the project and its items are all still here, and
+  // listProjects stays unfiltered so the CLI and MCP server still see them.
+  assert.equal(vault.listProjects().length, 1);
+  assert.equal(vault.listItems().total, 2);
+});
+
+test("unhiding reactivates, and updateProject will not archive behind hideProject's back", async () => {
+  const vault = await tmpVault();
+  await vault.hideProject("ACME");
+
+  const shown = await vault.unhideProject("ACME");
+  assert.equal(shown.status, "active");
+  assert.equal((await Vault.open(vault.root)).getProject("ACME").status, "active");
+
+  // Both directions are no-ops when they are already where they are asked to go.
+  assert.equal((await vault.unhideProject("ACME")).status, "active");
+
+  // The open-items rule is enforced in hideProject, so the generic setter must
+  // not offer a second way in — otherwise `vault project set --status archived`
+  // hides a project full of open work.
+  await vault.createItem({ project: "ACME", summary: "Open" });
+  await assert.rejects(
+    () => vault.updateProject("ACME", { status: "archived" }),
+    /Use hideProject/,
+  );
+  assert.equal(vault.getProject("ACME").status, "active");
+
+  // Every other status still goes through the normal path.
+  assert.equal((await vault.updateProject("ACME", { status: "on_hold" })).status, "on_hold");
+});
+
 test("moveProject reorders the project list by hand", async () => {
   const vault = await tmpVault(); // ACME
   for (const [key, name] of [["BETA", "Beta"], ["OPS", "Ops"], ["ZED", "Zed"]] as const) {

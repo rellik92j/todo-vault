@@ -135,20 +135,84 @@ button {
   gap: 7px;
 }
 
+/*
+  The row is the drag target and the hover context; the button inside it is the
+  filter control. Two elements because the Hide control is also a button, and a
+  button cannot be nested inside one.
+*/
+.project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .project {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   padding: 7px 8px;
   border-radius: var(--radius);
   text-align: left;
   color: var(--text-dim);
 }
 
+.project-row:hover .project,
 .project:hover {
   background: var(--bg-raised);
   color: var(--text);
+}
+
+/*
+  Absolutely positioned so appearing on hover does not reflow the row and shove
+  the open-item count sideways. It sits over the count, which is the least
+  useful thing on the row at the moment you are reaching for Hide.
+*/
+.project-hide-slot {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.project-hide {
+  opacity: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/*
+  Focus, not just hover: a control that only exists under the pointer cannot be
+  reached by keyboard at all.
+*/
+.project-row:hover .project-hide,
+.project-hide:focus-visible {
+  opacity: 1;
+}
+
+.project-hide:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-inset);
+}
+
+/*
+  Shown rather than hidden when it cannot be used. The tooltip on the slot names
+  the open items in the way, which is the answer to "why can I not hide this" —
+  and it is only askable if the button is visible to ask about.
+*/
+.project-hide:disabled {
+  opacity: 0;
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+
+.project-row:hover .project-hide:disabled {
+  opacity: 0.5;
 }
 
 .project[aria-current="true"] {
