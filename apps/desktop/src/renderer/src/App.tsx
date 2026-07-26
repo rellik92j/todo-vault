@@ -695,6 +695,9 @@ export function App(): React.JSX.Element {
       {detailItem && (
         <ItemDetail
           item={detailItem}
+          /* Parent choices, filtered like the create form's: a project this
+             window says is not there is not somewhere to file work under. */
+          items={visibleItems}
           editSummary={editSummaryFor === detailItem.key}
           onEditSummaryConsumed={() => setEditSummaryFor(null)}
           onClose={() => setDetailKey(null)}

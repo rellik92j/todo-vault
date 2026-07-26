@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CADENCES,
   ITEM_TYPES,
@@ -12,7 +12,13 @@ import type { Item } from "todo-vault";
 import type { Result, VaultSnapshot } from "@shared/api";
 
 import { EditableDate, EditableList, EditableSelect, EditableText } from "./Editable";
-import { Cadence as CadencePill, DueDate, STATUS_LABELS, legalTransitions } from "./pieces";
+import {
+  Cadence as CadencePill,
+  STATUS_LABELS,
+  isOverdue,
+  legalParents,
+  legalTransitions,
+} from "./pieces";
 
 /**
  * Everything the vault knows about one item, editable in place.
@@ -23,6 +29,7 @@ import { Cadence as CadencePill, DueDate, STATUS_LABELS, legalTransitions } from
  */
 export function ItemDetail({
   item,
+  items,
   editSummary,
   onEditSummaryConsumed,
   onClose,
@@ -31,6 +38,8 @@ export function ItemDetail({
   mutate,
 }: {
   item: Item;
+  /** Everything this window admits exists, for the parent picker to choose from. */
+  items: Item[];
   /** Open with the summary already in edit mode — the `e` shortcut. */
   editSummary?: boolean;
   onEditSummaryConsumed?: () => void;
@@ -146,22 +155,12 @@ export function ItemDetail({
 
           <dt>Parent</dt>
           <dd>
-            {item.parent ? (
-              <>
-                <button className="link-btn" onClick={() => onSelect(item.parent as string)}>
-                  {item.parent}
-                </button>
-                <button
-                  className="clear-btn"
-                  title="Detach from parent"
-                  onClick={() => patch({ parent: null })}
-                >
-                  ✕
-                </button>
-              </>
-            ) : (
-              <span className="field-note">none</span>
-            )}
+            <ParentField
+              item={item}
+              items={items}
+              onSelect={onSelect}
+              onCommit={(parent) => patch({ parent })}
+            />
           </dd>
 
           <dt>Category</dt>
@@ -190,11 +189,12 @@ export function ItemDetail({
           <dt>Due</dt>
           <dd>
             <EditableDate value={item.dueDate} onCommit={(dueDate) => patch({ dueDate })} />
-            {item.dueDate && (
-              <span className="field-note">
-                <DueDate item={item} />
-              </span>
-            )}
+            {/*
+              The flag only, not the date again: the field beside it is already
+              showing the date, and printing it twice made the row read as two
+              different facts. Overdue is the part the field itself cannot say.
+            */}
+            {isOverdue(item) && <span className="field-note due-overdue">overdue</span>}
           </dd>
 
           <dt>Cadence</dt>
@@ -435,6 +435,144 @@ export function ItemDetail({
         </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The parent: a link you can follow, and a picker you can change it with.
+ *
+ * Every other field in this panel opens for editing when you click its value,
+ * and this one did not — an item with no parent read "none" as dead text, so
+ * the only way to attach one was the create form or the CLI. It now clicks
+ * through to a picker like the rest of them.
+ *
+ * A set parent stays a link rather than becoming the picker's trigger, because
+ * an item key is a cross-reference everywhere else in this panel and following
+ * it is the only way up the hierarchy. So the picker gets its own control
+ * beside it, and the click that already meant "go there" still means that.
+ *
+ * What it offers is legalParents(), the list the create form uses, so a parent
+ * the vault would refuse is never on the menu.
+ */
+function ParentField({
+  item,
+  items,
+  onSelect,
+  onCommit,
+}: {
+  item: Item;
+  items: Item[];
+  onSelect: (key: string) => void;
+  onCommit: (next: string | null) => void;
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef<HTMLSelectElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    ref.current?.focus();
+    try {
+      // The same bargain EditableDate makes: the click that opened the field is
+      // the user activation this needs, and if it has lapsed the select is
+      // still a focused select — the list is one more click away, not gone.
+      ref.current?.showPicker();
+    } catch {
+      /* the keyboard and a second click both still work */
+    }
+  }, [editing]);
+
+  // Nothing to pick from, so the field says why rather than offering an empty
+  // menu. The core refuses this outright: epics are the top of the hierarchy.
+  if (item.type === "epic") {
+    return <span className="field-note">epics sit at the top</span>;
+  }
+
+  const parent = item.parent;
+  const choices = legalParents(items, item.project, item.type);
+  // A parent set from outside this window can be one `choices` excludes — the
+  // CLI and MCP server allow a cross-project link, and the project it points
+  // into may also be hidden here. Offer it as an option anyway, or the select
+  // would render blank and quietly misreport what the file says.
+  const offProject = parent && !choices.some((c) => c.key === parent) ? parent : null;
+
+  if (editing) {
+    return (
+      <select
+        ref={ref}
+        className="inline-select"
+        value={parent ?? ""}
+        onChange={(e) => {
+          setEditing(false);
+          onCommit(e.target.value || null);
+        }}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(e) => {
+          // No draft to revert — the select commits whole choices only — so
+          // Escape just leaves. It closes this before App's handler sees it,
+          // which is what stops the same keypress from closing the panel.
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setEditing(false);
+          }
+        }}
+      >
+        {/* A subtask must name a parent, so detaching is not on offer. */}
+        {item.type !== "subtask" && <option value="">none</option>}
+        {offProject && <option value={offProject}>{offProject}</option>}
+        {choices.map((candidate) => (
+          <option key={candidate.key} value={candidate.key}>
+            {candidate.key} — {candidate.summary}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <span className="parent-field">
+      {parent ? (
+        <>
+          <button className="link-btn" onClick={() => onSelect(parent)}>
+            {parent}
+          </button>
+          <button className="add-btn" onClick={() => setEditing(true)} title="Pick another parent">
+            change
+          </button>
+          {/*
+            No detach for a subtask: the schema requires it to name a parent, so
+            this button could only ever fail. Moving it means picking another.
+          */}
+          {item.type !== "subtask" && (
+            <button
+              className="clear-btn"
+              title="Detach from parent"
+              onClick={() => onCommit(null)}
+            >
+              ✕
+            </button>
+          )}
+        </>
+      ) : (
+        <button
+          className="inline-edit inline-empty"
+          onClick={() => setEditing(true)}
+          title="Click to pick a parent"
+        >
+          none
+        </button>
+      )}
+      {/*
+        Said before the menu is opened rather than discovered inside it, the way
+        Status says "no moves from here" instead of offering a dropdown of one.
+      */}
+      {!parent && choices.length === 0 && (
+        <span className="field-note">
+          {item.type === "subtask"
+            ? `nothing in ${item.project} to hang it off`
+            : `no epic in ${item.project} yet`}
+        </span>
+      )}
+    </span>
   );
 }
 

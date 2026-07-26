@@ -922,6 +922,42 @@ button:focus-visible {
   width: auto;
 }
 
+/* The same trap .parent-field documents below: this container is shrink-to-fit,
+   .inline-edit's -5px side margins make it measure 10px narrower than the
+   button it holds, and the button's own `max-width: 100%` then clamps its text
+   to that. A field showing a value gets away with it — the clear ✕ widens the
+   row enough to cover the difference — so it only bites when the field is
+   empty, which is exactly when it is showing a placeholder and least able to
+   spare 10px. .parent-field escapes by filling its cell; this one cannot,
+   because the Due row sets an "overdue" note beside it that has to stay on the
+   same line. So the clamp goes instead: what sits in here is a date or a short
+   placeholder, never something long enough to need clamping. */
+.date-field .inline-edit {
+  max-width: none;
+}
+
+/* Same shape as .date-field — the value, then the controls that act on it —
+   but block-level, which .date-field gets away with not being.
+   .inline-edit pairs a 5px horizontal padding with a -5px margin, so a
+   shrink-to-fit container measures the button's *margin* box and comes out 10px
+   narrower than it; the button's own `max-width: 100%` then clamps it to that,
+   and `overflow-wrap: anywhere` off .fields dd breaks the word rather than
+   overflow. That is how "none" rendered as "no/ne". Filling the cell keeps the
+   percentage resolving against the row instead of against the button. */
+.parent-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Both carry a margin for the contexts they usually sit in — .add-btn in a
+   section heading, .field-note after a plain inline control. In this row the
+   flex gap is already doing that job, and the two would compound. */
+.parent-field .add-btn,
+.parent-field .field-note {
+  margin-left: 0;
+}
+
 /* The calendar icon is the affordance, so it gets a pointer and stops looking
    like decoration. color-scheme above is what makes it visible at all. */
 input[type="date"]::-webkit-calendar-picker-indicator {
@@ -948,6 +984,13 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   font-size: 11px;
   color: var(--text-faint);
   margin-left: 6px;
+}
+
+/* .field-note is declared later than .due-overdue and would otherwise take the
+   colour off the one note whose whole job is to be alarming. Same reason
+   .section-range.due-overdue exists further down. */
+.field-note.due-overdue {
+  color: var(--overdue);
 }
 
 .add-btn {

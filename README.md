@@ -54,8 +54,12 @@ file, because the markdown is the document and there is no draft state worth
 keeping. Status dropdowns and board columns are gated on the core's own
 `TRANSITIONS` table, so an illegal move is *prevented* rather than attempted and
 reported — a card that springs back with an error reads as a bug even when the
-message is right. Deleting offers an undo backed by `.trash`, and refuses to
-orphan children until you confirm the cascade.
+message is right. The parent field is gated the same way: clicking it opens a
+picker holding only what the hierarchy allows — an epic for a story, task, or
+bug; a story, task, or bug for a subtask — which is the list the create form
+offers too, so neither route can propose a pairing the core would refuse.
+Deleting offers an undo backed by `.trash`, and refuses to orphan children until
+you confirm the cascade.
 
 Board columns are grouped by project and then by manual rank, since ranks are per
 project — comparing two projects' rank numbers directly is meaningless, and doing

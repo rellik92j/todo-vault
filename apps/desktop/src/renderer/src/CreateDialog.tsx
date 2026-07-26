@@ -10,6 +10,8 @@ import {
 import type { Item } from "todo-vault";
 import type { ClaudeStatus, ProjectSummary } from "@shared/api";
 
+import { legalParents } from "./pieces";
+
 /**
  * New item form, shaped to CreateItemInput so the vault's own validation is the
  * only validation. Parent choices are filtered to what the hierarchy allows —
@@ -103,13 +105,8 @@ export function CreateDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Mirrors Vault.assertParentValid, so the form cannot offer a rejected pairing.
-  const parentChoices = items.filter((candidate) => {
-    if (candidate.project !== project) return false;
-    if (type === "epic") return false;
-    if (type === "subtask") return ["story", "task", "bug"].includes(candidate.type);
-    return candidate.type === "epic";
-  });
+  // The same list the detail panel's parent picker offers — see legalParents.
+  const parentChoices = legalParents(items, project, type);
 
   // Changing type can invalidate the chosen parent.
   useEffect(() => {

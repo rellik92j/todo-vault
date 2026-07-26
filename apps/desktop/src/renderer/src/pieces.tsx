@@ -1,7 +1,7 @@
 // Runtime values come from the constants subpath, which imports nothing.
 // Importing them from the package root would pull vault.js — and node:fs — into
 // the renderer bundle. Types are erased, so they can come from the root.
-import { DONE_STATUSES, TRANSITIONS, type Status } from "todo-vault/constants";
+import { DONE_STATUSES, TRANSITIONS, type ItemType, type Status } from "todo-vault/constants";
 import type { Item } from "todo-vault";
 
 /**
@@ -17,6 +17,26 @@ export function legalTransitions(from: Status): readonly Status[] {
 
 export function canTransition(from: Status, to: Status): boolean {
   return from === to || legalTransitions(from).includes(to);
+}
+
+/**
+ * Which items an item of this type and project could hang off, mirroring the
+ * core's `assertParentValid` — epics take no parent, subtasks hang off a story,
+ * task, or bug, and everything else off an epic.
+ *
+ * Same reasoning as legalTransitions: a picker that only offers legal parents
+ * cannot submit a pairing the vault will refuse. One copy, read by both the
+ * create form and the detail panel, so the two cannot disagree about what the
+ * hierarchy allows.
+ */
+export function legalParents(items: Item[], project: string, type: ItemType): Item[] {
+  if (type === "epic") return [];
+  return items.filter((candidate) => {
+    if (candidate.project !== project) return false;
+    return type === "subtask"
+      ? ["story", "task", "bug"].includes(candidate.type)
+      : candidate.type === "epic";
+  });
 }
 
 /**
