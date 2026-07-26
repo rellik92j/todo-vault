@@ -4,6 +4,9 @@ dist/
 # Personal Claude Code settings. .claude/settings.json is the shared one.
 .claude/settings.local.json
 
+# MCP server config with machine-specific absolute paths (dist/ output, vault dir).
+.mcp.json
+
 # The example vault is its own git repository, so that --git auto-commit has
 # somewhere to commit to. Keeping it out of this one avoids a nested repo.
 /vault/
