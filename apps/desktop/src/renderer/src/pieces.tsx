@@ -76,3 +76,39 @@ export function Cadence({ cadence }: { cadence: string }): React.JSX.Element | n
   if (cadence === "none") return null;
   return <span className="pill" title="Recurring — a cadence, not a deadline">↻ {cadence}</span>;
 }
+
+/**
+ * The date on an agenda row, labelled according to the section it sits in.
+ *
+ * A cadence is an interval and a due date is a deadline, and one item can carry
+ * both. Under "overdue" and "due" the heading already says what the date means,
+ * so it stands bare. Under "recurring" it does not, and a bare date there reads
+ * as a contradiction of the heading — the seeded vault's OPS-2 shows under
+ * "recurring this week" carrying 2026-07-29, which is true but looks wrong.
+ *
+ * In the recurring section the date is always *after* the window: Vault.agenda
+ * partitions first, sending anything already past to "overdue" and anything
+ * landing inside the window to "due", so only the later ones are left. The two
+ * other branches below are therefore unreachable today, and kept deliberately —
+ * they are what stops a change to that partitioning from silently reintroducing
+ * the bare, unexplained date this component exists to prevent.
+ */
+export function AgendaDueDate({
+  item,
+  section,
+}: {
+  item: Item;
+  section: { kind: "overdue" | "due" | "recurring"; from?: string; to?: string };
+}): React.JSX.Element | null {
+  if (!item.dueDate) return null;
+  if (section.kind !== "recurring") {
+    return <span className="section-range">{item.dueDate}</span>;
+  }
+  if (isOverdue(item)) {
+    return <span className="section-range due-overdue">due {item.dueDate} · already overdue</span>;
+  }
+  if (section.to && item.dueDate > section.to) {
+    return <span className="section-range">due {item.dueDate} · after this window</span>;
+  }
+  return <span className="section-range">due {item.dueDate}</span>;
+}

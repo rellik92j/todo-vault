@@ -1,5 +1,6 @@
 import type { Item } from "todo-vault";
 import { Cadence, DueDate, PriorityMark, StatusPill } from "./pieces";
+import { backlogOrder } from "./ordering";
 
 /**
  * The backlog, in work order — the derived one: unfinished first, then due date,
@@ -23,23 +24,7 @@ export function BacklogTable({
     return <div className="empty">Nothing matches these filters.</div>;
   }
 
-  const present = new Set(items.map((i) => i.key));
-  const roots = items.filter((i) => !i.parent || !present.has(i.parent));
-  const childrenOf = new Map<string, Item[]>();
-  for (const item of items) {
-    if (item.parent && present.has(item.parent)) {
-      const list = childrenOf.get(item.parent) ?? [];
-      list.push(item);
-      childrenOf.set(item.parent, list);
-    }
-  }
-
-  const ordered: Array<{ item: Item; depth: number }> = [];
-  const walk = (item: Item, depth: number): void => {
-    ordered.push({ item, depth });
-    for (const child of childrenOf.get(item.key) ?? []) walk(child, depth + 1);
-  };
-  for (const root of roots) walk(root, 0);
+  const ordered = backlogOrder(items);
 
   return (
     <table className="table">

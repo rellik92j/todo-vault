@@ -229,12 +229,51 @@ Three problems this turned up:
 
 **Gate:** run a day of real work in it before adding anything else.
 
-## Phase 3 — polish
+## Phase 3 — polish ✅
 
-Global search over summary and description (Ctrl-K), keyboard shortcuts, and the
-agenda view — `Vault.agenda()` already returns overdue/today/week/month sections,
-so this is a screen over an existing method, not new logic. Recurring items from
-`cadence` come last.
+Built and verified by driving the real app. The agenda screen had already landed
+in Phase 1, so what was actually left was Ctrl-K, a real shortcut set, and the
+recurring/due-date loose end below.
+
+**Ctrl-K searches the whole vault**, ignoring every filter — that is the only
+reason to have it as well as the toolbar box, which narrows the current view, so
+the two now say which they are in their placeholders. Matching is plain
+substring, not fuzzy: over a few hundred items it is instant, and a fuzzy ranker
+that surprises you is worse than one that occasionally needs another word. Words
+are ANDed so a second word always narrows. Results rank by where the first term
+landed — key, then summary, then category/labels, then description — with done
+items sunk and a description snippet shown only when the match is somewhere the
+row does not already display.
+
+**Fifteen shortcuts, generated from one registry.** `shortcuts.ts` is read by
+both the handler and the `?` overlay, because a hand-written cheatsheet drifting
+from the handler is the standard way this feature rots.
+
+**The cursor is not the selection.** The detail panel is `position: fixed` over
+the right 520px, so if `j` also opened it, every keystroke would slide a panel
+across the list being navigated. `selected` is the highlight and `detailKey` is
+what the panel shows; `Enter` promotes one to the other, and an *already open*
+panel follows the cursor the way a mail client's reading pane does. This cost no
+changes to the three views at all — they already rendered `aria-selected`.
+
+Each view's display order moved into `ordering.ts` so keyboard navigation walks
+the order the eye actually sees; the agenda's is built over IPC, so it reports
+its visible keys upward instead.
+
+Three things worth remembering, all caught by running it rather than reading it:
+
+- **A flex column will stack a fragment's text nodes one per line.** The palette
+  put the summary and its snippet in a `flex-direction: column`, and the
+  highlighter returns a fragment — so "Revenue widget double-counts refunds"
+  rendered as three rows, split around the `<mark>`, with the mark stretched to
+  full width. Inline content inside a flex column needs its own element.
+- **The recurring section can only ever show a *later* due date.** `agenda()`
+  partitions first: anything already past goes to `overdue`, anything inside the
+  window to `due`. So the "also overdue" and plain "due" branches are unreachable
+  today. They are kept deliberately, as the guard that stops a change to that
+  partitioning from silently restoring the bare unexplained date.
+- **`.section-range` is declared after `.due-overdue`**, so a row carrying both
+  lost the overdue colour to source order at equal specificity.
 
 ## Phase 4 — in-app Claude
 
@@ -299,11 +338,9 @@ but left `due` and `overdue` double-listing the same three items.
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
 
-**Recurring items still show a due date outside the window.** In the seeded
-vault, OPS-2 appears under "recurring this week" carrying `due:2026-07-29`. That
-is honest — it recurs this week and is due next — but the UI should render the
-distinction rather than printing a date that looks like it contradicts the
-heading.
+**Recurring items showing a due date outside the window** — fixed in Phase 3.
+OPS-2 now reads `↻ weekly · due 2026-07-29 · after this window` under "recurring
+this week", so the date no longer looks like it contradicts the heading.
 
 ## The risk that stays
 

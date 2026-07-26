@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Item, Status } from "todo-vault";
 import type { AgendaScope, ProjectSummary } from "@shared/api";
 
@@ -10,6 +10,10 @@ import { ItemDetail } from "./ItemDetail";
 import { Welcome } from "./Welcome";
 import { CreateDialog } from "./CreateDialog";
 import { TrashPanel } from "./TrashPanel";
+import { CommandPalette } from "./CommandPalette";
+import { ShortcutHelp } from "./ShortcutHelp";
+import { isTypingTarget } from "./shortcuts";
+import { backlogOrder, boardColumns } from "./ordering";
 import { BOARD_ORDER, STATUS_LABELS } from "./pieces";
 
 type View = "backlog" | "board" | "agenda";
@@ -22,45 +26,53 @@ export function App(): React.JSX.Element {
   const [cadence, setCadence] = useState<string>("all");
   const [openOnly, setOpenOnly] = useState(true);
   const [text, setText] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
   const [scope, setScope] = useState<AgendaScope>("week");
   const [creating, setCreating] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [dragProject, setDragProject] = useState<string | null>(null);
 
+  /**
+   * Two pieces of state, not one, because the detail panel is `position: fixed`
+   * over the right-hand 520px of the window. If moving the keyboard cursor also
+   * opened the panel, every `j` would slide a panel across the list being
+   * navigated. So `selected` is the highlight — which every view already renders
+   * as `aria-selected`, so none of them needed changing — and `detailKey` is what
+   * the panel shows. A click sets both; `j`/`k` set only the first.
+   */
+  const [selected, setSelected] = useState<string | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  /** Set by `e`: the item whose summary should open for editing. Consumed once. */
+  const [editSummaryFor, setEditSummaryFor] = useState<string | null>(null);
+  /** The agenda builds its order asynchronously, so it reports it upward. */
+  const [agendaOrder, setAgendaOrder] = useState<string[]>([]);
+
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
   const snapshot = vault.snapshot;
+
+  /** Any overlay that owns the keyboard while it is up. */
+  const overlaid = creating || showTrash || paletteOpen || helpOpen;
 
   // Select whatever was just created, so the detail panel opens on it.
   useEffect(() => {
-    if (vault.lastCreated) setSelected(vault.lastCreated);
+    if (vault.lastCreated) {
+      setSelected(vault.lastCreated);
+      setDetailKey(vault.lastCreated);
+    }
   }, [vault.lastCreated]);
 
   // A selection that no longer exists — deleted, or re-keyed by a project
   // rename — must not leave a stale panel open.
   useEffect(() => {
-    if (selected && snapshot && !snapshot.items.some((i) => i.key === selected)) {
-      setSelected(null);
-    }
-  }, [snapshot, selected]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      const typing =
-        event.target instanceof HTMLElement &&
-        ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName);
-
-      if (event.key === "Escape") {
-        if (creating || showTrash) return; // those close themselves
-        setSelected(null);
-      }
-      if (!typing && event.key === "n" && !event.metaKey && !event.ctrlKey) {
-        event.preventDefault();
-        setCreating(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [creating, showTrash]);
+    if (!snapshot) return;
+    const gone = (key: string | null): boolean =>
+      Boolean(key) && !snapshot.items.some((i) => i.key === key);
+    if (gone(selected)) setSelected(null);
+    if (gone(detailKey)) setDetailKey(null);
+  }, [snapshot, selected, detailKey]);
 
   const filtered = useMemo<Item[]>(() => {
     if (!snapshot) return [];
@@ -78,7 +90,62 @@ export function App(): React.JSX.Element {
     });
   }, [snapshot, project, status, cadence, openOnly, text]);
 
+  const projectOrder = useMemo(
+    () => snapshot?.projects.map((p) => p.key) ?? [],
+    [snapshot],
+  );
+
+  /**
+   * The keys of the current view, in the order it is actually displaying them,
+   * which is what `j`/`k` walk. Each view's ordering is the one it renders with —
+   * imported from `ordering.ts` rather than recomputed here, because a cursor
+   * that steps through a different order than the eye sees is worse than no
+   * cursor at all. The agenda's comes back over IPC, hence the reported copy.
+   */
+  const orderedKeys = useMemo<string[]>(() => {
+    if (view === "backlog") return backlogOrder(filtered).map(({ item }) => item.key);
+    if (view === "board") {
+      return boardColumns(filtered, projectOrder).flatMap((c) => c.items.map((i) => i.key));
+    }
+    return agendaOrder;
+  }, [view, filtered, projectOrder, agendaOrder]);
+
   const selectedItem = snapshot?.items.find((i) => i.key === selected) ?? null;
+  const detailItem = snapshot?.items.find((i) => i.key === detailKey) ?? null;
+
+  /** Open an item in the detail panel, and put the cursor on it. */
+  const open = useCallback((key: string) => {
+    setSelected(key);
+    setDetailKey(key);
+  }, []);
+
+  const move = useCallback(
+    (delta: number) => {
+      if (!orderedKeys.length) return;
+      const at = selected ? orderedKeys.indexOf(selected) : -1;
+      const next =
+        at === -1
+          ? delta > 0
+            ? 0
+            : orderedKeys.length - 1
+          : (at + delta + orderedKeys.length) % orderedKeys.length;
+      const key = orderedKeys[next];
+      setSelected(key);
+      // An open panel follows the cursor, the way a mail client's reading pane
+      // does. A closed one stays closed — that is the whole point of the split.
+      setDetailKey((current) => (current === null ? null : key));
+    },
+    [orderedKeys, selected],
+  );
+
+  // Keep the highlighted row on screen. Scoped to `.content` because the view
+  // tabs are a real tablist and carry aria-selected too.
+  useEffect(() => {
+    if (!selected) return;
+    document
+      .querySelector('.content [aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected, view]);
 
   /**
    * Delete, turning the core's refusal into a question.
@@ -103,11 +170,108 @@ export function App(): React.JSX.Element {
     [vault],
   );
 
+  /**
+   * The one keyboard handler, driven by the same registry the help overlay
+   * renders — see shortcuts.ts for why they must not be two lists.
+   *
+   * Ctrl-K and Escape are the only things that fire while a text field has
+   * focus. A bare `n` mid-word must type an "n".
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const typing = isTypingTarget(event.target);
+      const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        // Every overlay closes itself; this only handles the layers below them.
+        if (overlaid) return;
+        // Out of the field first. An inline editor has already reverted itself
+        // by now — its own onKeyDown runs before this one — so this only stops
+        // Escape from closing the whole panel while a field still has focus.
+        if (typing) {
+          (event.target as HTMLElement).blur();
+          return;
+        }
+        if (detailKey) setDetailKey(null);
+        else setSelected(null);
+        return;
+      }
+
+      if (typing || !plain || overlaid) return;
+
+      switch (event.key) {
+        case "j":
+        case "ArrowDown":
+          event.preventDefault();
+          move(1);
+          return;
+        case "k":
+        case "ArrowUp":
+          event.preventDefault();
+          move(-1);
+          return;
+        case "Enter":
+          if (selected) {
+            event.preventDefault();
+            open(selected);
+          }
+          return;
+        case "/":
+          event.preventDefault();
+          searchRef.current?.focus();
+          searchRef.current?.select();
+          return;
+        case "1":
+          setView("backlog");
+          return;
+        case "2":
+          setView("board");
+          return;
+        case "3":
+          setView("agenda");
+          return;
+        case "n":
+          event.preventDefault();
+          setCreating(true);
+          return;
+        case "x":
+          if (selectedItem) void handleDelete(selectedItem);
+          return;
+        case "e":
+          if (selected) {
+            event.preventDefault();
+            open(selected);
+            setEditSummaryFor(selected);
+          }
+          return;
+        case "t":
+          setShowTrash(true);
+          return;
+        case "r":
+          void vault.reload();
+          return;
+        case "?":
+          event.preventDefault();
+          setHelpOpen(true);
+          return;
+        default:
+          return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [overlaid, detailKey, selected, selectedItem, move, open, handleDelete, vault]);
+
   const onProjectDrop = (target: ProjectSummary): void => {
     if (!dragProject || dragProject === target.key) return;
-    const order = snapshot?.projects.map((p) => p.key) ?? [];
-    const from = order.indexOf(dragProject);
-    const to = order.indexOf(target.key);
+    const from = projectOrder.indexOf(dragProject);
+    const to = projectOrder.indexOf(target.key);
     setDragProject(null);
     if (from === -1 || to === -1) return;
     void vault.mutate(() =>
@@ -187,11 +351,14 @@ export function App(): React.JSX.Element {
             <button className="btn" onClick={() => void window.vault.revealPath({ kind: "vault" })}>
               Folder
             </button>
-            <button className="btn" onClick={() => setShowTrash(true)}>
+            <button className="btn" onClick={() => setShowTrash(true)} title="Trash (t)">
               Trash{snapshot.trashCount > 0 ? ` (${snapshot.trashCount})` : ""}
             </button>
             <button className="btn" onClick={vault.chooseVault}>
               Switch
+            </button>
+            <button className="btn" onClick={() => setHelpOpen(true)} title="Keyboard shortcuts (?)">
+              ?
             </button>
           </div>
         </div>
@@ -200,13 +367,14 @@ export function App(): React.JSX.Element {
       <main className="main">
         <div className="toolbar">
           <div className="tabs" role="tablist">
-            {(["backlog", "board", "agenda"] as const).map((candidate) => (
+            {(["backlog", "board", "agenda"] as const).map((candidate, index) => (
               <button
                 key={candidate}
                 role="tab"
                 className="tab"
                 aria-selected={view === candidate}
                 onClick={() => setView(candidate)}
+                title={`${candidate[0].toUpperCase() + candidate.slice(1)} (${index + 1})`}
               >
                 {candidate[0].toUpperCase() + candidate.slice(1)}
               </button>
@@ -250,12 +418,25 @@ export function App(): React.JSX.Element {
 
           <div className="spacer" />
 
+          {/*
+            This filters the view. Ctrl-K is the other one, and it searches the
+            whole vault regardless of what is filtered here — the two are
+            deliberately different tools, so the placeholder says which this is.
+          */}
           <input
+            ref={searchRef}
             type="search"
-            placeholder="Filter by text…"
+            placeholder="Filter this view… (/)"
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
+          <button
+            className="btn"
+            onClick={() => setPaletteOpen(true)}
+            title="Search the whole vault (Ctrl-K)"
+          >
+            Search
+          </button>
           <button
             className="btn btn-primary"
             onClick={() => setCreating(true)}
@@ -309,14 +490,14 @@ export function App(): React.JSX.Element {
 
         <div className="content">
           {view === "backlog" && (
-            <BacklogTable items={filtered} selected={selected} onSelect={setSelected} />
+            <BacklogTable items={filtered} selected={selected} onSelect={open} />
           )}
           {view === "board" && (
             <Board
               items={filtered}
-              projectOrder={snapshot.projects.map((p) => p.key)}
+              projectOrder={projectOrder}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={open}
               onTransition={(key, next) =>
                 void vault.mutate(() => window.vault.transitionItem(key, next))
               }
@@ -330,21 +511,36 @@ export function App(): React.JSX.Element {
               scope={scope}
               items={snapshot.items}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={open}
+              onOrder={setAgendaOrder}
             />
           )}
         </div>
       </main>
 
-      {selectedItem && (
+      {detailItem && (
         <ItemDetail
-          item={selectedItem}
-          onClose={() => setSelected(null)}
-          onSelect={setSelected}
+          item={detailItem}
+          editSummary={editSummaryFor === detailItem.key}
+          onEditSummaryConsumed={() => setEditSummaryFor(null)}
+          onClose={() => setDetailKey(null)}
+          onSelect={open}
           onDelete={handleDelete}
           mutate={vault.mutate}
         />
       )}
+
+      {paletteOpen && (
+        <CommandPalette
+          items={snapshot.items}
+          projects={snapshot.projects}
+          onClose={() => setPaletteOpen(false)}
+          onSelectItem={open}
+          onSelectProject={setProject}
+        />
+      )}
+
+      {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
 
       {creating && (
         <CreateDialog

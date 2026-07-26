@@ -13,16 +13,36 @@ export function EditableText({
   value,
   placeholder,
   multiline,
+  autoEdit,
+  onAutoEditConsumed,
   onCommit,
 }: {
   value: string;
   placeholder?: string;
   multiline?: boolean;
+  /** Open straight into editing — the `e` shortcut asks for this. */
+  autoEdit?: boolean;
+  /**
+   * Called once the request has been honoured, so the caller can drop the flag.
+   *
+   * A consume-once flag rather than a counter, because the request arrives in
+   * the same click as the panel opening: a counter compared against its value at
+   * mount cannot tell "opened with intent to edit" from "opened normally, after
+   * three earlier edits". Clearing it here also means pressing `e` again after
+   * escaping out of the field re-opens it.
+   */
+  onAutoEditConsumed?: () => void;
   onCommit: (next: string) => void;
 }): React.JSX.Element {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(Boolean(autoEdit));
   const [draft, setDraft] = useState(value);
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!autoEdit) return;
+    setEditing(true);
+    onAutoEditConsumed?.();
+  }, [autoEdit, onAutoEditConsumed]);
 
   useEffect(() => {
     if (editing) {

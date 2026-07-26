@@ -23,12 +23,17 @@ import { Cadence as CadencePill, DueDate, STATUS_LABELS, legalTransitions } from
  */
 export function ItemDetail({
   item,
+  editSummary,
+  onEditSummaryConsumed,
   onClose,
   onSelect,
   onDelete,
   mutate,
 }: {
   item: Item;
+  /** Open with the summary already in edit mode — the `e` shortcut. */
+  editSummary?: boolean;
+  onEditSummaryConsumed?: () => void;
   onClose: () => void;
   onSelect: (key: string) => void;
   onDelete: (item: Item) => void;
@@ -105,7 +110,12 @@ export function ItemDetail({
 
       <div className="detail-body">
         <h2 className="detail-summary">
-          <EditableText value={item.summary} onCommit={(summary) => patch({ summary })} />
+          <EditableText
+            value={item.summary}
+            autoEdit={editSummary}
+            onAutoEditConsumed={onEditSummaryConsumed}
+            onCommit={(summary) => patch({ summary })}
+          />
         </h2>
 
         <dl className="fields">

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Item } from "todo-vault";
 import type { AgendaScope, AgendaView } from "@shared/api";
-import { Cadence, PriorityMark, StatusPill } from "./pieces";
+import { AgendaDueDate, Cadence, PriorityMark, StatusPill } from "./pieces";
 
 const HEADINGS: Record<AgendaView["kind"], (scope: AgendaScope) => string> = {
   overdue: () => "Overdue",
@@ -18,7 +18,9 @@ const HEADINGS: Record<AgendaView["kind"], (scope: AgendaScope) => string> = {
 const NOTES: Record<AgendaView["kind"], string> = {
   overdue: "Past its due date and not finished. Listed here only, so nothing is counted twice.",
   due: "Has a due date landing inside this window.",
-  recurring: "Comes round again in this window. No deadline attached — the date shown, if any, is its own.",
+  // The row itself now labels any date it carries, so this no longer has to
+  // explain the date — only what earns an item its place in the section.
+  recurring: "Comes round again in this window. Recurrence is a schedule, not a deadline.",
 };
 
 export function Agenda({
@@ -26,11 +28,14 @@ export function Agenda({
   items,
   selected,
   onSelect,
+  onOrder,
 }: {
   scope: AgendaScope;
   items: Item[];
   selected: string | null;
   onSelect: (key: string) => void;
+  /** Reports the flat, visible key order so the parent can drive keyboard navigation. */
+  onOrder?: (keys: string[]) => void;
 }): React.JSX.Element {
   const [sections, setSections] = useState<AgendaView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,12 +58,31 @@ export function Agenda({
     };
   }, [scope, items]);
 
+  const byKey = useMemo(() => new Map(items.map((i) => [i.key, i])), [items]);
+  const populated = useMemo(() => (sections ?? []).filter((s) => s.keys.length > 0), [sections]);
+
+  /**
+   * The keys actually on screen, in display order. A key whose item is missing
+   * from the snapshot is skipped by the render below, so it is skipped here too —
+   * otherwise keyboard navigation would stop on a row that is not there.
+   */
+  const visibleKeys = useMemo(
+    () => populated.flatMap((section) => section.keys.filter((key) => byKey.has(key))),
+    [populated, byKey],
+  );
+
+  const orderKey = visibleKeys.join("\n");
+  useEffect(() => {
+    onOrder?.(visibleKeys);
+    // Keyed on the joined string, not on `visibleKeys` or `onOrder`. Both are
+    // fresh objects on most renders — the parent passes an inline arrow — so
+    // depending on either would fire this every render and loop through the
+    // parent's state update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderKey]);
+
   if (error) return <div className="empty">{error}</div>;
   if (!sections) return <div className="empty">Working out the agenda…</div>;
-
-  const byKey = new Map(items.map((i) => [i.key, i]));
-  const populated = sections.filter((s) => s.keys.length > 0);
-
   if (!populated.length) {
     return <div className="empty">Nothing due or recurring in this window.</div>;
   }
@@ -94,7 +118,7 @@ export function Agenda({
                   <span className="cell-key">{item.key}</span>
                   <span className="row-summary">{item.summary}</span>
                   <Cadence cadence={item.cadence} />
-                  {item.dueDate && <span className="section-range">{item.dueDate}</span>}
+                  <AgendaDueDate item={item} section={section} />
                   <PriorityMark priority={item.priority} />
                   <StatusPill status={item.status} />
                 </button>

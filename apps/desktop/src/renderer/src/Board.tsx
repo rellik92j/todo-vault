@@ -12,7 +12,8 @@ import {
 } from "@dnd-kit/core";
 import type { Item, Status } from "todo-vault";
 
-import { BOARD_ORDER, Cadence, STATUS_LABELS, canTransition, isOverdue } from "./pieces";
+import { Cadence, STATUS_LABELS, canTransition, isOverdue } from "./pieces";
+import { boardColumns } from "./ordering";
 
 /**
  * Status columns in manual rank order, with drag to reorder or transition.
@@ -48,37 +49,7 @@ export function Board({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  /**
-   * Columns grouped by project, then by manual rank inside each project.
-   *
-   * Ranks are per project, so two ranks from different projects are numbers from
-   * different spaces — comparing them directly made a single drag appear to
-   * reshuffle every project at once. Grouping first gives a stable order that can
-   * be explained: project blocks in the order the sidebar shows, each internally
-   * in the order you dragged.
-   */
-  const columns = useMemo(() => {
-    const projectRank = new Map(projectOrder.map((key, index) => [key, index]));
-
-    return BOARD_ORDER.map((status) => ({
-      status,
-      items: items
-        .filter((i) => i.status === status)
-        .sort((a, b) => {
-          const byProject =
-            (projectRank.get(a.project) ?? Number.MAX_SAFE_INTEGER) -
-            (projectRank.get(b.project) ?? Number.MAX_SAFE_INTEGER);
-          if (byProject !== 0) return byProject;
-
-          if (a.rank !== undefined && b.rank !== undefined && a.rank !== b.rank) {
-            return a.rank - b.rank;
-          }
-          if (a.rank !== undefined && b.rank === undefined) return -1;
-          if (a.rank === undefined && b.rank !== undefined) return 1;
-          return a.key.localeCompare(b.key, undefined, { numeric: true });
-        }),
-    }));
-  }, [items, projectOrder]);
+  const columns = useMemo(() => boardColumns(items, projectOrder), [items, projectOrder]);
 
   const onDragStart = (event: DragStartEvent): void => {
     setDragging(items.find((i) => i.key === event.active.id) ?? null);
