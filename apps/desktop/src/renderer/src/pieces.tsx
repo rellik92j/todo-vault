@@ -1,7 +1,7 @@
 // Runtime values come from the constants subpath, which imports nothing.
 // Importing them from the package root would pull vault.js — and node:fs — into
 // the renderer bundle. Types are erased, so they can come from the root.
-import { TRANSITIONS, type Status } from "todo-vault/constants";
+import { DONE_STATUSES, TRANSITIONS, type Status } from "todo-vault/constants";
 import type { Item } from "todo-vault";
 
 /**
@@ -19,6 +19,19 @@ export function canTransition(from: Status, to: Status): boolean {
   return from === to || legalTransitions(from).includes(to);
 }
 
+/**
+ * Whether a status means the item is finished with, however it ended.
+ *
+ * Straight from the core's array rather than a comparison against "done",
+ * because there are now two ways to be closed and every view had its own copy of
+ * the one-status version. Anything asking "is this still live" — the open-only
+ * filter, the sidebar counts, the overdue flag, the palette's ranking — asks
+ * this. The board and the status pill are where the two deliberately differ.
+ */
+export function isClosed(status: string): boolean {
+  return DONE_STATUSES.includes(status as Status);
+}
+
 /** Small presentational pieces shared by the table, board, agenda, and detail. */
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -27,9 +40,25 @@ export const STATUS_LABELS: Record<string, string> = {
   in_review: "In review",
   blocked: "Blocked",
   done: "Done",
+  disregard: "Disregarded",
 };
 
-export const BOARD_ORDER = ["todo", "in_progress", "in_review", "blocked", "done"] as const;
+/**
+ * A column each, including disregard.
+ *
+ * Not folding it into Done: a column only shows items whose status it names, so
+ * a status missing from this list would make those cards vanish from the board
+ * with no explanation. Six columns overflow a narrow window, and `.content`
+ * scrolls, which is the cheaper of the two failures.
+ */
+export const BOARD_ORDER = [
+  "todo",
+  "in_progress",
+  "in_review",
+  "blocked",
+  "done",
+  "disregard",
+] as const;
 
 export function todayIso(): string {
   const d = new Date();
@@ -37,7 +66,7 @@ export function todayIso(): string {
 }
 
 export function isOverdue(item: Item, today = todayIso()): boolean {
-  return Boolean(item.dueDate && item.dueDate < today && item.status !== "done");
+  return Boolean(item.dueDate && item.dueDate < today && !isClosed(item.status));
 }
 
 export function StatusPill({ status }: { status: string }): React.JSX.Element {

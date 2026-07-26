@@ -81,7 +81,7 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `project` | `PROJ` | Must match the key prefix. |
 | `type` | enum | `epic` `story` `task` `bug` `subtask` |
 | `summary` | string ≤255 | Jira's name for the title. |
-| `status` | enum | `todo` `in_progress` `in_review` `blocked` `done` |
+| `status` | enum | `todo` `in_progress` `in_review` `blocked` `done` `disregard` |
 | `priority` | enum | `highest` `high` `medium` `low` `lowest` |
 | `parent` | key | Epic link, or parent task for a subtask. |
 | `category` | string | Your grouping. Becomes a label or custom field on push. |
@@ -215,7 +215,7 @@ rather than a side effect of an edit.
 
 | `kind` | |
 |---|---|
-| `overdue` | Past its due date, not done. First when present. |
+| `overdue` | Past its due date and still open. First when present. |
 | `due` | Has a due date inside the window. |
 | `recurring` | No due date in the window, but its cadence comes round inside it. |
 
@@ -254,15 +254,29 @@ or bug. Cycles are rejected on re-parenting.
 
 | From | Can move to |
 |---|---|
-| `todo` | `in_progress` `blocked` `done` |
-| `in_progress` | `in_review` `blocked` `done` `todo` |
-| `in_review` | `in_progress` `done` `blocked` |
-| `blocked` | `todo` `in_progress` |
-| `done` | `todo` `in_progress` |
+| `todo` | `in_progress` `blocked` `done` `disregard` |
+| `in_progress` | `in_review` `blocked` `done` `todo` `disregard` |
+| `in_review` | `in_progress` `done` `blocked` `disregard` |
+| `blocked` | `todo` `in_progress` `disregard` |
+| `done` | `todo` `in_progress` `disregard` |
+| `disregard` | `todo` `in_progress` `done` |
 
 `todo → in_review` is rejected on purpose: something that was never in progress
 should not appear in a "what got worked on this week" rollup. Loosen this in
 `TRANSITIONS` if it annoys you.
+
+**The two closed states.** `done` and `disregard` are both endings, and
+`DONE_STATUSES` holds both — so the `open` filter, the agenda, and the work-order
+sort treat them identically. They differ in what they claim: `done` says the work
+happened, `disregard` says it was decided against. Keeping them apart is what
+lets a rollup say what was achieved without counting what was dropped, and it is
+why they get separate board columns and separate Jira transitions.
+
+`disregard` is reachable from every other status, including `blocked` and `done`.
+That is looser than `done`'s own row on purpose: the rule those refusals protect
+is that nothing may claim work it did not do, and deciding *not* to do something
+makes no such claim. Blocked work is the likeliest candidate for it, so routing
+it back through `todo` first would be friction with nothing behind it.
 
 **Keys.** Allocated as `max(stored counter, highest key on disk) + 1`. Deleting
 `ACME-2` does not free up the number, because by then it may have been quoted in

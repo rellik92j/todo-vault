@@ -22,6 +22,13 @@
   --in_review: #b98bf5;
   --blocked: #f87171;
   --done: #4ec98a;
+  /*
+   * Closed, but not achieved. Warm and desaturated on purpose: it is the only
+   * warm neutral in the set, so it cannot be confused with todo's cool grey at
+   * the size these actually render — a 7px dot, where hue is most of what is
+   * left to tell two statuses apart.
+   */
+  --disregard: #9b8579;
 
   --overdue: #f87171;
   --radius: 7px;
@@ -431,7 +438,13 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
-  min-width: 190px;
+  /*
+   * 170, not 190, so that six columns fit the default 1360px window without
+   * scrolling — the sixth arrived with the disregard status and pushed the row
+   * ~100px over. This floor only bites when space is short: `flex: 1 1 0` still
+   * grows them to fill a wider window, up to the max below.
+   */
+  min-width: 170px;
   max-width: 320px;
   background: var(--bg-inset);
   border: 1px solid var(--border);

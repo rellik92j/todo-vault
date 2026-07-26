@@ -67,3 +67,6 @@ statusTransitions:
   in_review: Ready for review
   blocked: Block
   done: Done
+  # Closed locally, but not because the work happened. Most Jira workflows call
+  # this "Won't Do"; check yours, because the transition name has to match.
+  disregard: Won't Do

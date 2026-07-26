@@ -11,7 +11,14 @@
  */
 
 export const ITEM_TYPES = ["epic", "story", "task", "bug", "subtask"] as const;
-export const STATUSES = ["todo", "in_progress", "in_review", "blocked", "done"] as const;
+export const STATUSES = [
+  "todo",
+  "in_progress",
+  "in_review",
+  "blocked",
+  "done",
+  "disregard",
+] as const;
 export const PRIORITIES = ["highest", "high", "medium", "low", "lowest"] as const;
 export const CADENCES = ["daily", "weekly", "monthly", "quarterly", "none"] as const;
 export const LINK_TYPES = ["url", "file", "folder", "item", "outlook", "note"] as const;
@@ -22,20 +29,37 @@ export type Status = (typeof STATUSES)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type Cadence = (typeof CADENCES)[number];
 
-/** Statuses that mean "no longer needs attention". */
-export const DONE_STATUSES: readonly Status[] = ["done"];
+/**
+ * Statuses that mean "no longer needs attention".
+ *
+ * `disregard` is finished work's other ending: the item is closed because it
+ * will not be done, rather than because it was. Everything that asks "is this
+ * still live" reads this array — the `open` filter, the agenda, and both sort
+ * comparators — so the two statuses part company only where the difference is
+ * the point, which is the board, the reports, and the Jira mapping.
+ */
+export const DONE_STATUSES: readonly Status[] = ["done", "disregard"];
 
 /**
  * Allowed status transitions. Kept deliberately permissive except that
  * nothing jumps straight from todo to done without passing through work,
  * which is what makes the daily/weekly rollups meaningful.
+ *
+ * `disregard` is reachable from everywhere, including `blocked` and `done`,
+ * which is looser than `done`'s own row. That is deliberate: the reason
+ * `todo -> in_review` and `blocked -> done` are refused is rollup integrity —
+ * they would claim work happened that did not. Disregarding is the decision not
+ * to do something at all, and blocked work is the likeliest candidate for it,
+ * so routing it back through `todo` first would be friction with no story
+ * behind it.
  */
 export const TRANSITIONS: Record<Status, readonly Status[]> = {
-  todo: ["in_progress", "blocked", "done"],
-  in_progress: ["in_review", "blocked", "done", "todo"],
-  in_review: ["in_progress", "done", "blocked"],
-  blocked: ["todo", "in_progress"],
-  done: ["todo", "in_progress"],
+  todo: ["in_progress", "blocked", "done", "disregard"],
+  in_progress: ["in_review", "blocked", "done", "todo", "disregard"],
+  in_review: ["in_progress", "done", "blocked", "disregard"],
+  blocked: ["todo", "in_progress", "disregard"],
+  done: ["todo", "in_progress", "disregard"],
+  disregard: ["todo", "in_progress", "done"],
 };
 
 /** Item keys look like PROJ-42. Project keys look like PROJ. */

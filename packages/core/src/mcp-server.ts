@@ -117,7 +117,7 @@ Args:
   - cadence ('daily'|'weekly'|'monthly'|'quarterly'|'none', optional)
   - category, label, assignee, parent (string, optional)
   - dueBefore / dueAfter (YYYY-MM-DD, optional)
-  - open (boolean, optional): true excludes done items
+  - open (boolean, optional): true excludes closed items — both 'done' and 'disregard'
   - text (string, optional): case-insensitive match on summary and description
   - limit (number, 1-500, default 100), offset (number, default 0)
 
@@ -197,7 +197,7 @@ server.registerTool(
     description: `Answer "what needs my attention" for a time window.
 
 Returns up to three sections, each tagged with 'kind':
-  - overdue:   past its due date and not done. Always first when present.
+  - overdue:   past its due date and still open. Always first when present.
   - due:       has a due date landing inside the window.
   - recurring: no due date in the window, but its cadence comes round inside it.
 
@@ -380,13 +380,18 @@ server.registerTool(
     title: "Move an item to a new status",
     description: `Shorthand for the most common update: moving an item through the workflow.
 
+'done' and 'disregard' are both closed states and both drop out of the agenda
+and out of open-only listings. They are not interchangeable: 'done' means the
+work happened, 'disregard' means it was decided against and will not happen.
+Pick the one the user actually said; do not disregard something on their behalf.
+
 Args:
   - key (string, required)
   - status (${STATUSES.join("|")}, required)
 
 Returns: { updated: { key, status, ... } }
 
-Use when: "mark ACME-12 done", "I've started on the vendor task".`,
+Use when: "mark ACME-12 done", "I've started on the vendor task", "we're not doing ACME-4".`,
     inputSchema: { key: itemKey, status: z.enum(STATUSES) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },

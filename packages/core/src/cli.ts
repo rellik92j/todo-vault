@@ -58,6 +58,7 @@ Usage: vault <command> [options]
   show KEY                          Show one item with children and backlinks
   set KEY --status done             Update fields on an item
   done KEY                          Shorthand for --status done
+  disregard KEY                     Close it as "not doing this"
   comment KEY "text"                Append a comment
   link KEY --url|--item|--file X    Attach a link
   attach KEY <path> [--no-copy]     Attach a file
@@ -87,8 +88,16 @@ List options:
   --sort work|rank  work = by urgency (default), rank = manual order
 `;
 
+/** [x] done, [-] disregarded, [>] in progress, [ ] still open. */
 function itemLine(item: Item): string {
-  const mark = item.status === "done" ? "x" : item.status === "in_progress" ? ">" : " ";
+  const mark =
+    item.status === "done"
+      ? "x"
+      : item.status === "disregard"
+        ? "-"
+        : item.status === "in_progress"
+          ? ">"
+          : " ";
   const due = item.dueDate ? ` due:${item.dueDate}` : "";
   const cad = item.cadence !== "none" ? ` @${item.cadence}` : "";
   const parent = item.parent ? ` ^${item.parent}` : "";
@@ -408,6 +417,12 @@ async function main(): Promise<void> {
     case "done": {
       const item = await vault.transition(_[1], "done" as Status);
       process.stdout.write(`${item.key} done\n`);
+      return;
+    }
+
+    case "disregard": {
+      const item = await vault.transition(_[1], "disregard" as Status);
+      process.stdout.write(`${item.key} disregarded\n`);
       return;
     }
 

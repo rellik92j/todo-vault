@@ -318,6 +318,34 @@ Two things worth remembering:
   more expensive lever — it can put a tool call or a `<thinking>` tag into the
   visible text, which here would land in the summary field.
 
+## `disregard` — the second way an item can end ✅
+
+A sixth status, for work that is closed because it is not going to happen. The
+rules live in SCHEMA.md; what is worth recording here is what the choice cost.
+
+Almost nothing, as it turned out, because `DONE_STATUSES` was already the
+abstraction: the `open` filter, the agenda, and both sort comparators read it
+rather than comparing against `"done"`, so making it a two-element array closed
+every "is this still live" question at once. The renderer was the opposite —
+three separate hand-written `=== "done"` checks, which is why it now has one
+`isClosed()` reading the core's array.
+
+Two decisions in it:
+
+- **The transitions are looser than `done`'s.** `disregard` is reachable from
+  everywhere, `blocked` and `done` included. The rule the existing refusals
+  protect is that nothing may claim work that did not happen; choosing not to do
+  something makes no such claim, and blocked work is the likeliest candidate for
+  it. Sending it back through `todo` first would be ceremony.
+- **A board column of its own, not folded into Done.** A column renders only the
+  status it names, so a status with no column does not merge into another one —
+  it vanishes, silently. Six columns overflow a narrow window and `.content`
+  scrolls, which is the cheaper failure of the two.
+
+The Jira side is a mapping, not a feature: `jira-map.example.yaml` gains a
+`disregard` transition, commented, because "Won't Do" is the common name for it
+and not a guaranteed one.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user

@@ -124,6 +124,53 @@ test("validates status transitions", async () => {
   assert.equal(done.status, "done");
 });
 
+test("disregard closes an item without claiming the work happened", async () => {
+  const vault = await tmpVault();
+  const shelved = await vault.createItem({ project: "ACME", summary: "Waiting on legal" });
+  await vault.transition(shelved.key, "blocked");
+
+  // Straight from blocked, which `done` deliberately cannot do. Deciding not to
+  // do something is not a claim that it was worked on, so it needs no route
+  // through todo first.
+  const dropped = await vault.transition(shelved.key, "disregard");
+  assert.equal(dropped.status, "disregard");
+
+  await assert.rejects(
+    () => vault.transition(dropped.key, "in_review"),
+    /From disregard you can go to/,
+    "reopening still has to pass through work before review",
+  );
+
+  const live = await vault.createItem({ project: "ACME", summary: "Still live" });
+  const abandoned = await vault.createItem({
+    project: "ACME",
+    summary: "Never happening",
+    dueDate: "2026-01-05",
+  });
+  await vault.transition(abandoned.key, "disregard");
+
+  assert.deepEqual(
+    vault.listItems({ open: true }).items.map((i) => i.key),
+    [live.key],
+    "open-only listings exclude disregarded work as well as done work",
+  );
+  assert.equal(
+    vault.listItems({ status: ["disregard"] }).total,
+    2,
+    "but it is still there when asked for by name",
+  );
+  assert.equal(
+    vault.agenda("today", "2026-06-17").find((s) => s.kind === "overdue"),
+    undefined,
+    "a disregarded item is past its due date and nobody cares",
+  );
+  assert.equal(
+    vault.listItems({}).items[0].key,
+    live.key,
+    "work order sinks closed items, disregarded ones included",
+  );
+});
+
 test("rejects a project that does not exist, and says which ones do", async () => {
   const vault = await tmpVault();
   await assert.rejects(

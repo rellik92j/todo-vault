@@ -129,6 +129,7 @@ list [--project --status --open]  List items
 show KEY                          Full item, children, backlinks, comments
 set KEY --status done --due DATE  Update fields
 done KEY                          Shorthand
+disregard KEY                     Close it as "not doing this"
 comment KEY "text"                Append to the running log
 link KEY --url|--item|--outlook X Link arbitrary content
 attach KEY <path> [--no-copy]     Attach a file

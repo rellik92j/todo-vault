@@ -16,7 +16,7 @@ import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardColumns } from "./ordering";
-import { BOARD_ORDER, STATUS_LABELS } from "./pieces";
+import { BOARD_ORDER, STATUS_LABELS, isClosed } from "./pieces";
 
 type View = "backlog" | "board" | "agenda";
 
@@ -86,7 +86,7 @@ export function App(): React.JSX.Element {
       if (project && item.project !== project) return false;
       if (status !== "all" && item.status !== status) return false;
       if (cadence !== "all" && item.cadence !== cadence) return false;
-      if (openOnly && item.status === "done") return false;
+      if (openOnly && isClosed(item.status)) return false;
       if (needle) {
         const haystack = `${item.key} ${item.summary} ${item.description} ${item.category ?? ""} ${item.labels.join(" ")}`;
         if (!haystack.toLowerCase().includes(needle)) return false;
@@ -340,7 +340,7 @@ export function App(): React.JSX.Element {
           >
             <span className="project-name">All projects</span>
             <span className="project-count">
-              {snapshot.items.filter((i) => i.status !== "done").length}
+              {snapshot.items.filter((i) => !isClosed(i.status)).length}
             </span>
           </button>
 
@@ -443,13 +443,17 @@ export function App(): React.JSX.Element {
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
               </select>
-              <label className="status-line" style={{ cursor: "pointer" }}>
+              <label
+                className="status-line"
+                style={{ cursor: "pointer" }}
+                title="Hides both endings — work that got done, and work that was disregarded"
+              >
                 <input
                   type="checkbox"
                   checked={openOnly}
                   onChange={(e) => setOpenOnly(e.target.checked)}
                 />
-                Hide done
+                Hide closed
               </label>
             </>
           )}

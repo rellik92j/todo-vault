@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Item } from "todo-vault";
 import type { ProjectSummary } from "@shared/api";
-import { StatusPill } from "./pieces";
+import { StatusPill, isClosed } from "./pieces";
 
 /**
  * Ctrl-K: search the whole vault.
@@ -70,7 +70,7 @@ export function CommandPalette({
       .sort(
         (a, b) =>
           a.hit.rank - b.hit.rank ||
-          Number(a.item.status === "done") - Number(b.item.status === "done") ||
+          Number(isClosed(a.item.status)) - Number(isClosed(b.item.status)) ||
           a.hit.at - b.hit.at ||
           b.item.updated.localeCompare(a.item.updated),
       );
