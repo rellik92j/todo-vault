@@ -548,6 +548,7 @@ export function App(): React.JSX.Element {
             <select value={scope} onChange={(e) => setScope(e.target.value as AgendaScope)}>
               <option value="today">Today</option>
               <option value="week">This week</option>
+              <option value="nextWeek">Next week</option>
               <option value="month">This month</option>
             </select>
           ) : (

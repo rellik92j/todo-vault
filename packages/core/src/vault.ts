@@ -66,7 +66,7 @@ export interface AgendaSection {
    * the recurring items were also due, which they are not.
    */
   kind: "overdue" | "due" | "recurring";
-  scope: "today" | "week" | "month";
+  scope: "today" | "week" | "nextWeek" | "month";
   from?: string;
   to?: string;
   items: Item[];
@@ -361,7 +361,10 @@ export class Vault {
     );
   }
 
-  agenda(scope: "today" | "week" | "month", reference = todayIso()): AgendaSection[] {
+  agenda(
+    scope: "today" | "week" | "nextWeek" | "month",
+    reference = todayIso(),
+  ): AgendaSection[] {
     this.assertLoaded();
     const open = [...this.items.values()].filter((i) => !DONE_STATUSES.includes(i.status));
 
@@ -374,6 +377,11 @@ export class Vault {
       week: {
         from: startOfWeek(reference),
         to: addDays(startOfWeek(reference), 6),
+        cadences: ["daily", "weekly"],
+      },
+      nextWeek: {
+        from: addDays(startOfWeek(reference), 7),
+        to: addDays(startOfWeek(reference), 13),
         cadences: ["daily", "weekly"],
       },
       month: {

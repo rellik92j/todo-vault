@@ -3,10 +3,18 @@ import type { Item } from "todo-vault";
 import type { AgendaScope, AgendaView } from "@shared/api";
 import { AgendaDueDate, Cadence, PriorityMark, StatusPill } from "./pieces";
 
+/** The phrase each scope reads naturally with, e.g. "Due ${phrase}". */
+const SCOPE_PHRASE: Record<AgendaScope, string> = {
+  today: "today",
+  week: "this week",
+  nextWeek: "next week",
+  month: "this month",
+};
+
 const HEADINGS: Record<AgendaView["kind"], (scope: AgendaScope) => string> = {
   overdue: () => "Overdue",
-  due: (scope) => (scope === "today" ? "Due today" : `Due this ${scope}`),
-  recurring: (scope) => (scope === "today" ? "Recurring today" : `Recurring this ${scope}`),
+  due: (scope) => `Due ${SCOPE_PHRASE[scope]}`,
+  recurring: (scope) => `Recurring ${SCOPE_PHRASE[scope]}`,
 };
 
 /**

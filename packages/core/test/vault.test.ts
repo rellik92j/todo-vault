@@ -285,6 +285,34 @@ test("agenda keeps due work and recurring work in separate sections", async () =
   );
 });
 
+test("agenda's nextWeek scope covers the following Monday to Sunday", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "This week", dueDate: "2026-06-19" });
+  await vault.createItem({ project: "ACME", summary: "Next week", dueDate: "2026-06-24" });
+  await vault.createItem({ project: "ACME", summary: "Month after", dueDate: "2026-07-10" });
+  await vault.createItem({ project: "ACME", summary: "Weekly report", cadence: "weekly" });
+  await vault.createItem({ project: "ACME", summary: "Standup", cadence: "daily" });
+
+  const nextWeek = vault.agenda("nextWeek", "2026-06-17");
+  const due = nextWeek.find((s) => s.kind === "due")!;
+  assert.equal(due.from, "2026-06-22");
+  assert.equal(due.to, "2026-06-28");
+  assert.deepEqual(due.items.map((i) => i.summary), ["Next week"]);
+
+  const recurring = nextWeek.find((s) => s.kind === "recurring")!;
+  assert.deepEqual(
+    recurring.items.map((i) => i.summary).sort(),
+    ["Standup", "Weekly report"],
+    "daily and weekly cadences both recur next week",
+  );
+
+  assert.equal(
+    nextWeek.find((s) => s.kind === "overdue"),
+    undefined,
+    "nothing is overdue relative to today in this fixture",
+  );
+});
+
 test("converts markdown to ADF", () => {
   const doc = markdownToAdf(
     "# Heading\n\nSome **bold** and a [link](https://x.dev).\n\n- one\n- two\n\n```ts\nconst a = 1;\n```",

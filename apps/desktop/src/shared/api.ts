@@ -71,7 +71,7 @@ export interface AgendaView {
   keys: string[];
 }
 
-export type AgendaScope = "today" | "week" | "month";
+export type AgendaScope = "today" | "week" | "nextWeek" | "month";
 
 /** Null when no vault has been chosen yet — the renderer shows the picker. */
 export type MaybeSnapshot = VaultSnapshot | null;
