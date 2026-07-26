@@ -3,9 +3,17 @@ import { promises as fs } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import type { Status } from "todo-vault";
-import { CHANNELS, type MaybeSnapshot, type Result, type VaultSnapshot } from "../shared/api.js";
+import {
+  CHANNELS,
+  type ClaudeStatus,
+  type MaybeSnapshot,
+  type Result,
+  type VaultSnapshot,
+} from "../shared/api.js";
 import { VaultService } from "./vault-service.js";
 import { readSettings, rememberVault } from "./settings.js";
+import { clearApiKey, secretStatus, setApiKey } from "./secrets.js";
+import { CLAUDE_MODEL, draftItem } from "./claude.js";
 
 const service = new VaultService();
 let mainWindow: BrowserWindow | undefined;
@@ -275,6 +283,38 @@ function registerHandlers(): void {
     },
   );
 
+  // --------------------------------------------------------- optional Claude
+  // Every one of these answers even when nothing is configured, so the renderer
+  // can explain the state rather than the feature simply not being there.
+
+  handle(CHANNELS.claudeStatus, () => claudeStatus());
+
+  handle(CHANNELS.setClaudeKey, async (key: string) => {
+    await setApiKey(key);
+    return claudeStatus();
+  });
+
+  handle(CHANNELS.clearClaudeKey, async () => {
+    await clearApiKey();
+    return claudeStatus();
+  });
+
+  handle(CHANNELS.draftItem, async (prompt: string, defaultProject: string | null) => {
+    if (!service.isOpen) throw new Error("Open a vault before drafting.");
+    const snapshot = await service.snapshot();
+
+    // The categories and labels already in the vault are passed in so a draft
+    // reuses the user's own vocabulary instead of inventing a parallel one.
+    return draftItem(prompt, {
+      projects: snapshot.projects.map((p) => ({ key: p.key, name: p.name })),
+      categories: [
+        ...new Set(snapshot.items.map((i) => i.category).filter((c): c is string => Boolean(c))),
+      ].sort(),
+      labels: [...new Set(snapshot.items.flatMap((i) => i.labels))].sort(),
+      defaultProject,
+    });
+  });
+
   handle(
     CHANNELS.revealPath,
     async (target: { kind: "item" | "attachment" | "vault"; value?: string }) => {
@@ -306,6 +346,22 @@ function registerHandlers(): void {
       return null;
     },
   );
+}
+
+/**
+ * The Claude layer's state, reported without ever naming the key.
+ *
+ * Built here rather than in secrets.ts so the storage layer stays ignorant of
+ * which model it is holding a key for.
+ */
+async function claudeStatus(): Promise<ClaudeStatus> {
+  const status = await secretStatus();
+  return {
+    storageAvailable: status.available,
+    hasKey: status.hasKey,
+    reason: status.reason,
+    model: CLAUDE_MODEL,
+  };
 }
 
 app.whenReady().then(async () => {

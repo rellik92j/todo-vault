@@ -67,6 +67,36 @@ export type AgendaScope = "today" | "week" | "month";
 /** Null when no vault has been chosen yet — the renderer shows the picker. */
 export type MaybeSnapshot = VaultSnapshot | null;
 
+/**
+ * Whether the optional Claude layer can be used, and why not when it cannot.
+ *
+ * Deliberately says nothing about the key itself beyond whether one exists. The
+ * key lives in main, encrypted by safeStorage, and never crosses this boundary
+ * in either direction except on the way in — there is no getter.
+ */
+export interface ClaudeStatus {
+  /** safeStorage can actually encrypt on this machine. False means no key can be stored. */
+  storageAvailable: boolean;
+  hasKey: boolean;
+  /** Written for a human, shown in the UI when the layer is unavailable. */
+  reason?: string;
+  /** Surfaced so the UI can name what it is about to call. */
+  model: string;
+}
+
+/**
+ * A proposed item, rendered for confirmation and never written directly.
+ *
+ * `input` has already been validated against the core's CreateItemInput in main,
+ * so anything that reaches the renderer is something the vault would accept. The
+ * confirmation step is about intent, not validity.
+ */
+export interface ItemDraft {
+  input: CreateItemInput;
+  /** What Claude assumed or could not determine. Shown above the form. */
+  notes: string;
+}
+
 export interface VaultApi {
   /** Current snapshot, or null if no vault is configured yet. */
   getSnapshot(): Promise<Result<MaybeSnapshot>>;
@@ -136,6 +166,21 @@ export interface VaultApi {
     position: { after?: string; before?: string },
   ): Promise<Result<VaultSnapshot>>;
 
+  // ------------------------------------------------------- optional Claude
+  // Absent or unconfigured, every one of these still answers; the UI degrades
+  // to the plain form rather than hiding it.
+
+  claudeStatus(): Promise<Result<ClaudeStatus>>;
+  /** One-way. There is no matching getter — the key never comes back out. */
+  setClaudeKey(key: string): Promise<Result<ClaudeStatus>>;
+  clearClaudeKey(): Promise<Result<ClaudeStatus>>;
+  /**
+   * Turn a sentence into a proposed item. Returns a draft for confirmation —
+   * this never writes. `defaultProject` is the project the UI has in focus,
+   * which Claude uses only when the prompt does not name one.
+   */
+  draftItem(prompt: string, defaultProject: string | null): Promise<Result<ItemDraft>>;
+
   /**
    * Real filesystem paths for dropped File objects. Electron removed
    * `File.path`, and `webUtils` is only reachable from the preload.
@@ -177,6 +222,11 @@ export const CHANNELS = {
   createProject: "vault:create-project",
   updateProject: "vault:update-project",
   moveProject: "vault:move-project",
+
+  claudeStatus: "claude:status",
+  setClaudeKey: "claude:set-key",
+  clearClaudeKey: "claude:clear-key",
+  draftItem: "claude:draft",
 
   /** main -> renderer push */
   changed: "vault:changed",

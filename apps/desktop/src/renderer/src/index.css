@@ -1257,6 +1257,55 @@ kbd.pill {
   color: var(--text-faint);
 }
 
+/* --------------------------------------------------------- claude layer */
+.modal-narrow {
+  width: min(520px, 100%);
+}
+
+.claude-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.draft-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+/* Overrides .modal-body textarea, which is full-width and taller than this
+   wants to be — the prompt is one sentence, not a document. */
+.draft-box .draft-input {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.draft-note {
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-inset));
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+}
+
+.draft-note strong {
+  color: var(--text);
+}
+
 /* ------------------------------------------------------- agenda dates */
 /* .section-range is declared later than .due-overdue and would otherwise win
    the colour on a row that carries both. */

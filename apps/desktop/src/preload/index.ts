@@ -35,6 +35,14 @@ const api: VaultApi = {
   updateProject: (key, patch) => ipcRenderer.invoke(CHANNELS.updateProject, key, patch),
   moveProject: (key, position) => ipcRenderer.invoke(CHANNELS.moveProject, key, position),
 
+  // The key goes one way only: there is deliberately no getClaudeKey here, so
+  // nothing in the renderer can read back what was stored.
+  claudeStatus: () => ipcRenderer.invoke(CHANNELS.claudeStatus),
+  setClaudeKey: (key) => ipcRenderer.invoke(CHANNELS.setClaudeKey, key),
+  clearClaudeKey: () => ipcRenderer.invoke(CHANNELS.clearClaudeKey),
+  draftItem: (prompt, defaultProject) =>
+    ipcRenderer.invoke(CHANNELS.draftItem, prompt, defaultProject),
+
   /**
    * Real filesystem paths for dropped files.
    *

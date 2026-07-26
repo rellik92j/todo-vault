@@ -12,6 +12,7 @@ import { CreateDialog } from "./CreateDialog";
 import { TrashPanel } from "./TrashPanel";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
+import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardColumns } from "./ordering";
 import { BOARD_ORDER, STATUS_LABELS } from "./pieces";
@@ -44,6 +45,7 @@ export function App(): React.JSX.Element {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [claudeOpen, setClaudeOpen] = useState(false);
   /** Set by `e`: the item whose summary should open for editing. Consumed once. */
   const [editSummaryFor, setEditSummaryFor] = useState<string | null>(null);
   /** The agenda builds its order asynchronously, so it reports it upward. */
@@ -54,7 +56,7 @@ export function App(): React.JSX.Element {
   const snapshot = vault.snapshot;
 
   /** Any overlay that owns the keyboard while it is up. */
-  const overlaid = creating || showTrash || paletteOpen || helpOpen;
+  const overlaid = creating || showTrash || paletteOpen || helpOpen || claudeOpen;
 
   // Select whatever was just created, so the detail panel opens on it.
   useEffect(() => {
@@ -357,6 +359,13 @@ export function App(): React.JSX.Element {
             <button className="btn" onClick={vault.chooseVault}>
               Switch
             </button>
+            <button
+              className="btn"
+              onClick={() => setClaudeOpen(true)}
+              title="Claude drafting — optional, off until a key is added"
+            >
+              Claude
+            </button>
             <button className="btn" onClick={() => setHelpOpen(true)} title="Keyboard shortcuts (?)">
               ?
             </button>
@@ -541,6 +550,8 @@ export function App(): React.JSX.Element {
       )}
 
       {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
+
+      {claudeOpen && <ClaudeSettings onClose={() => setClaudeOpen(false)} />}
 
       {creating && (
         <CreateDialog

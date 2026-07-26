@@ -275,14 +275,48 @@ Three things worth remembering, all caught by running it rather than reading it:
 - **`.section-range` is declared after `.due-overdue`**, so a row carrying both
   lost the overdue colour to source order at equal specificity.
 
-## Phase 4 — in-app Claude
+## Phase 4 — in-app Claude ⚠️ built, unproven against the real API
 
-Optional layer, degrades to a plain form when absent. The Anthropic call lives in
-the **main** process — an API key must never reach the renderer bundle. Store it
-with Electron's `safeStorage`. Use tool-use for structured output, validate the
-result against `CreateItemInput`, and always render the draft for confirmation
-before writing. That validation step is why this is cheap: the schema already
-rejects everything malformed.
+Built and driven end to end **except the API call itself**, which needs a key.
+See "Handoff: first run with a real key" below for exactly what is and is not
+proven, and what to check first.
+
+`apps/desktop/src/main/claude.ts` holds the call, `secrets.ts` the key. The key
+is typed into the settings panel, sent to main once, and encrypted with
+`safeStorage`; there is deliberately **no getter on the IPC surface**, so the
+renderer cannot read it back even to mask it — verified by driving Replace and
+watching the input come up empty. `setApiKey` refuses when `safeStorage` is
+unavailable rather than falling back to plaintext.
+
+**Structured outputs, not tool-use.** This plan said tool-use; `output_config.
+format` is the mechanism for exactly this now and needs no tool loop. The
+requirement that mattered — validate against `CreateItemInput` — is unchanged.
+
+**Two schemas, on purpose.** Structured outputs cannot express `max(255)`, the
+date regex, or the key format, so a schema derived from `CreateItemInput` would
+silently drop the constraints worth keeping. The wire schema covers shape and
+enums only; the core's schema stays the sole authority. Both directions of that
+contract are checked: three representative drafts validate, and four malformed
+ones are still rejected — including `notes` leaking through, which `.strict()`
+catches, which is why `stripEmpty` drops it.
+
+`parent` is deliberately absent from the wire schema. Guessing a parent key
+invents a relationship the user did not ask for, and the form already has a
+picker that only offers legal parents.
+
+The draft is never written. It fills the create form and the user presses
+Create — the confirmation step is the feature, not a formality.
+
+Two things worth remembering:
+
+- **The create form had no `labels` or `cadence` field**, but a draft can set
+  both. Applying a draft that silently dropped them would have been a real bug,
+  so the form gained them. It is now closer to the "built on `CreateItemInput`"
+  the Phase 2 note claimed.
+- **`effort: "low"` with thinking left on**, rather than thinking disabled.
+  Drafting one task is not hard, but disabling thinking on this model is the
+  more expensive lever — it can put a tool call or a `<thinking>` tag into the
+  visible text, which here would land in the summary field.
 
 ## Phase 5 — Jira push from the UI
 
@@ -342,6 +376,53 @@ string inside `jira.ts` tell you to run it. Phase 5.
 OPS-2 now reads `↻ weekly · due 2026-07-29 · after this window` under "recurring
 this week", so the date no longer looks like it contradicts the heading.
 
+## Handoff: first run with a real key
+
+Everything around the API call is verified; the call itself is not. Nothing has
+ever been sent to Anthropic from this app.
+
+**Proven, by driving the built app with no key and then a dummy one:**
+status reporting; `safeStorage` encrypt → store → clear round trip (Windows
+DPAPI reports available); the settings panel's Save / Replace / Remove; Replace
+never revealing the stored key; the create dialog degrading to a plain form with
+a "Drafting is off" line; `draftItem` refusing with *"No Anthropic API key is
+stored"*, which exercises the whole IPC path into main. The dummy key was
+removed afterwards — `hasKey` is false and nothing is left in the keychain.
+
+**Not proven — everything past `client.messages.create`:** that the request is
+accepted, that `output_config.format` returns what the schema describes, that
+the prompt produces a sensible draft, and how long a call takes.
+
+**First run, in this order:**
+
+1. Sidebar → **Claude** → paste the key → Save. Expect "A key is stored".
+2. Press `n`, type something with a relative date and no project, e.g.
+   *"chase legal for the signed DPA, high priority, by Friday"*, then Draft.
+3. Check the three things most likely to be wrong, in this order:
+   - **The date.** Today's date is injected into the system prompt and the model
+     is told to resolve against it. A date in the past means that instruction is
+     not landing, and it is the failure most likely to go unnoticed.
+   - **The project.** With none named it should pick by inference and say so in
+     the note; it must be a key that exists.
+   - **The note.** Empty every time probably means the field is being ignored
+     rather than that nothing needed assuming.
+4. Then try a deliberately vague prompt — *"sort out the thing with the invoices"*.
+   The interesting behaviour is whether it leaves fields empty and says so, or
+   invents detail. The prompt asks for the former; if it invents, tighten the
+   system prompt in `claude.ts` rather than adding validation.
+
+**If it fails, the message says where.** The failure branches are deliberately
+distinct: a rejected key, a refusal, a truncated reply, a non-JSON reply, and a
+draft the vault would refuse each read differently, and the last of those quotes
+the core's own field-level complaint.
+
+**Two live risks worth naming.** The model ID is pinned to `claude-opus-5` in
+one constant, `CLAUDE_MODEL` — if the account cannot reach it, that is a
+`PermissionDeniedError` with a clear message and a one-line fix. And nothing
+bounds cost: there is no request timeout and no cap on how many drafts a session
+can trigger. Fine for one person pressing a button; worth revisiting before this
+is ever automatic.
+
 ## The risk that stays
 
 Last-write-wins between the app, the MCP server, and an external Claude. Both
@@ -350,8 +431,11 @@ recoverable — that's the accepted trade in SCHEMA.md and it's the right one fo
 single user. The file watcher improves it in practice by making a clobber
 *visible* within a second rather than discovered a week later.
 
-One Windows-specific hardening note: `writeFileAtomic` ends in `fs.rename`, which
-does overwrite on Windows, but can fail with a transient `EPERM` when an
-antivirus scanner or search indexer holds the target open. Adding a watcher makes
-that marginally more likely. A three-attempt retry with backoff is the standard
-answer.
+The Windows `EPERM` hole is closed. `writeFileAtomic` now retries the *rename*
+three times, ~10ms then ~40ms apart — the write is deliberately not retried,
+having no such failure mode. `EPERM` is ambiguous: a scanner holding the file
+reports exactly what a genuine permissions failure reports, so the retry is kept
+short and always rethrows on its last attempt rather than trying to tell them
+apart. `isTransientRenameError` is exported and tested; a real lock is not
+simulated, because doing so on Windows is flaky, and that is the honest coverage
+boundary.
