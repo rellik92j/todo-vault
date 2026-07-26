@@ -4,10 +4,10 @@ A local, Jira-shaped task tracker that lives in plain markdown files, so the
 desktop app, an in-app assistant, and any Claude on the outside can all read and
 write the same data without a server.
 
-The schema, vault core, CLI, and MCP server are done, and so is the desktop app
-through editing — it reads and writes the vault without holding any state of its
-own. Global search, keyboard shortcuts, an in-app assistant, and the Jira push
-UI are still ahead; `PLAN.md` has the detail.
+The schema, vault core, CLI, and MCP server are done, and so is the desktop app:
+it reads and writes the vault without holding any state of its own, with global
+search, keyboard shortcuts, and an optional in-app assistant. The Jira push UI
+is what remains; `PLAN.md` has the detail.
 
 ## Layout
 
@@ -43,7 +43,11 @@ always passes it.
 ## The desktop app
 
 Backlog table, board, agenda, and an item detail panel, over a project sidebar in
-manual rank order.
+manual rank order. **+ new** in the sidebar head creates a project: the key is
+proposed from the name — `ACME` from "Acme rollout" — and stays editable, and one
+that is already in the list is refused before the write rather than after.
+Renaming and deleting stay CLI- and MCP-only, since one re-keys every item in the
+project and the other can take them all to the trash.
 
 Editing is in place, with no save button: every field commits straight to the
 file, because the markdown is the document and there is no draft state worth
@@ -75,10 +79,24 @@ Claude, or Notepad — shows up in about a second without a refresh. Files that 
 to parse get a banner naming them; otherwise they would simply vanish from every
 view, which is the one failure mode that looks like data loss.
 
+The create dialog has an optional drafting box: a sentence in, the form filled
+out for you to read before anything is written. The key is entered under
+**Claude** in the sidebar and encrypted at rest with `safeStorage`; it is used in
+the main process and there is deliberately no getter on the IPC surface, so the
+renderer can learn that a key exists but never read it back. The model is named
+in one constant, `CLAUDE_MODEL` — `claude-sonnet-5`, because drafting one task
+from one sentence is structured extraction rather than reasoning. Drafting is off
+until a key is added, and the box says so rather than disappearing. Every draft
+is validated against `CreateItemInput` before it reaches the form, and it fills
+the form rather than writing: the confirmation step is the feature. The call
+itself is still unproven against the live API — nothing has been sent to
+Anthropic from this app — and `PLAN.md` lists what to check on the first real
+run.
+
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 36 core tests
+npm test               # 38 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -228,24 +246,22 @@ silently dropping your dates.
 npm test
 ```
 
-Thirty-six tests covering key allocation, disk round-trips, frontmatter
+Thirty-eight tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, backlinks, attachments,
 agenda sectioning, ADF conversion, push ordering, drift detection, manual
 reordering of both items and projects, trash and restore, project rename and
-cross-project moves, path portability, and git health reporting.
+cross-project moves, path portability, git health reporting, atomic writes, and
+which Windows rename failures are worth retrying.
 
 ## What is not here yet
 
-- **In-app Claude.** One line of text to a filled draft, using the Messages API
-  with tool-use for structured output, validated against `CreateItemInput` and
-  shown as a preview before it writes. The API key would live in the main
-  process only, never in the renderer bundle.
+- **A first real Claude call.** The drafting path is built and driven end to end,
+  but nothing has ever been sent to Anthropic from this app. `PLAN.md` says what
+  to check first, in order.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
-- **Editing projects in the app.** They can be reordered by drag, but renaming,
-  creating and deleting a project are CLI- and MCP-only.
-- **Global search and keyboard shortcuts** beyond `n` for a new item and `Esc` to
-  close. Phase 3.
+- **Renaming and deleting projects in the app.** They can be created from the
+  sidebar and reordered by drag; the other two are CLI- and MCP-only.
 - **The actual Jira POST.** By design.
 
 ## Files

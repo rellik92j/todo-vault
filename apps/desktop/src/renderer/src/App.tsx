@@ -9,6 +9,7 @@ import { Agenda } from "./Agenda";
 import { ItemDetail } from "./ItemDetail";
 import { Welcome } from "./Welcome";
 import { CreateDialog } from "./CreateDialog";
+import { ProjectDialog } from "./ProjectDialog";
 import { TrashPanel } from "./TrashPanel";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
@@ -29,6 +30,7 @@ export function App(): React.JSX.Element {
   const [text, setText] = useState("");
   const [scope, setScope] = useState<AgendaScope>("week");
   const [creating, setCreating] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [dragProject, setDragProject] = useState<string | null>(null);
 
@@ -56,7 +58,8 @@ export function App(): React.JSX.Element {
   const snapshot = vault.snapshot;
 
   /** Any overlay that owns the keyboard while it is up. */
-  const overlaid = creating || showTrash || paletteOpen || helpOpen || claudeOpen;
+  const overlaid =
+    creating || creatingProject || showTrash || paletteOpen || helpOpen || claudeOpen;
 
   // Select whatever was just created, so the detail panel opens on it.
   useEffect(() => {
@@ -284,6 +287,19 @@ export function App(): React.JSX.Element {
     );
   };
 
+  /**
+   * Create, then filter to what was just created. A new project lands at the
+   * bottom of an unranked list and is empty besides, so leaving the view on
+   * "All projects" would make a successful create look like nothing happened.
+   */
+  const handleCreateProject = async (
+    input: Parameters<typeof vault.createProject>[0],
+  ): Promise<string | null> => {
+    const message = await vault.createProject(input);
+    if (!message) setProject(input.key);
+    return message;
+  };
+
   if (!snapshot) {
     return (
       <Welcome
@@ -300,7 +316,20 @@ export function App(): React.JSX.Element {
       <nav className="sidebar">
         <div className="sidebar-head">
           <span className="sidebar-title">Projects</span>
-          <span className="project-count">{snapshot.items.length} items</span>
+          {/*
+            An auto margin rather than a .spacer element: this row aligns on the
+            baseline, and an empty div has nothing to align to.
+          */}
+          <span className="project-count" style={{ marginLeft: "auto" }}>
+            {snapshot.items.length} items
+          </span>
+          <button
+            className="add-btn"
+            onClick={() => setCreatingProject(true)}
+            title="New project"
+          >
+            + new
+          </button>
         </div>
 
         <div className="sidebar-scroll">
@@ -560,6 +589,14 @@ export function App(): React.JSX.Element {
           defaultProject={project}
           onClose={() => setCreating(false)}
           onCreate={vault.createItem}
+        />
+      )}
+
+      {creatingProject && (
+        <ProjectDialog
+          projects={snapshot.projects}
+          onClose={() => setCreatingProject(false)}
+          onCreate={handleCreateProject}
         />
       )}
 

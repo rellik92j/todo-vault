@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MaybeSnapshot, Result, VaultSnapshot } from "@shared/api";
+import type { MaybeSnapshot, Result, VaultApi, VaultSnapshot } from "@shared/api";
 
 /**
  * The renderer's whole data layer: one snapshot, replaced wholesale.
@@ -47,6 +47,13 @@ export interface VaultState {
    * into a generic that every other call site would have to unwrap.
    */
   createItem: (input: Record<string, unknown>) => Promise<string | null>;
+  /**
+   * Create a project. Returns only a snapshot, so it could have gone through
+   * `mutate` — except that `mutate` surfaces a failure as the banner over the
+   * main pane, and "Project ACME already exists" belongs in the dialog that is
+   * still open, beside the field that caused it. So it keeps its error too.
+   */
+  createProject: (input: Parameters<VaultApi["createProject"]>[0]) => Promise<string | null>;
   deleteItem: (
     key: string,
     cascade: boolean,
@@ -150,6 +157,22 @@ export function useVault(): VaultState {
     }
   }, []);
 
+  const createProject = useCallback<VaultState["createProject"]>(async (input) => {
+    setBusy(true);
+    try {
+      const result = await window.vault.createProject(input);
+      if (!result.ok) return result.message;
+      generation.current += 1;
+      setError(null);
+      setSnapshot(result.value);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const deleteItem = useCallback(async (key: string, cascade: boolean) => {
     setBusy(true);
     try {
@@ -208,6 +231,7 @@ export function useVault(): VaultState {
       reload: () => run(() => window.vault.reload(), { silent: true }),
       mutate,
       createItem,
+      createProject,
       deleteItem,
       restore,
       lastCreated,
@@ -222,6 +246,7 @@ export function useVault(): VaultState {
       run,
       mutate,
       createItem,
+      createProject,
       deleteItem,
       restore,
     ],
