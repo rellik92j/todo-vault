@@ -96,7 +96,7 @@ run.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 38 core tests
+npm test               # 39 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -247,12 +247,12 @@ silently dropping your dates.
 npm test
 ```
 
-Thirty-eight tests covering key allocation, disk round-trips, frontmatter
-stability, hierarchy rules, transition validation, backlinks, attachments,
-agenda sectioning, ADF conversion, push ordering, drift detection, manual
-reordering of both items and projects, trash and restore, project rename and
-cross-project moves, path portability, git health reporting, atomic writes, and
-which Windows rename failures are worth retrying.
+Thirty-nine tests covering key allocation, disk round-trips, frontmatter
+stability, hierarchy rules, transition validation, both ways an item can close,
+backlinks, attachments, agenda sectioning, ADF conversion, push ordering, drift
+detection, manual reordering of both items and projects, trash and restore,
+project rename and cross-project moves, path portability, git health reporting,
+atomic writes, and which Windows rename failures are worth retrying.
 
 ## What is not here yet
 
