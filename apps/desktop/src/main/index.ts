@@ -2,7 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
-import type { Status } from "todo-vault";
+import { formatZodError, type Status } from "todo-vault";
 import {
   CHANNELS,
   type ClaudeStatus,
@@ -34,7 +34,13 @@ function handle<A extends unknown[], T>(
     try {
       return { ok: true, value: await fn(...(args as A)) };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // formatZodError, not err.message: the core's write paths validate with
+      // zod's .parse(), and a ZodError's default message is the whole issue
+      // array as JSON. Picking a start date after a due date put a wall of
+      // `[{"code":"custom","path":["dueDate"]...` in the UI banner, burying the
+      // one sentence the schema had already written for a human. This falls
+      // through to err.message for everything that is not a zod error.
+      const message = formatZodError(err);
       console.error(`[main] ${channel} failed:`, message);
       return { ok: false, message };
     }

@@ -26,10 +26,20 @@
   --overdue: #f87171;
   --radius: 7px;
   --mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+
+  /*
+   * Tells the engine to render native controls dark — the date picker's calendar
+   * popup, its indicator icon, scrollbars, focus rings. Without it Chromium
+   * renders them light whatever the page looks like, which drew the date input's
+   * calendar icon dark-on-dark: the picker was there the whole time and simply
+   * could not be seen.
+   */
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
+    color-scheme: light;
     --bg: #f7f8fa;
     --bg-raised: #ffffff;
     --bg-inset: #eef0f4;
@@ -833,6 +843,17 @@ button:focus-visible {
 
 .date-field .inline-input {
   width: auto;
+}
+
+/* The calendar icon is the affordance, so it gets a pointer and stops looking
+   like decoration. color-scheme above is what makes it visible at all. */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 .clear-btn {

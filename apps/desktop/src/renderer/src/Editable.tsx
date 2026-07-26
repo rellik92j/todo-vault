@@ -127,26 +127,95 @@ export function EditableSelect<T extends string>({
   );
 }
 
+/**
+ * Click to reveal a real date picker; reads as plain text the rest of the time.
+ *
+ * This used to render a bare `<input type="date">`, so both date fields sat in
+ * permanent edit mode while every other field in the panel was quiet text until
+ * clicked — the one row that always looked like a form. It now follows
+ * EditableText: a button until you click it, an input while you are in it.
+ *
+ * Entering edit mode opens the calendar immediately. The field only gets there
+ * because the user clicked it, so making them click a second time to see a
+ * calendar would be a step that buys nothing.
+ */
 export function EditableDate({
   value,
+  placeholder,
   onCommit,
 }: {
   value: string | undefined;
+  placeholder?: string;
   onCommit: (next: string | null) => void;
 }): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    ref.current?.focus();
+    try {
+      // Needs transient user activation, which the click that got us here
+      // provides. If it has lapsed this throws, and typing the date still works
+      // — so a failure here costs the convenience, not the feature.
+      ref.current?.showPicker();
+    } catch {
+      /* keyboard entry is the fallback */
+    }
+  }, [editing]);
+
+  const clear = value ? (
+    <button
+      type="button"
+      className="clear-btn"
+      // Without this, mousedown blurs the input and unmounts this button before
+      // the click lands — the field would simply refuse to clear while open.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        onCommit(null);
+        setEditing(false);
+      }}
+      title="Clear"
+    >
+      ✕
+    </button>
+  ) : null;
+
+  if (!editing) {
+    return (
+      <span className="date-field">
+        <button
+          type="button"
+          className={`inline-edit ${value ? "" : "inline-empty"}`}
+          onClick={() => setEditing(true)}
+          title="Click to pick a date"
+        >
+          {value || placeholder || "—"}
+        </button>
+        {clear}
+      </span>
+    );
+  }
+
   return (
     <span className="date-field">
       <input
+        ref={ref}
         type="date"
         className="inline-input"
         value={value ?? ""}
         onChange={(e) => onCommit(e.target.value || null)}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(e) => {
+          // No draft state to revert: a date input commits whole valid dates
+          // only, so Escape and Enter both just leave.
+          if (e.key === "Escape" || e.key === "Enter") {
+            e.preventDefault();
+            setEditing(false);
+          }
+        }}
       />
-      {value && (
-        <button className="clear-btn" onClick={() => onCommit(null)} title="Clear">
-          ✕
-        </button>
-      )}
+      {clear}
     </span>
   );
 }
