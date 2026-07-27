@@ -26,5 +26,7 @@ export {
   // validate with zod's .parse(), whose default message is the raw issue array.
   formatZodError,
 } from "./util.js";
+export { parseDescription } from "./description.js";
+export type { Block, Inline } from "./description.js";
 export { buildPushPlan, loadJiraMap, markdownToAdf, toJiraCsv, JiraMapSchema } from "./jira.js";
 export type { JiraMap, JiraPushPlan, JiraIssueDraft } from "./jira.js";

@@ -61,6 +61,19 @@ offers too, so neither route can propose a pairing the core would refuse.
 Deleting offers an undo backed by `.trash`, and refuses to orphan children until
 you confirm the cascade.
 
+The description renders as markdown rather than as one collapsed line: headings,
+bullet and numbered lists, quotes, fenced code, and inline bold, italics, code
+and links. Click the prose to edit it and you get the raw markdown back, because
+the body of the file is the document and there is no second representation of
+it. The grammar is `packages/core/src/description.ts`, shared with the Jira
+converter, so the panel cannot show formatting the push would drop. One
+deliberate departure from strict markdown: a newline inside a paragraph is a
+break rather than a soft wrap, in the app and in the ADF alike — people type
+descriptions in a textarea and mean the line breaks they put there. Links in a
+description are opened by the main process against the same scheme allowlist the
+Links section uses, since a description can be written by anything with a text
+editor.
+
 Board columns are grouped by project and then by manual rank, since ranks are per
 project — comparing two projects' rank numbers directly is meaningless, and doing
 so made a single drag look like it reshuffled everything.
@@ -100,7 +113,7 @@ run.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 41 core tests
+npm test               # 44 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -255,10 +268,10 @@ silently dropping your dates.
 npm test
 ```
 
-Forty-one tests covering key allocation, disk round-trips, frontmatter
+Forty-four tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
-backlinks, attachments, agenda sectioning, ADF conversion, push ordering, drift
-detection, manual reordering of both items and projects, trash and restore,
+backlinks, attachments, agenda sectioning, the description grammar, ADF
+conversion, push ordering, drift detection, manual reordering of both items and projects, trash and restore,
 hiding and unhiding a project, project rename and cross-project moves, path
 portability, git health reporting, atomic writes, and which Windows rename
 failures are worth retrying.
@@ -281,6 +294,7 @@ failures are worth retrying.
 packages/core/src/
 ├── schema.ts       zod schema — the source of truth
 ├── markdown.ts     frontmatter with stable key ordering
+├── description.ts  the description grammar, shared with the app
 ├── util.ts         dates, hashing, atomic writes, rank arithmetic
 ├── vault.ts        core: load, validate, index, write atomically
 ├── jira.ts         field mapping, markdown→ADF, push plans

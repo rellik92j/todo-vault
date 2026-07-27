@@ -16,6 +16,10 @@
     "./constants": {
       "types": "./dist/constants.d.ts",
       "default": "./dist/constants.js"
+    },
+    "./description": {
+      "types": "./dist/description.d.ts",
+      "default": "./dist/description.js"
     }
   },
   "files": [

@@ -10,6 +10,7 @@ import {
 import type { Item } from "todo-vault";
 import type { ClaudeStatus, ProjectSummary } from "@shared/api";
 
+import { Markdown } from "./Markdown";
 import { legalParents } from "./pieces";
 
 /**
@@ -44,6 +45,7 @@ export function CreateDialog({
   const [cadence, setCadence] = useState<Cadence>("none");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   // The optional Claude layer. Null until the status call answers; the section
   // renders as unavailable rather than absent, so the feature is discoverable
@@ -55,6 +57,12 @@ export function CreateDialog({
 
   const summaryRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => summaryRef.current?.focus(), []);
+
+  // The toggle is hidden on an empty box, and a Claude draft can empty one while
+  // the preview is up — which would leave no way back to the textarea.
+  useEffect(() => {
+    if (!description.trim()) setPreviewing(false);
+  }, [description]);
 
   useEffect(() => {
     let live = true;
@@ -307,13 +315,36 @@ export function CreateDialog({
           </div>
 
           <label>
-            <span>Description</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={5}
-              placeholder="Markdown. This becomes the body of the file."
-            />
+            <span>
+              Description
+              {/* A peek, not a mode: the textarea's value stays the only copy,
+                  so nothing can be lost by toggling. Worth most for a Claude
+                  draft, whose whole premise is reading it before it is written. */}
+              {description.trim() && (
+                <button
+                  type="button"
+                  className="add-btn"
+                  onClick={() => setPreviewing((v) => !v)}
+                >
+                  {previewing ? "write" : "preview"}
+                </button>
+              )}
+            </span>
+            {previewing ? (
+              <div className="description">
+                <Markdown
+                  source={description}
+                  onOpenLink={(href) => void window.vault.openTarget({ kind: "external", value: href })}
+                />
+              </div>
+            ) : (
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={5}
+                placeholder="Markdown. This becomes the body of the file."
+              />
+            )}
           </label>
 
           {error && <div className="modal-error">{error}</div>}

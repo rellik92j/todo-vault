@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { Markdown } from "./Markdown";
+
 /**
  * Inline editing primitives.
  *
@@ -98,6 +100,101 @@ export function EditableText({
     />
   ) : (
     <input {...shared} ref={ref as React.Ref<HTMLInputElement>} className="inline-input" />
+  );
+}
+
+/**
+ * The same bargain as EditableText — raw text in a textarea, committed on blur —
+ * but reading back as rendered markdown instead of as one collapsed line.
+ *
+ * It cannot simply be EditableText with a renderer bolted on, because that
+ * component's read mode is a `<button>`: block elements may not nest inside one,
+ * and a link inside one is unclickable. So the read view is a plain container,
+ * and the click-to-edit affordance moves to the section heading, which is where
+ * Links and Attachments already keep theirs.
+ *
+ * Editing is still raw markdown, deliberately. The file on disk is the document;
+ * a WYSIWYG layer would put a second representation between you and it.
+ *
+ * `editing` is the caller's state so the heading button can open the field
+ * without reaching in here.
+ */
+export function EditableMarkdown({
+  value,
+  placeholder,
+  editing,
+  setEditing,
+  onCommit,
+  onOpenLink,
+}: {
+  value: string;
+  placeholder?: string;
+  editing: boolean;
+  setEditing: (next: boolean) => void;
+  onCommit: (next: string) => void;
+  onOpenLink: (href: string) => void;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(value);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(value);
+    ref.current?.focus();
+  }, [editing, value]);
+
+  const commit = (): void => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed !== value.trim()) onCommit(trimmed);
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        ref={ref}
+        className="inline-input inline-textarea"
+        rows={8}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft(value);
+            setEditing(false);
+          }
+          // A newline is the whole point of this field, so Enter alone types
+          // one and committing takes a modifier.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+    );
+  }
+
+  if (!value) {
+    return (
+      <button className="inline-edit inline-empty" onClick={() => setEditing(true)}>
+        {placeholder || "—"}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="description"
+      title="Click to edit"
+      onClick={(e) => {
+        // A link in the text is there to be followed; only a click on the prose
+        // around it means "edit".
+        if ((e.target as HTMLElement).closest("a, button, pre")) return;
+        setEditing(true);
+      }}
+    >
+      <Markdown source={value} onOpenLink={onOpenLink} />
+    </div>
   );
 }
 

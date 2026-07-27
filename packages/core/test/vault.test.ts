@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { Vault } from "../src/vault.js";
+import { parseDescription, type Block } from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
 import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
@@ -326,6 +327,58 @@ test("converts markdown to ADF", () => {
   const para = content[1].content as Array<{ text: string; marks?: Array<{ type: string }> }>;
   assert.ok(para.some((n) => n.marks?.some((m) => m.type === "strong")));
   assert.ok(para.some((n) => n.marks?.some((m) => m.type === "link")));
+});
+
+test("parses the description grammar into blocks", () => {
+  const blocks = parseDescription(
+    "## Plan\n\nFirst line\nsecond line\n\n- one **bold**\n- [two](https://x.dev)\n\n1. step\n\n> quoted\n> and still quoted\n\n```ts\nconst a = 1;\n```",
+  );
+  assert.deepEqual(
+    blocks.map((b) => b.kind),
+    ["heading", "paragraph", "list", "list", "quote", "code"],
+  );
+
+  const heading = blocks[0] as Extract<Block, { kind: "heading" }>;
+  assert.equal(heading.level, 2);
+
+  // The point of the whole exercise: a newline inside a paragraph survives as a
+  // break rather than being joined away into one line.
+  const paragraph = blocks[1] as Extract<Block, { kind: "paragraph" }>;
+  assert.deepEqual(
+    paragraph.content.map((n) => n.kind),
+    ["text", "break", "text"],
+  );
+
+  const bullets = blocks[2] as Extract<Block, { kind: "list" }>;
+  assert.equal(bullets.ordered, false);
+  assert.equal(bullets.items.length, 2);
+  assert.ok(bullets.items[0].some((n) => n.kind === "strong"));
+  const link = bullets.items[1].find((n) => n.kind === "link");
+  assert.equal(link?.kind === "link" ? link.href : null, "https://x.dev");
+
+  assert.equal((blocks[3] as Extract<Block, { kind: "list" }>).ordered, true);
+
+  // Both quoted lines belong to one blockquote, or the left rule renders as a
+  // stack of separate quotes with a gap through it.
+  const quote = blocks[4] as Extract<Block, { kind: "quote" }>;
+  assert.deepEqual(
+    quote.content.map((n) => n.kind),
+    ["text", "break", "text"],
+  );
+
+  const code = blocks[5] as Extract<Block, { kind: "code" }>;
+  assert.equal(code.language, "ts");
+  assert.equal(code.text, "const a = 1;");
+});
+
+test("a line break in a description reaches Jira as a hardBreak", () => {
+  const doc = markdownToAdf("First line\nsecond line");
+  const content = doc.content as Array<{ type: string; content: Array<{ type: string }> }>;
+  assert.equal(content.length, 1, "one paragraph, not two");
+  assert.deepEqual(
+    content[0].content.map((n) => n.type),
+    ["text", "hardBreak", "text"],
+  );
 });
 
 test("builds a Jira plan with parents before children, and skips unchanged pushes", async () => {
