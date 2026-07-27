@@ -736,10 +736,12 @@ button:focus-visible {
   margin: 0 0 7px;
 }
 
+/* Rendered markdown, not raw text — so no `white-space: pre-wrap` here: the
+   line breaks are real <br> elements now, and pre-wrap would double every gap
+   between blocks. */
 .description {
   font-size: 12.5px;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-dim);
   background: var(--bg-inset);
@@ -748,6 +750,93 @@ button:focus-visible {
   padding: 10px 12px;
   margin: 0;
   font-family: inherit;
+  cursor: text;
+}
+
+/* Browser defaults are sized for a document, not for a 12.5px side panel, so
+   every block inside here gets its own spacing and scale. First and last lose
+   their outer margin so the container's padding is the only edge. */
+.description > * {
+  margin: 0 0 8px;
+}
+
+.description > *:last-child {
+  margin-bottom: 0;
+}
+
+.description h4,
+.description h5,
+.description h6 {
+  color: var(--text);
+  font-weight: 650;
+  margin-top: 12px;
+}
+
+.description > h4:first-child,
+.description > h5:first-child,
+.description > h6:first-child {
+  margin-top: 0;
+}
+
+.description h4 {
+  font-size: 13.5px;
+}
+
+.description h5 {
+  font-size: 12.5px;
+}
+
+.description h6 {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.description ul,
+.description ol {
+  padding-left: 20px;
+}
+
+.description li {
+  margin-bottom: 3px;
+}
+
+.description blockquote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 10px;
+  color: var(--text-faint);
+}
+
+.description code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.description pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  cursor: auto;
+}
+
+/* The <pre> already carries the frame; a nested inline-code box inside it would
+   draw a second one around every line. */
+.description pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.description strong {
+  color: var(--text);
+  font-weight: 650;
 }
 
 .link-row {

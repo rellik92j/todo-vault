@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import YAML from "yaml";
 import { z } from "zod";
 
+import { parseDescription, type Inline } from "./description.js";
 import type { Item } from "./schema.js";
 import type { Vault } from "./vault.js";
 import { pushableFields } from "./vault.js";
@@ -79,133 +80,70 @@ export async function loadJiraMap(filePath: string): Promise<JiraMap> {
 
 type AdfNode = { type: string; [key: string]: unknown };
 
-const INLINE_RE = /(\[[^\]]+\]\([^)]+\)|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_)/g;
-
-function inlineNodes(text: string): AdfNode[] {
-  if (!text) return [];
-  const nodes: AdfNode[] = [];
-  let lastIndex = 0;
-
-  for (const match of text.matchAll(INLINE_RE)) {
-    const token = match[0];
-    const index = match.index ?? 0;
-    if (index > lastIndex) {
-      nodes.push({ type: "text", text: text.slice(lastIndex, index) });
-    }
-
-    if (token.startsWith("[")) {
-      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-      if (linkMatch) {
-        nodes.push({
+function adfInline(nodes: Inline[]): AdfNode[] {
+  return nodes.map((node) => {
+    switch (node.kind) {
+      case "link":
+        return {
           type: "text",
-          text: linkMatch[1],
-          marks: [{ type: "link", attrs: { href: linkMatch[2] } }],
-        });
-      }
-    } else if (token.startsWith("`")) {
-      nodes.push({ type: "text", text: token.slice(1, -1), marks: [{ type: "code" }] });
-    } else if (token.startsWith("**")) {
-      nodes.push({ type: "text", text: token.slice(2, -2), marks: [{ type: "strong" }] });
-    } else {
-      nodes.push({ type: "text", text: token.slice(1, -1), marks: [{ type: "em" }] });
+          text: node.text,
+          marks: [{ type: "link", attrs: { href: node.href } }],
+        };
+      case "code":
+        return { type: "text", text: node.text, marks: [{ type: "code" }] };
+      case "strong":
+        return { type: "text", text: node.text, marks: [{ type: "strong" }] };
+      case "em":
+        return { type: "text", text: node.text, marks: [{ type: "em" }] };
+      case "break":
+        return { type: "hardBreak" };
+      default:
+        return { type: "text", text: node.text };
     }
-    lastIndex = index + token.length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push({ type: "text", text: text.slice(lastIndex) });
-  }
-  return nodes.length ? nodes : [{ type: "text", text }];
+  });
 }
 
 /**
- * Jira Cloud's v3 API takes Atlassian Document Format, not markdown. This
- * handles the block types that actually show up in task descriptions; anything
- * exotic degrades to a plain paragraph rather than failing the push.
+ * Jira Cloud's v3 API takes Atlassian Document Format, not markdown.
+ *
+ * The grammar lives in description.ts, shared with the desktop app so the two
+ * cannot disagree about what a description means; this is only the mapping onto
+ * ADF's node names. Anything the grammar does not recognise arrives here as a
+ * plain paragraph rather than failing the push.
  */
 export function markdownToAdf(markdown: string): AdfNode {
-  const content: AdfNode[] = [];
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  let i = 0;
-
-  const flushList = (ordered: boolean): AdfNode => {
-    const items: AdfNode[] = [];
-    const pattern = ordered ? /^\s*\d+[.)]\s+(.*)$/ : /^\s*[-*+]\s+(.*)$/;
-    while (i < lines.length) {
-      const m = pattern.exec(lines[i]);
-      if (!m) break;
-      items.push({
-        type: "listItem",
-        content: [{ type: "paragraph", content: inlineNodes(m[1]) }],
-      });
-      i += 1;
+  const content: AdfNode[] = parseDescription(markdown).map((block) => {
+    switch (block.kind) {
+      case "heading":
+        return {
+          type: "heading",
+          attrs: { level: block.level },
+          content: adfInline(block.content),
+        };
+      case "list":
+        return {
+          type: block.ordered ? "orderedList" : "bulletList",
+          content: block.items.map((item) => ({
+            type: "listItem",
+            content: [{ type: "paragraph", content: adfInline(item) }],
+          })),
+        };
+      case "quote":
+        return {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: adfInline(block.content) }],
+        };
+      case "code":
+        return {
+          type: "codeBlock",
+          ...(block.language ? { attrs: { language: block.language } } : {}),
+          // An ADF text node may not be empty, so an empty fence gets a space.
+          content: [{ type: "text", text: block.text || " " }],
+        };
+      default:
+        return { type: "paragraph", content: adfInline(block.content) };
     }
-    return { type: ordered ? "orderedList" : "bulletList", content: items };
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (!line.trim()) {
-      i += 1;
-      continue;
-    }
-
-    if (line.startsWith("```")) {
-      const language = line.slice(3).trim() || undefined;
-      i += 1;
-      const buffer: string[] = [];
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        buffer.push(lines[i]);
-        i += 1;
-      }
-      i += 1;
-      content.push({
-        type: "codeBlock",
-        ...(language ? { attrs: { language } } : {}),
-        content: [{ type: "text", text: buffer.join("\n") || " " }],
-      });
-      continue;
-    }
-
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      content.push({
-        type: "heading",
-        attrs: { level: heading[1].length },
-        content: inlineNodes(heading[2]),
-      });
-      i += 1;
-      continue;
-    }
-
-    if (/^\s*[-*+]\s+/.test(line)) {
-      content.push(flushList(false));
-      continue;
-    }
-    if (/^\s*\d+[.)]\s+/.test(line)) {
-      content.push(flushList(true));
-      continue;
-    }
-
-    const quote = /^>\s?(.*)$/.exec(line);
-    if (quote) {
-      content.push({
-        type: "blockquote",
-        content: [{ type: "paragraph", content: inlineNodes(quote[1]) }],
-      });
-      i += 1;
-      continue;
-    }
-
-    const paragraph: string[] = [line];
-    i += 1;
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|>|\s*[-*+]\s|\s*\d+[.)]\s)/.test(lines[i])) {
-      paragraph.push(lines[i]);
-      i += 1;
-    }
-    content.push({ type: "paragraph", content: inlineNodes(paragraph.join(" ")) });
-  }
+  });
 
   if (!content.length) {
     content.push({ type: "paragraph", content: [] });

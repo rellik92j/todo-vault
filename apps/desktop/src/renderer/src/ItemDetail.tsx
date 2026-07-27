@@ -11,7 +11,13 @@ import {
 import type { Item } from "todo-vault";
 import type { Result, VaultSnapshot } from "@shared/api";
 
-import { EditableDate, EditableList, EditableSelect, EditableText } from "./Editable";
+import {
+  EditableDate,
+  EditableList,
+  EditableMarkdown,
+  EditableSelect,
+  EditableText,
+} from "./Editable";
 import {
   Cadence as CadencePill,
   STATUS_LABELS,
@@ -56,6 +62,7 @@ export function ItemDetail({
   const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [dropping, setDropping] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -66,6 +73,13 @@ export function ItemDetail({
       live = false;
     };
   }, [item.key, item.updated]);
+
+  // Keyed on the item alone, not on `updated`: another item's description is a
+  // different document, so the field closes, but a write landing while you type
+  // must not take the textarea out from under you.
+  useEffect(() => {
+    setEditingDescription(false);
+  }, [item.key]);
 
   const patch = (fields: Record<string, unknown>): void => {
     void mutate(() => window.vault.updateItem(item.key, fields));
@@ -78,7 +92,10 @@ export function ItemDetail({
   // Routed through `mutate` even though nothing here touches the snapshot,
   // so a failed open surfaces on the same error banner every other refusal
   // in this panel uses, instead of the click just doing nothing.
-  const openTarget = (kind: "attachment" | "file" | "folder", value: string): void => {
+  const openTarget = (
+    kind: "attachment" | "file" | "folder" | "external",
+    value: string,
+  ): void => {
     void mutate(() => window.vault.openTarget({ kind, value }));
   };
 
@@ -252,12 +269,28 @@ export function ItemDetail({
         </dl>
 
         <div className="detail-section">
-          <h3>Description</h3>
-          <EditableText
+          <h3>
+            Description
+            {/* The read view renders markdown, so it cannot be a button you
+                click to edit — hence the affordance up here, beside the ones
+                Links and Attachments already carry. */}
+            {/* Gone while the textarea is open: a mousedown on it would blur
+                the field, commit, and then the click would re-open it — the
+                same trap EditableDate's clear button documents. Blur and
+                Ctrl+Enter both commit, so it has nothing left to do there. */}
+            {item.description && !editingDescription && (
+              <button className="add-btn" onClick={() => setEditingDescription(true)}>
+                edit
+              </button>
+            )}
+          </h3>
+          <EditableMarkdown
             value={item.description}
             placeholder="Click to add a description…"
-            multiline
+            editing={editingDescription}
+            setEditing={setEditingDescription}
             onCommit={(description) => patch({ description })}
+            onOpenLink={(href) => openTarget("external", href)}
           />
         </div>
 
