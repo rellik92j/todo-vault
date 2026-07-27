@@ -275,11 +275,14 @@ Three things worth remembering, all caught by running it rather than reading it:
 - **`.section-range` is declared after `.due-overdue`**, so a row carrying both
   lost the overdue colour to source order at equal specificity.
 
-## Phase 4 — in-app Claude ⚠️ built, unproven against the real API
+## Phase 4 — in-app Claude ✅ verified against the real API
 
-Built and driven end to end **except the API call itself**, which needs a key.
-See "Handoff: first run with a real key" below for exactly what is and is not
-proven, and what to check first.
+Built and driven end to end, including the API call itself: a real key was
+entered and a draft was successfully requested and returned. See "Handoff:
+first run with a real key" below — the call path is now proven, but the
+specific checks that section calls out (date resolution, project inference,
+vague-prompt behaviour) were not individually verified and are worth a look
+if drafting ever produces a surprising result.
 
 `apps/desktop/src/main/claude.ts` holds the call, `secrets.ts` the key. The key
 is typed into the settings panel, sent to main once, and encrypted with
@@ -404,10 +407,14 @@ string inside `jira.ts` tell you to run it. Phase 5.
 OPS-2 now reads `↻ weekly · due 2026-07-29 · after this window` under "recurring
 this week", so the date no longer looks like it contradicts the heading.
 
-## Handoff: first run with a real key
+## Handoff: first run with a real key ✅ done — basic smoke test
 
-Everything around the API call is verified; the call itself is not. Nothing has
-ever been sent to Anthropic from this app.
+A real key was entered and a draft was requested and returned successfully.
+That proves the request is accepted and `output_config.format` returns
+something the schema accepts. **Not individually re-checked**: the three
+specific failure modes below (date resolution, project inference, an empty
+vs. invented note) and the vague-prompt behaviour in step 4. Worth walking
+through if a draft ever looks wrong, since nothing has ruled those out yet.
 
 **Proven, by driving the built app with no key and then a dummy one:**
 status reporting; `safeStorage` encrypt → store → clear round trip (Windows
@@ -417,16 +424,11 @@ a "Drafting is off" line; `draftItem` refusing with *"No Anthropic API key is
 stored"*, which exercises the whole IPC path into main. The dummy key was
 removed afterwards — `hasKey` is false and nothing is left in the keychain.
 
-**Not proven — everything past `client.messages.create`:** that the request is
-accepted, that `output_config.format` returns what the schema describes, that
-the prompt produces a sensible draft, and how long a call takes.
+**Remaining, if a draft ever looks wrong, check in this order:**
 
-**First run, in this order:**
-
-1. Sidebar → **Claude** → paste the key → Save. Expect "A key is stored".
-2. Press `n`, type something with a relative date and no project, e.g.
+1. Press `n`, type something with a relative date and no project, e.g.
    *"chase legal for the signed DPA, high priority, by Friday"*, then Draft.
-3. Check the three things most likely to be wrong, in this order:
+2. Check the three things most likely to be wrong, in this order:
    - **The date.** Today's date is injected into the system prompt and the model
      is told to resolve against it. A date in the past means that instruction is
      not landing, and it is the failure most likely to go unnoticed.
@@ -434,7 +436,7 @@ the prompt produces a sensible draft, and how long a call takes.
      the note; it must be a key that exists.
    - **The note.** Empty every time probably means the field is being ignored
      rather than that nothing needed assuming.
-4. Then try a deliberately vague prompt — *"sort out the thing with the invoices"*.
+3. Then try a deliberately vague prompt — *"sort out the thing with the invoices"*.
    The interesting behaviour is whether it leaves fields empty and says so, or
    invents detail. The prompt asks for the former; if it invents, tighten the
    system prompt in `claude.ts` rather than adding validation.
