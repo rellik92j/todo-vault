@@ -19,6 +19,19 @@ import { CLAUDE_MODEL, draftItem } from "./claude.js";
 const service = new VaultService();
 let mainWindow: BrowserWindow | undefined;
 
+// Link targets reach this handler from hand-edited frontmatter and the MCP
+// server, not just this UI, so an unchecked scheme is a local-code-execution
+// vector (file:, javascript:, ms-msdt:, search-ms:), not just a UX nicety.
+const ALLOWED_EXTERNAL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+// A `file`/`folder` link can point anywhere, written by the MCP server or a
+// hand-edited frontmatter file just as easily as by this app. shell.openPath
+// runs these rather than opening them, so refuse them instead of executing
+// whatever a vault happens to contain.
+const EXECUTABLE_EXTENSIONS = new Set([
+  ".exe", ".bat", ".cmd", ".com", ".scr", ".msi", ".ps1", ".vbs", ".js", ".jar", ".lnk", ".url", ".reg",
+]);
+
 /**
  * Wrap a handler so nothing ever rejects across IPC.
  *
@@ -97,9 +110,20 @@ function createWindow(): void {
     },
   );
 
-  // External links open in the real browser, never inside the app shell.
+  // External links open in the real browser, never inside the app shell —
+  // and only for a scheme on the allowlist above.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    let scheme: string;
+    try {
+      scheme = new URL(url).protocol;
+    } catch {
+      return { action: "deny" };
+    }
+    if (ALLOWED_EXTERNAL_SCHEMES.has(scheme)) {
+      void shell.openExternal(url);
+    } else {
+      console.error(`[main] refused to open external link with scheme ${scheme}`);
+    }
     return { action: "deny" };
   });
 
@@ -360,6 +384,60 @@ function registerHandlers(): void {
       }
 
       shell.showItemInFolder(resolved);
+      return null;
+    },
+  );
+
+  handle(
+    CHANNELS.openTarget,
+    async (target: { kind: "attachment" | "file" | "folder" | "external"; value: string }) => {
+      if (target.kind === "external") {
+        let scheme: string;
+        try {
+          scheme = new URL(target.value).protocol;
+        } catch {
+          throw new Error(`${target.value} is not a valid URL`);
+        }
+        if (!ALLOWED_EXTERNAL_SCHEMES.has(scheme)) {
+          throw new Error(`Refusing to open a ${scheme} link`);
+        }
+        await shell.openExternal(target.value);
+        return null;
+      }
+
+      let resolved: string;
+      if (target.kind === "attachment") {
+        if (!service.root) throw new Error("No vault is open");
+        resolved = service.resolveAttachment(target.value);
+        // Same guard as revealPath: nothing arriving over IPC should escape the vault.
+        const relative = path.relative(service.root, resolved);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          throw new Error(`${target.value} is outside the vault`);
+        }
+      } else {
+        // `file`/`folder` links are by definition outside the vault, so the
+        // containment guard above cannot apply here — the extension refusal
+        // list is the substitute for it.
+        resolved = path.resolve(target.value);
+        const ext = path.extname(resolved).toLowerCase();
+        if (EXECUTABLE_EXTENSIONS.has(ext)) {
+          throw new Error(
+            `Refusing to open ${path.basename(resolved)} — a ${ext} file would run rather than open`,
+          );
+        }
+      }
+
+      try {
+        await fs.stat(resolved);
+      } catch {
+        throw new Error(`${path.basename(resolved)} is not on disk`);
+      }
+
+      // shell.openPath returns an error string instead of throwing, so a
+      // missing file or a share that refuses the open would otherwise produce
+      // a click that silently does nothing.
+      const openError = await shell.openPath(resolved);
+      if (openError) throw new Error(openError);
       return null;
     },
   );

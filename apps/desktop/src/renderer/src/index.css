@@ -854,6 +854,14 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* The reveal affordance under an attachment title is a <button> so it can
+   dispatch over IPC, but should still read as the plain path text above. */
+button.mono-path {
+  display: block;
+  padding: 0;
+  text-align: left;
+}
+
 .status-line {
   display: flex;
   align-items: center;

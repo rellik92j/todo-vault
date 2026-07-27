@@ -126,6 +126,19 @@ export interface VaultApi {
   /** Reveal an item's markdown, or an attachment, in the OS file manager. */
   revealPath(target: { kind: "item" | "attachment" | "vault"; value?: string }): Promise<Result<null>>;
 
+  /**
+   * Open a `file`/`folder` link, an attachment, or an external URL with the OS
+   * default handler. Distinct from revealPath: this opens the target itself
+   * rather than showing its containing folder, so it refuses executable
+   * extensions and checks the external scheme allowlist rather than reusing
+   * revealPath's vault-containment guard, which a `file` link is by definition
+   * outside of.
+   */
+  openTarget(target: {
+    kind: "attachment" | "file" | "folder" | "external";
+    value: string;
+  }): Promise<Result<null>>;
+
   // ------------------------------------------------------------- mutations
   // Each returns a fresh snapshot, so the renderer never reconciles a delta.
 
@@ -225,6 +238,7 @@ export const CHANNELS = {
   getAgenda: "vault:get-agenda",
   getRelated: "vault:get-related",
   revealPath: "vault:reveal-path",
+  openTarget: "vault:open-target",
   getSuggestedVault: "vault:suggested",
 
   createItem: "vault:create-item",

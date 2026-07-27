@@ -75,6 +75,13 @@ export function ItemDetail({
     void window.vault.revealPath({ kind, value });
   };
 
+  // Routed through `mutate` even though nothing here touches the snapshot,
+  // so a failed open surfaces on the same error banner every other refusal
+  // in this panel uses, instead of the click just doing nothing.
+  const openTarget = (kind: "attachment" | "file" | "folder", value: string): void => {
+    void mutate(() => window.vault.openTarget({ kind, value }));
+  };
+
   // Only legal destinations, plus the current one, so a rejected write is
   // impossible rather than merely reported.
   const statusOptions = [item.status, ...legalTransitions(item.status)] as Status[];
@@ -335,6 +342,16 @@ export function ItemDetail({
                   <a className="link-btn" href={link.target} target="_blank" rel="noreferrer">
                     {link.label ?? link.target}
                   </a>
+                ) : link.type === "file" || link.type === "folder" ? (
+                  <>
+                    <button
+                      className="link-btn"
+                      onClick={() => openTarget(link.type as "file" | "folder", link.target)}
+                    >
+                      {link.label ?? link.target}
+                    </button>
+                    {link.label && <div className="mono-path">{link.target}</div>}
+                  </>
                 ) : (
                   <>
                     {link.label && <div>{link.label}</div>}
@@ -371,13 +388,20 @@ export function ItemDetail({
             <div className="link-row" key={attachment.path}>
               <span className="link-type">file</span>
               <span className="link-target">
-                <button className="link-btn" onClick={() => reveal("attachment", attachment.path)}>
+                <button
+                  className="link-btn"
+                  onClick={() => openTarget("attachment", attachment.path)}
+                >
                   {attachment.title ?? attachment.path.split("/").pop()}
                 </button>
-                <div className="mono-path">
+                <button
+                  className="mono-path"
+                  title="Show in folder"
+                  onClick={() => reveal("attachment", attachment.path)}
+                >
                   {attachment.path}
                   {attachment.bytes !== undefined && ` · ${formatBytes(attachment.bytes)}`}
-                </div>
+                </button>
               </span>
             </div>
           ))}
