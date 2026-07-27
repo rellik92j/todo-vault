@@ -61,18 +61,30 @@ offers too, so neither route can propose a pairing the core would refuse.
 Deleting offers an undo backed by `.trash`, and refuses to orphan children until
 you confirm the cascade.
 
-The description renders as markdown rather than as one collapsed line: headings,
-bullet and numbered lists, quotes, fenced code, and inline bold, italics, code
-and links. Click the prose to edit it and you get the raw markdown back, because
-the body of the file is the document and there is no second representation of
-it. The grammar is `packages/core/src/description.ts`, shared with the Jira
-converter, so the panel cannot show formatting the push would drop. One
-deliberate departure from strict markdown: a newline inside a paragraph is a
+The description renders as markdown rather than as one collapsed line, and edits
+as formatting rather than as syntax: Ctrl+B bolds, the toolbar makes headings,
+bullet and numbered lists, quotes, fenced code and links, and nothing shows its
+markers. The file on disk is still plain markdown — nothing here is stored as
+anything else. The grammar is `packages/core/src/description.ts`, shared with
+the Jira converter and with the editor's schema, so the panel cannot show, and
+the toolbar cannot produce, formatting the push would drop.
+
+Which editor you get is a fact about the text, not a preference.
+`isLosslessDescription` asks whether a description survives a parse and a write
+byte for byte; only then is the rich editor offered. A description using `_em_`,
+`+` bullets or a run of blank lines would come back reformatted, so it opens in
+a plain markdown box instead, saying why. That matters because the CLI, the MCP
+server and Notepad write these files too, and `--git` commits every write: a
+normalising editor would fill the history with commits nobody typed. **source**
+beside the heading switches to the raw markdown by hand at any time.
+
+One deliberate departure from strict markdown: a newline inside a paragraph is a
 break rather than a soft wrap, in the app and in the ADF alike — people type
-descriptions in a textarea and mean the line breaks they put there. Links in a
+descriptions in a box and mean the line breaks they put there. Links in a
 description are opened by the main process against the same scheme allowlist the
 Links section uses, since a description can be written by anything with a text
-editor.
+editor, and the link form refuses a scheme off that list while you are still
+looking at it rather than writing one that could never be followed.
 
 Board columns are grouped by project and then by manual rank, since ranks are per
 project — comparing two projects' rank numbers directly is meaningless, and doing
@@ -113,7 +125,7 @@ run.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 44 core tests
+npm test               # 48 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -268,9 +280,11 @@ silently dropping your dates.
 npm test
 ```
 
-Forty-four tests covering key allocation, disk round-trips, frontmatter
+Forty-eight tests covering key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
-backlinks, attachments, agenda sectioning, the description grammar, ADF
+backlinks, attachments, agenda sectioning, the description grammar in both
+directions — including that parsing survives a write unchanged, and that every
+description in the example vault is one the rich editor may touch — ADF
 conversion, push ordering, drift detection, manual reordering of both items and projects, trash and restore,
 hiding and unhiding a project, project rename and cross-project moves, path
 portability, git health reporting, atomic writes, and which Windows rename
@@ -294,7 +308,7 @@ failures are worth retrying.
 packages/core/src/
 ├── schema.ts       zod schema — the source of truth
 ├── markdown.ts     frontmatter with stable key ordering
-├── description.ts  the description grammar, shared with the app
+├── description.ts  the description grammar, both ways, shared with the app
 ├── util.ts         dates, hashing, atomic writes, rank arithmetic
 ├── vault.ts        core: load, validate, index, write atomically
 ├── jira.ts         field mapping, markdown→ADF, push plans
