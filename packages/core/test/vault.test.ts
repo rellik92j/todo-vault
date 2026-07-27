@@ -5,7 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { Vault } from "../src/vault.js";
-import { parseDescription, type Block } from "../src/description.js";
+import {
+  isLosslessDescription,
+  parseDescription,
+  serializeDescription,
+  type Block,
+} from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
 import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
@@ -369,6 +374,111 @@ test("parses the description grammar into blocks", () => {
   const code = blocks[5] as Extract<Block, { kind: "code" }>;
   assert.equal(code.language, "ts");
   assert.equal(code.text, "const a = 1;");
+});
+
+/** Every construct the grammar has, in one document. */
+const RICH_DESCRIPTION = [
+  "## Plan",
+  "",
+  "First line",
+  "second line with **bold**, *em*, `code` and a [link](https://x.dev)",
+  "",
+  "- one",
+  "- two",
+  "",
+  "1. step",
+  "2. another step",
+  "",
+  "> quoted",
+  "> and still quoted",
+  "",
+  "```ts",
+  "const a = 1;",
+  "```",
+].join("\n");
+
+test("serializeDescription writes back exactly what was parsed", () => {
+  assert.equal(serializeDescription(parseDescription(RICH_DESCRIPTION)), RICH_DESCRIPTION);
+  assert.ok(isLosslessDescription(RICH_DESCRIPTION));
+});
+
+test("parsing is idempotent across a write, for every shape the grammar takes", () => {
+  // The property that actually matters. Byte equality is the stricter runtime
+  // guard; this is the weaker one that must hold for *anything*, including the
+  // inputs the guard rejects — otherwise a rejected description would still be
+  // at risk the moment someone edited it in the raw box.
+  const inputs = [
+    RICH_DESCRIPTION,
+    "",
+    "just a sentence",
+    "_underscore em_ and + a plus bullet",
+    "+ plus\n+ bullets",
+    "1) paren\n2) numbering",
+    "7. starts\n9. at seven",
+    "para\n\n\n\nwith blank runs",
+    "  - indented bullet",
+    "```\nno language\n```",
+    "```\n```",
+    "> lone quote",
+    "###### deep heading",
+    "| a | table |\n| - | - |",
+    "<div>raw html</div>",
+  ];
+
+  for (const input of inputs) {
+    const once = parseDescription(input);
+    const twice = parseDescription(serializeDescription(once));
+    assert.deepEqual(twice, once, `not idempotent for: ${JSON.stringify(input)}`);
+  }
+});
+
+test("isLosslessDescription refuses anything a write would restyle", () => {
+  // Each of these parses fine but writes back differently, so the app must edit
+  // it as raw text rather than reformat someone's file behind them.
+  for (const input of [
+    "_underscore em_",
+    "+ plus bullet",
+    "* star bullet",
+    "1) paren numbering",
+    "7. starts at seven",
+    "para\n\n\n\nwith a blank run",
+    "  - indented bullet",
+  ]) {
+    assert.equal(isLosslessDescription(input), false, `should have been refused: ${input}`);
+  }
+
+  // ...and the everyday shapes must not be refused, or the rich editor would
+  // never appear at all. Interior trailing spaces are in that list: they live
+  // inside a text node and survive the trip, and the body's own trailing
+  // whitespace is already gone by the time a description reaches this.
+  for (const input of [
+    "",
+    "plain prose",
+    "two\nlines",
+    "- a\n- b",
+    "**bold**",
+    "trailing spaces   \nnext line",
+  ]) {
+    assert.equal(isLosslessDescription(input), true, `should have been allowed: ${input}`);
+  }
+});
+
+test("every description in the worked example vault can be edited richly", async () => {
+  // The fixture the desktop UI is developed against. If one of these ever falls
+  // into raw-text fallback, the feature is being demoed against content that
+  // does not exercise it.
+  const dir = path.join(import.meta.dirname, "..", "..", "..", "vault", "items");
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return; // No vault checked out here; nothing to assert.
+  }
+
+  for (const file of files.filter((f) => f.endsWith(".md"))) {
+    const { body } = parseFrontmatter(await fs.readFile(path.join(dir, file), "utf8"));
+    assert.ok(isLosslessDescription(body), `${file} would fall back to raw editing`);
+  }
 });
 
 test("a line break in a description reaches Jira as a hardBreak", () => {

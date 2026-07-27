@@ -10,7 +10,9 @@ import {
 import type { Item } from "todo-vault";
 import type { ClaudeStatus, ProjectSummary } from "@shared/api";
 
-import { Markdown } from "./Markdown";
+import { isLosslessDescription } from "todo-vault/description";
+
+import { RichEditor } from "./RichEditor";
 import { legalParents } from "./pieces";
 
 /**
@@ -45,7 +47,10 @@ export function CreateDialog({
   const [cadence, setCadence] = useState<Cadence>("none");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
+  const [source, setSource] = useState(false);
+  // Bumped when a draft replaces the description, to remount the editor. See
+  // where it is used for why the editor cannot simply watch the value.
+  const [draftGeneration, setDraftGeneration] = useState(0);
 
   // The optional Claude layer. Null until the status call answers; the section
   // renders as unavailable rather than absent, so the feature is discoverable
@@ -58,11 +63,10 @@ export function CreateDialog({
   const summaryRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => summaryRef.current?.focus(), []);
 
-  // The toggle is hidden on an empty box, and a Claude draft can empty one while
-  // the preview is up — which would leave no way back to the textarea.
-  useEffect(() => {
-    if (!description.trim()) setPreviewing(false);
-  }, [description]);
+  // Same rule the detail panel keeps: the rich editor is offered only for text
+  // it can write back unchanged. A Claude draft is the one thing here that can
+  // arrive using formatting outside the grammar's single spelling of it.
+  const rich = !source && isLosslessDescription(description);
 
   useEffect(() => {
     let live = true;
@@ -97,6 +101,7 @@ export function CreateDialog({
     setType(input.type);
     setSummary(input.summary);
     setDescription(input.description ?? "");
+    setDraftGeneration((n) => n + 1);
     if (input.priority) setPriority(input.priority);
     setDueDate(input.dueDate ?? "");
     setCategory(input.category ?? "");
@@ -314,38 +319,55 @@ export function CreateDialog({
             </label>
           </div>
 
-          <label>
+          {/*
+            A div, not a <label> like every other field here. Clicking a label
+            activates its first labelable descendant, and that is the source
+            toggle — so with the rich editor inside one, every click into the
+            prose pressed the button and flipped the field to raw markdown. The
+            editing surface is a contenteditable, not a form control, so there
+            is nothing for a label to point at anyway.
+          */}
+          <div className="modal-field">
             <span>
               Description
-              {/* A peek, not a mode: the textarea's value stays the only copy,
-                  so nothing can be lost by toggling. Worth most for a Claude
-                  draft, whose whole premise is reading it before it is written. */}
-              {description.trim() && (
-                <button
-                  type="button"
-                  className="add-btn"
-                  onClick={() => setPreviewing((v) => !v)}
-                >
-                  {previewing ? "write" : "preview"}
-                </button>
-              )}
+              {/* The preview toggle this replaces answered "what will my
+                  markdown look like", which is no longer a question you have to
+                  ask. What is left is the reverse: seeing the markdown itself. */}
+              <button
+                type="button"
+                className="add-btn"
+                onClick={() => setSource((v) => !v)}
+                title="Edit the raw markdown"
+              >
+                {source ? "rich" : "source"}
+              </button>
             </span>
-            {previewing ? (
-              <div className="description">
-                <Markdown
-                  source={description}
-                  onOpenLink={(href) => void window.vault.openTarget({ kind: "external", value: href })}
-                />
-              </div>
-            ) : (
-              <textarea
+            {rich ? (
+              // Remounted when a draft arrives: the editor takes its content
+              // once, at mount, so that typing is never yanked out from under
+              // you — which means a value replaced from outside needs a new one.
+              <RichEditor
+                key={draftGeneration}
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={5}
-                placeholder="Markdown. This becomes the body of the file."
+                onChange={setDescription}
               />
+            ) : (
+              <>
+                {!source && (
+                  <div className="field-note">
+                    Editing as markdown: this uses formatting the rich editor would
+                    rewrite.
+                  </div>
+                )}
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={5}
+                  placeholder="Markdown. This becomes the body of the file."
+                />
+              </>
             )}
-          </label>
+          </div>
 
           {error && <div className="modal-error">{error}</div>}
         </div>
