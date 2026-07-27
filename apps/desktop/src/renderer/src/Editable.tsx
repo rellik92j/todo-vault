@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { isLosslessDescription } from "todo-vault/description";
 
 import { Markdown } from "./Markdown";
+import { RichEditor } from "./RichEditor";
 
 /**
  * Inline editing primitives.
@@ -104,8 +106,8 @@ export function EditableText({
 }
 
 /**
- * The same bargain as EditableText — raw text in a textarea, committed on blur —
- * but reading back as rendered markdown instead of as one collapsed line.
+ * The same bargain as EditableText — committed on blur, reverted on Escape — but
+ * rendering markdown when read and editing it as formatting rather than syntax.
  *
  * It cannot simply be EditableText with a renderer bolted on, because that
  * component's read mode is a `<button>`: block elements may not nest inside one,
@@ -113,8 +115,14 @@ export function EditableText({
  * and the click-to-edit affordance moves to the section heading, which is where
  * Links and Attachments already keep theirs.
  *
- * Editing is still raw markdown, deliberately. The file on disk is the document;
- * a WYSIWYG layer would put a second representation between you and it.
+ * Which editor you get is not a preference, it is a fact about the text.
+ * `isLosslessDescription` asks whether this exact content survives a parse and a
+ * write byte for byte. When it does, the rich editor can only write back what
+ * someone actually changed. When it does not — `_em_`, `+` bullets, a run of
+ * blank lines — editing it richly would restyle a file its author wrote
+ * deliberately, and with `--git` on that lands as a commit nobody typed. So
+ * those fall back to the raw box, saying why. Lossless or plain text, never
+ * lossy.
  *
  * `editing` is the caller's state so the heading button can open the field
  * without reaching in here.
@@ -124,6 +132,7 @@ export function EditableMarkdown({
   placeholder,
   editing,
   setEditing,
+  source,
   onCommit,
   onOpenLink,
 }: {
@@ -131,46 +140,64 @@ export function EditableMarkdown({
   placeholder?: string;
   editing: boolean;
   setEditing: (next: boolean) => void;
+  /** Edit the markdown by hand, whether or not it would round-trip. */
+  source?: boolean;
   onCommit: (next: string) => void;
   onOpenLink: (href: string) => void;
 }): React.JSX.Element {
   const [draft, setDraft] = useState(value);
   const ref = useRef<HTMLTextAreaElement | null>(null);
 
+  const rich = !source && isLosslessDescription(value);
+
   useEffect(() => {
-    if (!editing) return;
+    if (!editing || rich) return;
     setDraft(value);
     ref.current?.focus();
-  }, [editing, value]);
+  }, [editing, rich, value]);
 
-  const commit = (): void => {
+  const commit = (next: string): void => {
     setEditing(false);
-    const trimmed = draft.trim();
+    const trimmed = next.trim();
     if (trimmed !== value.trim()) onCommit(trimmed);
   };
 
+  if (editing && rich) {
+    return (
+      <RichEditor value={value} onCommit={commit} onCancel={() => setEditing(false)} />
+    );
+  }
+
   if (editing) {
     return (
-      <textarea
-        ref={ref}
-        className="inline-input inline-textarea"
-        rows={8}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            setDraft(value);
-            setEditing(false);
-          }
-          // A newline is the whole point of this field, so Enter alone types
-          // one and committing takes a modifier.
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            commit();
-          }
-        }}
-      />
+      <>
+        {!source && (
+          <div className="field-note">
+            Editing as markdown: this description uses formatting the rich editor
+            would rewrite.
+          </div>
+        )}
+        <textarea
+          ref={ref}
+          className="inline-input inline-textarea"
+          rows={8}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => commit(draft)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setDraft(value);
+              setEditing(false);
+            }
+            // A newline is the whole point of this field, so Enter alone types
+            // one and committing takes a modifier.
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              commit(draft);
+            }
+          }}
+        />
+      </>
     );
   }
 

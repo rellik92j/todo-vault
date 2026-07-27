@@ -63,6 +63,7 @@ export function ItemDetail({
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
+  const [sourceDescription, setSourceDescription] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -79,6 +80,7 @@ export function ItemDetail({
   // must not take the textarea out from under you.
   useEffect(() => {
     setEditingDescription(false);
+    setSourceDescription(false);
   }, [item.key]);
 
   const patch = (fields: Record<string, unknown>): void => {
@@ -283,12 +285,25 @@ export function ItemDetail({
                 edit
               </button>
             )}
+            {/* The rich editor is the default, but the file is still the
+                document: this is how you see and fix exactly what is in it. */}
+            {item.description && (
+              <button
+                className="add-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setSourceDescription((v) => !v)}
+                title="Edit the raw markdown"
+              >
+                {sourceDescription ? "rich" : "source"}
+              </button>
+            )}
           </h3>
           <EditableMarkdown
             value={item.description}
             placeholder="Click to add a description…"
             editing={editingDescription}
             setEditing={setEditingDescription}
+            source={sourceDescription}
             onCommit={(description) => patch({ description })}
             onOpenLink={(href) => openTarget("external", href)}
           />

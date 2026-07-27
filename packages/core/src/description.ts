@@ -1,10 +1,11 @@
 /**
- * The markdown an item description is allowed to contain, parsed once.
+ * The markdown an item description is allowed to contain, parsed and written.
  *
  * An item's body *is* its description, so the same text has to be understood in
- * two places: the desktop panel that renders it and the Jira push that converts
- * it to ADF. This file is the single grammar both of them read, so the app can
- * never show formatting the push would drop, or drop formatting the push keeps.
+ * three places: the desktop panel that renders it, the rich editor that writes
+ * it, and the Jira push that converts it to ADF. This file is the single grammar
+ * all of them read, so the app can never show or produce formatting the push
+ * would drop, or drop formatting the push keeps.
  *
  * Split out of jira.ts, which owned it first — importing it from there would
  * pull node:fs, zod and yaml into a browser bundle. Exposed as
@@ -168,4 +169,92 @@ export function parseDescription(markdown: string): Block[] {
   }
 
   return blocks;
+}
+
+// ------------------------------------------------------------- writing it back
+
+function serializeInline(nodes: Inline[]): string {
+  return nodes
+    .map((node) => {
+      switch (node.kind) {
+        case "strong":
+          return `**${node.text}**`;
+        case "em":
+          return `*${node.text}*`;
+        case "code":
+          return `\`${node.text}\``;
+        case "link":
+          return `[${node.text}](${node.href})`;
+        case "break":
+          return "\n";
+        default:
+          return node.text;
+      }
+    })
+    .join("");
+}
+
+/**
+ * Blocks back to markdown — the inverse of parseDescription.
+ *
+ * This exists so a rich editor can write the file without a second markdown
+ * implementation in the app. The grammar has one home, and both directions of it
+ * live here next to each other where they can be read together.
+ *
+ * It emits one spelling of each construct: `*em*` not `_em_`, `-` bullets not `*`
+ * or `+`, `1.` not `1)`, and ordered lists renumbered from one. That makes it a
+ * normaliser, which is exactly why nothing calls it on content it has not first
+ * checked with isLosslessDescription.
+ */
+export function serializeDescription(blocks: Block[]): string {
+  return blocks
+    .map((block) => {
+      switch (block.kind) {
+        case "heading":
+          return `${"#".repeat(block.level)} ${serializeInline(block.content)}`;
+        case "list":
+          return block.items
+            .map((item, index) =>
+              block.ordered
+                ? `${index + 1}. ${serializeInline(item)}`
+                : `- ${serializeInline(item)}`,
+            )
+            .join("\n");
+        case "quote":
+          // Every line of the quotation carries its own marker, which is what
+          // the parser needs to read them back as one block rather than as a
+          // quote followed by a paragraph.
+          return serializeInline(block.content)
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n");
+        case "code":
+          return `\`\`\`${block.language ?? ""}\n${block.text}\n\`\`\``;
+        default:
+          return serializeInline(block.content);
+      }
+    })
+    .join("\n\n");
+}
+
+/**
+ * Whether this description survives a parse-and-write round trip byte for byte.
+ *
+ * The app asks this before offering the rich editor. True means editing richly
+ * can only ever write back what a person actually changed. False means the
+ * round trip would reformat the file on its own — `_em_` rewritten to `*em*`,
+ * `+` bullets to `-`, blank-line runs collapsed — so the app falls back to
+ * editing the raw text instead.
+ *
+ * That matters because this vault is written by the CLI, the MCP server and any
+ * text editor as well as by this app, and `--git` commits every write: a
+ * normalising editor would fill the history with commits nobody typed, and would
+ * quietly restyle prose its author wrote deliberately.
+ *
+ * Safe to call on `item.description` directly — parseFrontmatter hands back a
+ * body that is already LF-normalised and trimmed, and serializeFrontmatter
+ * trims it again on the way out, so there is no trailing whitespace in play.
+ */
+export function isLosslessDescription(source: string): boolean {
+  return serializeDescription(parseDescription(source)) === source;
 }
