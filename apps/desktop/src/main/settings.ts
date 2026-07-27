@@ -3,14 +3,18 @@ import path from "node:path";
 import { app } from "electron";
 
 /**
- * Which vault was last open, remembered between launches.
+ * Per-machine app state, remembered between launches: which vault was last
+ * open, and how far the window is zoomed.
  *
  * Lives in userData rather than beside the vault, because it is about this
  * machine's app state and has no business inside a folder that syncs or gets
- * committed.
+ * committed. Zoom especially — it is a property of this screen and these eyes,
+ * not of the vault.
  */
 interface Settings {
   vaultRoot?: string;
+  /** Chromium zoom level, where 0 is 100% and each 0.5 is a factor of 1.2^0.5. */
+  zoomLevel?: number;
 }
 
 function settingsPath(): string {
@@ -34,4 +38,9 @@ export async function writeSettings(settings: Settings): Promise<void> {
 export async function rememberVault(root: string): Promise<void> {
   const settings = await readSettings();
   await writeSettings({ ...settings, vaultRoot: root });
+}
+
+export async function rememberZoom(zoomLevel: number): Promise<void> {
+  const settings = await readSettings();
+  await writeSettings({ ...settings, zoomLevel });
 }

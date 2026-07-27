@@ -15,6 +15,7 @@ import { VaultService } from "./vault-service.js";
 import { readSettings, rememberVault } from "./settings.js";
 import { clearApiKey, secretStatus, setApiKey } from "./secrets.js";
 import { CLAUDE_MODEL, draftItem } from "./claude.js";
+import { attachZoomShortcuts, restoreZoom } from "./zoom.js";
 
 const service = new VaultService();
 let mainWindow: BrowserWindow | undefined;
@@ -83,6 +84,15 @@ function createWindow(): void {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+
+  // Zoom is handled here rather than in the renderer so it also works with a
+  // text field focused, and the saved level is reapplied on every load because
+  // Chromium does not keep one worth trusting for file:// or localhost.
+  const contents = mainWindow.webContents;
+  attachZoomShortcuts(contents);
+  contents.on("did-finish-load", () => {
+    void restoreZoom(contents);
+  });
 
   mainWindow.webContents.on("did-fail-load", (_e, code, description, url) => {
     console.error(`[renderer] failed to load ${url}: ${description} (${code})`);

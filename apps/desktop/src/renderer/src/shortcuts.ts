@@ -12,7 +12,7 @@ export interface Shortcut {
   /** Key caps as displayed, e.g. ["Ctrl", "K"] or ["?"]. */
   keys: string[];
   label: string;
-  group: "Navigation" | "Views" | "Items" | "Vault";
+  group: "Navigation" | "Views" | "Display" | "Items" | "Vault";
   /**
    * True when the shortcut still fires while a text field has focus.
    * Almost nothing should — a bare `n` must type an "n" into the summary box,
@@ -34,6 +34,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["1"], label: "Backlog", group: "Views" },
   { keys: ["2"], label: "Board", group: "Views" },
   { keys: ["3"], label: "Agenda", group: "Views" },
+
+  // The three below are the one group the App.tsx handler never sees: the main
+  // process claims them in zoom.ts, before the key reaches the page, which is
+  // what lets them work mid-sentence in a text field. They are listed here
+  // anyway — an undiscoverable shortcut is the thing this registry exists to
+  // prevent, and where it is handled is not the user's problem.
+  { keys: ["Ctrl", "+"], label: "Bigger text", group: "Display", whileTyping: true },
+  { keys: ["Ctrl", "−"], label: "Smaller text", group: "Display", whileTyping: true },
+  { keys: ["Ctrl", "0"], label: "Back to normal size", group: "Display", whileTyping: true },
 
   { keys: ["n"], label: "New item", group: "Items" },
   { keys: ["x"], label: "Delete the selected item", group: "Items" },
