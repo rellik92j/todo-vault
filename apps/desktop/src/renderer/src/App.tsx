@@ -17,7 +17,7 @@ import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardColumns } from "./ordering";
-import { BOARD_ORDER, STATUS_LABELS, isClosed } from "./pieces";
+import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters } from "./pieces";
 
 type View = "backlog" | "board" | "agenda";
 
@@ -27,6 +27,16 @@ export function App(): React.JSX.Element {
   const [project, setProject] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | "all">("all");
   const [cadence, setCadence] = useState<string>("all");
+  /**
+   * The reporter filter, holding a *folded* name — lowercased — or "all".
+   *
+   * Folded because knownReporters offers one entry per person and picks the
+   * spelling the vault uses most, so the canonical spelling can change under a
+   * live filter when an edit tips the count. Matching on the folded name means
+   * that reshuffle is invisible here, and the menu's claim that "John Doe" and
+   * "john doe" are one person holds when you act on it.
+   */
+  const [reporter, setReporter] = useState<string>("all");
   const [openOnly, setOpenOnly] = useState(true);
   const [text, setText] = useState("");
   const [scope, setScope] = useState<AgendaScope>("week");
@@ -92,6 +102,23 @@ export function App(): React.JSX.Element {
   );
 
   /**
+   * Two lists of names, because the menus ask different questions.
+   *
+   * `allReporters` is every name the vault has ever been given, hidden projects
+   * included, and it feeds the two places you *type* a name. A name is not an
+   * item: hiding a project should not make a colleague un-nameable, and the
+   * alternative is that the person you are trying to record silently stops being
+   * offered for a reason nothing on screen explains.
+   *
+   * `reporters` is the subset this window can actually match on, and it feeds the
+   * toolbar filter — where an option drawn from a hidden project could only ever
+   * return an empty view, which is the exact failure the dangling-filter recovery
+   * below exists to prevent.
+   */
+  const allReporters = useMemo(() => knownReporters(snapshot?.items ?? []), [snapshot]);
+  const reporters = useMemo(() => knownReporters(visibleItems), [visibleItems]);
+
+  /**
    * Open items per project, for the Hide button's tooltip. The count alone is
    * already on ProjectSummary; this is what the core's refusal would name, so
    * the reason is readable before the click rather than after it.
@@ -132,7 +159,14 @@ export function App(): React.JSX.Element {
     if (project && !snapshot.projects.some((p) => p.key === project && !p.hidden)) {
       setProject(null);
     }
-  }, [snapshot, visibleItems, selected, detailKey, project]);
+    // The same recovery for the reporter filter, which needs it more: that menu
+    // is derived from the items themselves, so clearing the last item carrying a
+    // name takes the name off the menu, and a select left pointing at it would
+    // filter everything out while showing a blank option as the reason.
+    if (reporter !== "all" && !reporters.some((name) => name.toLowerCase() === reporter)) {
+      setReporter("all");
+    }
+  }, [snapshot, visibleItems, selected, detailKey, project, reporter, reporters]);
 
   const filtered = useMemo<Item[]>(() => {
     if (!snapshot) return [];
@@ -141,14 +175,15 @@ export function App(): React.JSX.Element {
       if (project && item.project !== project) return false;
       if (status !== "all" && item.status !== status) return false;
       if (cadence !== "all" && item.cadence !== cadence) return false;
+      if (reporter !== "all" && item.reporter?.trim().toLowerCase() !== reporter) return false;
       if (openOnly && isClosed(item.status)) return false;
       if (needle) {
-        const haystack = `${item.key} ${item.summary} ${item.description} ${item.category ?? ""} ${item.labels.join(" ")}`;
+        const haystack = `${item.key} ${item.summary} ${item.description} ${item.category ?? ""} ${item.labels.join(" ")} ${item.reporter ?? ""}`;
         if (!haystack.toLowerCase().includes(needle)) return false;
       }
       return true;
     });
-  }, [snapshot, visibleItems, project, status, cadence, openOnly, text]);
+  }, [snapshot, visibleItems, project, status, cadence, reporter, openOnly, text]);
 
   const projectOrder = useMemo(
     () => visibleProjects.map((p) => p.key),
@@ -569,6 +604,25 @@ export function App(): React.JSX.Element {
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
               </select>
+              {/*
+                Absent rather than empty in a vault where nobody has used the
+                field: a select offering only "Any reporter" is a control that
+                cannot do anything, and the toolbar is already five wide.
+              */}
+              {reporters.length > 0 && (
+                <select
+                  value={reporter}
+                  onChange={(e) => setReporter(e.target.value)}
+                  title="Who asked for the work"
+                >
+                  <option value="all">Any reporter</option>
+                  {reporters.map((name) => (
+                    <option key={name} value={name.toLowerCase()}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <label
                 className="status-line"
                 style={{ cursor: "pointer" }}
@@ -699,6 +753,7 @@ export function App(): React.JSX.Element {
           /* Parent choices, filtered like the create form's: a project this
              window says is not there is not somewhere to file work under. */
           items={visibleItems}
+          reporters={allReporters}
           editSummary={editSummaryFor === detailItem.key}
           onEditSummaryConsumed={() => setEditSummaryFor(null)}
           onClose={() => setDetailKey(null)}
@@ -732,6 +787,7 @@ export function App(): React.JSX.Element {
           /* No creating work into a project you cannot see it land in. */
           projects={visibleProjects}
           items={visibleItems}
+          reporters={allReporters}
           defaultProject={project}
           onClose={() => setCreating(false)}
           onCreate={vault.createItem}

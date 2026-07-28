@@ -87,7 +87,8 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `category` | string | Your grouping. Becomes a label or custom field on push. |
 | `labels` | string[] | Passes straight through to Jira. |
 | `components` | string[] | Passes straight through to Jira. |
-| `assignee` / `reporter` | string | |
+| `assignee` | string | Who is doing it. Pushed to Jira's `assignee`. |
+| `reporter` | string | Who asked for it. **Not pushed** — `buildPushPlan` maps `assignee` only, and `pushableFields` ignores this, so editing it does not count as drift. |
 | `startDate` / `dueDate` | `YYYY-MM-DD` | `dueDate` is standard in Jira; `startDate` is a custom field. |
 | `estimate` | number | Story points or hours — `jira-map.yaml` decides which. |
 | `cadence` | enum | `daily` `weekly` `monthly` `quarterly` `none`. **Local only.** |

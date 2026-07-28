@@ -36,6 +36,7 @@ import {
 export function ItemDetail({
   item,
   items,
+  reporters,
   editSummary,
   onEditSummaryConsumed,
   onClose,
@@ -46,6 +47,12 @@ export function ItemDetail({
   item: Item;
   /** Everything this window admits exists, for the parent picker to choose from. */
   items: Item[];
+  /**
+   * Every name the vault has used, for the Reporter menu. A prop rather than
+   * derived from `items`, because the two answer different questions: a parent
+   * must be somewhere you can see, and a name need only have been used once.
+   */
+  reporters: string[];
   /** Open with the summary already in edit mode — the `e` shortcut. */
   editSummary?: boolean;
   onEditSummaryConsumed?: () => void;
@@ -252,6 +259,26 @@ export function ItemDetail({
               value={item.assignee ?? ""}
               placeholder="none"
               onCommit={(assignee) => patch({ assignee: assignee || null })}
+            />
+          </dd>
+
+          {/*
+            Who asked for this. Named for the field on disk rather than "requested
+            by", because it sits beside Assignee — Jira's word too — and this
+            panel is a view over the file, where the key is `reporter` and the CLI
+            flag is `--reporter`.
+
+            The menu is what the vault has already been told, not a roster: a name
+            it has never seen is typed straight in, and is on the menu from then
+            on. See knownReporters for how spellings of one person are folded.
+          */}
+          <dt>Reporter</dt>
+          <dd>
+            <EditableText
+              value={item.reporter ?? ""}
+              placeholder="none"
+              suggestions={reporters}
+              onCommit={(reporter) => patch({ reporter: reporter || null })}
             />
           </dd>
 

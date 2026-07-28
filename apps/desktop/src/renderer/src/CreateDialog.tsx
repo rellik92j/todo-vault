@@ -13,6 +13,7 @@ import type { ClaudeStatus, ProjectSummary } from "@shared/api";
 import { isLosslessDescription } from "todo-vault/description";
 
 import { RichEditor } from "./RichEditor";
+import { Suggest } from "./Editable";
 import { legalParents } from "./pieces";
 
 /**
@@ -24,12 +25,15 @@ import { legalParents } from "./pieces";
 export function CreateDialog({
   projects,
   items,
+  reporters,
   defaultProject,
   onClose,
   onCreate,
 }: {
   projects: ProjectSummary[];
   items: Item[];
+  /** Every name the vault has used, for the Reporter menu. Derived in App. */
+  reporters: string[];
   defaultProject: string | null;
   onClose: () => void;
   /** Resolves to an error message, or null once the item exists. */
@@ -45,6 +49,7 @@ export function CreateDialog({
   const [category, setCategory] = useState("");
   const [labels, setLabels] = useState("");
   const [cadence, setCadence] = useState<Cadence>("none");
+  const [reporter, setReporter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [source, setSource] = useState(false);
@@ -107,6 +112,9 @@ export function CreateDialog({
     setCategory(input.category ?? "");
     setLabels((input.labels ?? []).join(", "));
     setCadence(input.cadence ?? "none");
+    // Reporter is deliberately left alone rather than cleared with the rest: the
+    // draft tool schema never asks Claude for one, so it has nothing to say about
+    // it, and a name typed before pressing Draft is still who asked for the work.
     setNotes(caveat);
   };
 
@@ -148,6 +156,7 @@ export function CreateDialog({
         .map((s) => s.trim())
         .filter(Boolean),
       cadence,
+      reporter: reporter.trim() || undefined,
     });
 
     setSaving(false);
@@ -317,6 +326,31 @@ export function CreateDialog({
                 ))}
               </select>
             </label>
+
+            {/*
+              Who asked for this. Assignee is deliberately not here beside it: who
+              wants the work is known while you are logging it, and who will do it
+              usually is not yet — so it stays a detail-panel field.
+
+              A suggesting text field rather than a select, because the menu is a
+              record of what has been typed, not a roster to pick from. A name it
+              has never seen is typed straight in and is on the menu from then on.
+
+              A div rather than a <label>, for the reason the description field
+              below documents: a click anywhere inside a label is forwarded to the
+              control it names, so picking a name from the menu would re-focus the
+              input and reopen the menu you just chose from.
+            */}
+            <div className="modal-field">
+              <span>Reporter</span>
+              <Suggest
+                value={reporter}
+                suggestions={reporters}
+                placeholder="who asked for it"
+                onChange={setReporter}
+                onCommit={setReporter}
+              />
+            </div>
           </div>
 
           {/*

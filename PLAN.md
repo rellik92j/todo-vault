@@ -356,6 +356,247 @@ action. Also implement `vault jira discover`: both the README and a warning
 string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
 subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
+## `reporter` — who asked for it, surfaced in the app
+
+Promoted out of IDEAS.md. The field already exists everywhere except the place
+you would actually use it: `ItemFrontmatterSchema`, `CreateItemInput` and
+`UpdateItemInput` all carry `reporter`, and `cli.ts` maps `--reporter` onto it.
+The desktop app has never mentioned it. So this is renderer-only work — no schema
+change, no new IPC channel, nothing to migrate in existing files.
+
+**Correcting the note this idea was filed under:** `reporter` does *not* map to
+Jira's reporter on push. `buildPushPlan` writes `assignee` and stops there, and
+`pushableFields` — the hash deciding whether a pushed item has drifted — omits
+`reporter` too, so editing it would not even mark the item as changed. Today the
+field is stored, CLI-settable, and otherwise inert. Pushing it belongs to Phase 5:
+instances routinely forbid setting reporter without elevated permission, and Cloud
+wants an `accountId` where the existing assignee mapping uses Server-style
+`{ name }`. That is a decision to make against a live instance, with the rest of
+the push work.
+
+**Labelled "Reporter", not "Requested by".** It sits directly beside Assignee,
+which is Jira's word too, and the panel is a view over the file — where the key is
+`reporter`. The app does translate elsewhere (`in_progress` → "In progress",
+cadence `none` → "one-off"), but those rename encodings nobody types; this would
+rename a field you can also set from the CLI.
+
+### The suggestion list is derived, never stored
+
+`knownReporters(items)` in `pieces.tsx`, beside `legalParents` and for the same
+reason: one copy read by every surface, so the create form and the detail panel
+cannot disagree about what has been used before. The renderer already holds every
+item in one snapshot, so this is a `useMemo` — not an IPC call, and not a second
+list on disk to keep in sync with the items that are the actual source of truth.
+
+It is computed twice, over two different sets, because the menus ask different
+questions. **Typing** a name draws on the whole snapshot, hidden projects
+included: a name is not an item, hiding a project should not make a colleague
+un-nameable, and the alternative is that the person you are trying to record
+silently stops being offered for a reason nothing on screen explains.
+**Filtering** draws on `visibleItems` alone, because a name used only inside a
+hidden project could only ever return an empty view — the exact failure the
+dangling-filter recovery below exists to prevent.
+
+Neither list is ever scoped to the project selected in the sidebar. That filter
+narrows the view, not the vocabulary: the names on offer are every name the vault
+knows, whichever project you happen to be looking at.
+
+**Case drift is deduped for display, never rewritten on disk.** "John Doe", "john
+doe" and "John doe" collapse to one entry: group case-insensitively, offer the
+spelling used most often, ties broken alphabetically. Picking from the menu then
+converges the vault on that spelling over time, without any write ever touching an
+item you did not edit. Trimming comes free — `EditableText` commits trimmed.
+
+### `Suggest`, after `<datalist>` failed
+
+Built first as a `suggestions` prop on `EditableText` that added a `list`
+attribute, a `<datalist>`, and `showPicker()`. That shipped, typechecked, and was
+wrong, in a way worth recording because the *verification* was what let it
+through.
+
+**Chromium filters the native datalist popup against the input's own contents.**
+So a field reading `Dan Okafor` opened a menu of exactly one name — itself — and
+every other name was unreachable without emptying the field by hand. An empty
+field showed all of them. Two items behaved differently for a reason nothing on
+screen explained, which is how it was reported: "OPS-1 doesn't show the same
+dropdown values as OPS-5."
+
+The check that missed it read `datalist.options` out of the DOM, which is always
+the full list no matter what the popup renders. The popup is native and not in the
+document at all, so nothing reachable from the page could have caught this. It
+took an OS-level screen capture of the open menu — `grab.ps1` beside the drivers —
+to see it.
+
+So the menu is ours: `Suggest`, in `Editable.tsx`, used by both the detail panel
+(through `EditableText`, which delegates to it whenever `suggestions` is
+non-empty) and the create dialog. That buys the behaviour the field actually
+needs, **opening shows everything, typing narrows**, which a datalist cannot
+express — and as a side effect the options are now real DOM the next test can
+read.
+
+`touched` is what separates the two states, because the value cannot: `Dan Okafor`
+as the committed value and `Dan Okafor` as what you have typed looking for it are
+the same string and want opposite menus. It resets every time the menu opens.
+
+Three details that are load-bearing rather than decorative:
+
+- **The menu is `position: fixed`**, anchored off the input's measured rect. Both
+  hosts scroll their own body — `.detail-body` and `.modal-body` are each
+  `overflow-y: auto` — so a menu positioned within one is clipped by it exactly
+  when the field sits near the bottom. It closes on scroll, which is what makes
+  viewport anchoring honest.
+- **Options `preventDefault` on mousedown.** Blur commits, so without it the field
+  would close before the click landed — the same trap `EditableDate`'s clear
+  button documents.
+- **Escape is two-stage, and stops propagating on the first.** Dismissing the menu
+  is not abandoning the edit, and both layers above would read it as that: the
+  modal closes on Escape, and App's handler blurs the focused field, which commits
+  it.
+
+The create dialog's field is a `div.modal-field`, not a `<label>`, for the reason
+the description field beside it already documents: a click anywhere inside a label
+is forwarded to the control it names, so picking a name would re-focus the input
+and reopen the menu just chosen from.
+
+### The four surfaces
+
+1. **Detail panel** — a `Reporter` row after `Assignee` in the `fields` list,
+   committing `{ reporter: value || null }` exactly as Assignee does.
+2. **Create dialog** — a field in the last `.modal-row`, submitted as
+   `reporter: reporter.trim() || undefined`. This leaves the form asymmetric,
+   since Assignee is still not on it. Deliberate: who asked for something is known
+   while you are logging it, whereas who will do it usually is not yet.
+3. **Filter bar** — an "Any reporter" `<select>` beside status and cadence,
+   applied client-side in `filtered`. The core's `ItemFilter` has `assignee` and
+   no `reporter`, and needs neither: nothing in this window goes through
+   `listItems`. Absent rather than empty where nobody has used the field — a
+   select offering only "Any reporter" is a control that cannot do anything.
+
+   It holds a *folded* name rather than the displayed one. `knownReporters` picks
+   the spelling the vault uses most, so the canonical one can change under a live
+   filter when an edit tips the count; matching folded makes that reshuffle
+   invisible, and makes the menu's claim that "John Doe" and "john doe" are one
+   person hold when you act on it. It still needs the recovery `App.tsx` already
+   performs for a dangling project filter — a name that leaves the vault entirely
+   (last item deleted, or its reporter cleared) falls back to "any", or the view
+   empties with nothing saying why.
+4. **View search** — `reporter` joins the haystack in `filtered`, so `/` finds a
+   person's items by name.
+
+Not doing: a Reporter column in the backlog table, already seven columns wide, and
+MCP parity — `vault_create_item` and `vault_update_item` do not accept `reporter`
+either. Both are cheap once this lands and neither blocks it.
+
+### The fixture demonstrates it
+
+`seed-vault.ts` sets a reporter on nine of its fifteen items: four names across
+three projects. A name appearing more than once is the point — a fixture where every
+name appeared exactly once would show a menu you can only ever add to and never
+pick from, which is the opposite of what the field is for. Plenty of items carry
+none, because work you raised yourself has no reporter and empty is the state the
+field is in most of the time.
+
+One spelling each, deliberately. The UI folds `Priya Raman` and `priya raman`
+together and offers the commoner one, but that is a defence against drift, not
+something a worked example should model as normal.
+
+**`Nadia Hart` earns her place by being awkward.** She reports one item, in the
+archived `LEG` project, and appears nowhere else — which is the only way the
+fixture shows that the two menus differ. Verified in the app: the detail panel
+offers `Dan Okafor, Mei Lin, Nadia Hart, Priya Raman`, and the toolbar filter
+offers the same list without her.
+
+### While in there: what the fixture could not previously show
+
+Auditing the seed against what the UI actually renders turned up several
+surfaces with nothing to display, all now filled:
+
+- **Both endings.** `ACME-8` is driven to `done` and `ACME-9` to `disregard`,
+  through legal transitions rather than created in that state. Before this, two
+  of the board's six columns were permanently empty, "Hide closed" had nothing
+  to hide, and the sidebar's open count always equalled its total. The board now
+  reads `To do 8 · In progress 2 · In review 1 · Blocked 1 · Done 1 · Disregarded 1`.
+- **Assignees**, on four items, from a cast deliberately disjoint from the
+  reporters — overlapping them would make the fixture read as though the two
+  fields were interchangeable, and `assignee` is the one of the pair that
+  actually reaches Jira.
+- **A hidden project.** `LEG`, closed out and hidden, so the Hidden panel has
+  something in it. It is hidden by driving its item to `done` and then calling
+  `hideProject` — which refuses while a project holds live work, so the sidebar's
+  disabled Hide button is exercised rather than asserted.
+- **One pushed item.** `ACME-2` carries `ENG-412`, matching ACME's declared
+  `jiraProjectKey`, so the detail panel's Jira row reads `ENG-412 pushed` instead
+  of "not pushed". `markPushed` runs last, after every edit to that item, because
+  it stamps a hash of the pushable fields as they stand — pushing first would
+  seed an item reporting itself as drifted, which is a different demonstration.
+- **`components` and `lowest`**, the last two schema values with no example.
+
+Still not covered, and deliberately: nothing in `.trash` (the panel opens onto an
+empty list), and no item that fails to parse.
+
+A seeded vault is *not* what is checked in at `vault/` — that one carries real
+edits. Reseeding is `npm run seed -- ./vault --force`, and that flag is sharper
+than it reads: it clears `items/`, `projects/`, `attachments/`, `.trash` and
+`.counters.json`, and it writes **no commit**, because the script calls
+`Vault.init` without `git: true`. So a reseed of a git-backed vault is
+recoverable exactly as far as its last commit and no further — there is no
+reflog entry, because nothing ever entered git. `vault/` was reseeded once
+during this work and came back only because `git checkout` had a commit to come
+back to.
+
+### Verification ✅ driven in the real app
+
+Built, then driven end to end against the example vault under Playwright's
+`_electron`, because none of this is provable by typechecking it:
+
+- The toolbar select is **absent** on a vault where nobody has used the field,
+  and appears once a name exists.
+- Typing "John Doe" into OPS-5's Reporter row wrote `reporter: John Doe` into
+  `vault/items/OPS-5.md`, and it was on ACME-4's menu next — the name having
+  never been stored anywhere but the item.
+- Spellings fold: OPS-7 set to "john doe", and filtering on that one menu entry
+  returned OPS-5 *and* OPS-7.
+- Creating through the dialog's field wrote `reporter: Jane Doe`.
+- `/` finds a person by name.
+
+After the menu was rewritten, driven again against a fresh seed:
+
+- A field already reading `Dan Okafor` now offers **all three** names with
+  `current` beside its own — the defect, gone.
+- Typing `me` narrows to `Mei Lin`; ArrowDown and Enter pick it and write it.
+- Escape closes the menu, and a second Escape reverts: `zzz` typed over
+  `Priya Raman` left the file untouched.
+- Clicking a name in the create dialog fills the field and closes the menu
+  rather than reopening it.
+- Scoped to OPS in the sidebar, the menu still offers the ACME-only names.
+- Across the whole run, exactly one item file was written: the one deliberately
+  changed.
+
+The lesson worth keeping: **a check that reads the DOM cannot verify a native
+control.** The datalist bug was invisible to every assertion the page could make
+about itself, and survived a run that reported green on every point. Anything
+rendered by the browser rather than by us — a native picker, a select popup, a
+file dialog — needs a screen capture or it is not being checked at all.
+
+Re-run against a freshly seeded vault in a throwaway Chromium profile, which also
+answered the question the first run raised: opening the field, escaping out, and
+blurring it by opening the modal writes **no** item file at all.
+
+The example vault at `vault/` was left as it was found — every commit the driving
+produced was rolled back, so nothing here ships test names in `items/`.
+
+**One write happened that is still unexplained.** A driving run that had leaked a
+previous app instance — `app.close()` did not kill it, and two were briefly live
+at once — left `reporter: John Doe` on ACME-5, a value that run never typed. The
+obvious suspect was Chromium autofill replaying an earlier session's typing, and
+that was tested directly and ruled out: in a profile where a name had just been
+committed to the same field, opening a different empty Reporter gave an empty
+input and blurring it wrote nothing. Controlled runs since have produced no
+stray writes. The likeliest remaining explanation is the overlapping instances,
+one of them holding renderer state for files that had been rewritten underneath
+it by a `git reset` — an artefact of how it was driven, not a path a user can
+take. Recorded rather than closed, because it was not reproduced.
+
 ## Phase 0.6 — parity across the three surfaces ✅
 
 **MCP is level with the CLI again**, at 23 tools from 13. The ten additions are

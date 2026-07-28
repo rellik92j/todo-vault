@@ -40,6 +40,39 @@ export function legalParents(items: Item[], project: string, type: ItemType): It
 }
 
 /**
+ * Every reporter name the vault has used, for the suggestion menus.
+ *
+ * Derived, never stored. The names *are* whatever is on the items, so a list kept
+ * beside them could only ever be a second copy to drift; and one copy read by
+ * both the create form and the detail panel is the same bargain legalParents
+ * makes, for the same reason.
+ *
+ * Spellings fold case-insensitively: "John Doe", "john doe" and "John doe" are
+ * one person, and three entries in a menu offering you a person is a bug. The one
+ * offered is whichever spelling the vault uses most, ties broken alphabetically,
+ * so picking from the menu converges the vault on it over time. Nothing here
+ * rewrites anything — what is on disk stays exactly as it was typed, and the
+ * filter that consumes this folds case the same way so the menu's claim that
+ * these are one person holds when you act on it.
+ */
+export function knownReporters(items: Item[]): string[] {
+  const byPerson = new Map<string, Map<string, number>>();
+  for (const item of items) {
+    const name = item.reporter?.trim();
+    if (!name) continue;
+    const spellings = byPerson.get(name.toLowerCase()) ?? new Map<string, number>();
+    spellings.set(name, (spellings.get(name) ?? 0) + 1);
+    byPerson.set(name.toLowerCase(), spellings);
+  }
+  return [...byPerson.values()]
+    .map(
+      (spellings) =>
+        [...spellings].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0],
+    )
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+/**
  * Whether a status means the item is finished with, however it ended.
  *
  * Straight from the core's array rather than a comparison against "done",

@@ -17,6 +17,7 @@ export function EditableText({
   value,
   placeholder,
   multiline,
+  suggestions,
   autoEdit,
   onAutoEditConsumed,
   onCommit,
@@ -24,6 +25,12 @@ export function EditableText({
   value: string;
   placeholder?: string;
   multiline?: boolean;
+  /**
+   * Offered as a dropdown while editing, without constraining what may be typed
+   * — a name the list has never seen is precisely how it joins the list. Ignored
+   * when `multiline` is set, because a textarea has no picker to open.
+   */
+  suggestions?: string[];
   /** Open straight into editing — the `e` shortcut asks for this. */
   autoEdit?: boolean;
   /**
@@ -41,6 +48,7 @@ export function EditableText({
   const [editing, setEditing] = useState(Boolean(autoEdit));
   const [draft, setDraft] = useState(value);
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const offering = !multiline && Boolean(suggestions?.length);
 
   useEffect(() => {
     if (!autoEdit) return;
@@ -74,6 +82,33 @@ export function EditableText({
     );
   }
 
+  // Its own control rather than the input below, because the menu has to own the
+  // keys the input would otherwise handle — Enter picks a highlighted name here,
+  // and only commits the typed text when nothing is highlighted.
+  if (offering) {
+    return (
+      <Suggest
+        value={draft}
+        suggestions={suggestions ?? []}
+        className="inline-input"
+        autoFocus
+        selectOnFocus
+        onChange={setDraft}
+        // Takes the value rather than reading `draft`, because picking a name
+        // sets state and commits in the same tick, where `draft` is still the old one.
+        onCommit={(next) => {
+          setEditing(false);
+          const trimmed = next.trim();
+          if (trimmed !== value.trim()) onCommit(trimmed);
+        }}
+        onCancel={() => {
+          setDraft(value);
+          setEditing(false);
+        }}
+      />
+    );
+  }
+
   const shared = {
     value: draft,
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -102,6 +137,176 @@ export function EditableText({
     />
   ) : (
     <input {...shared} ref={ref as React.Ref<HTMLInputElement>} className="inline-input" />
+  );
+}
+
+/**
+ * A text field offering values it has seen before, without limiting you to them.
+ *
+ * Deliberately not a `<datalist>`. That was the first implementation and it read
+ * correctly right up until you opened a field that already held a value:
+ * Chromium filters the native popup against the input's own contents, so a field
+ * reading "Dan Okafor" offered a menu of exactly one name — itself — and every
+ * other name was unreachable without emptying the field first. Switching between
+ * people you have already named is the entire point of the thing, so the menu has
+ * to be one we control. It also means the list is visible in the DOM, which the
+ * native popup never was: what a test can read is what is actually on screen.
+ *
+ * The rule it keeps is: opening shows everything, typing narrows. `touched` is
+ * what tells those apart, because the value alone cannot — "Dan Okafor" as the
+ * committed value and "Dan Okafor" as what you have typed looking for it are the
+ * same string and want opposite menus.
+ */
+export function Suggest({
+  value,
+  suggestions,
+  placeholder,
+  className,
+  autoFocus,
+  selectOnFocus,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  suggestions: string[];
+  placeholder?: string;
+  className?: string;
+  autoFocus?: boolean;
+  /** Select what is there on focus, so the first keystroke replaces it. */
+  selectOnFocus?: boolean;
+  onChange: (next: string) => void;
+  /** Enter, a pick, or a blur. Carries the value, so a pick need not wait a render. */
+  onCommit: (next: string) => void;
+  /** Escape, once the menu is out of the way. */
+  onCancel?: () => void;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [touched, setTouched] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  const needle = value.trim().toLowerCase();
+  const visible =
+    touched && needle ? suggestions.filter((s) => s.toLowerCase().includes(needle)) : suggestions;
+
+  const close = (): void => {
+    setOpen(false);
+    setActive(-1);
+  };
+
+  const openMenu = (): void => {
+    const box = ref.current?.getBoundingClientRect();
+    if (box) setAnchor({ left: box.left, top: box.bottom + 2, width: box.width });
+    setTouched(false);
+    setActive(-1);
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    ref.current?.focus();
+    if (selectOnFocus) ref.current?.select();
+  }, [autoFocus, selectOnFocus]);
+
+  // Anchored to the viewport, because both places this lives — the detail panel
+  // and the modal — scroll their own bodies, and a menu positioned inside one
+  // would be clipped by it. The price is that it has to leave when anything
+  // moves underneath it.
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  const pick = (name: string): void => {
+    close();
+    onChange(name);
+    onCommit(name);
+  };
+
+  return (
+    <span className="suggest">
+      <input
+        ref={ref}
+        className={className}
+        value={value}
+        placeholder={placeholder}
+        onFocus={() => {
+          openMenu();
+          if (selectOnFocus) ref.current?.select();
+        }}
+        onChange={(e) => {
+          setTouched(true);
+          setActive(-1);
+          setOpen(true);
+          onChange(e.target.value);
+        }}
+        onBlur={() => {
+          close();
+          onCommit(value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!open) return openMenu();
+            return setActive((i) => Math.min(i + 1, visible.length - 1));
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            return setActive((i) => Math.max(i - 1, -1));
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (open && active >= 0 && visible[active]) return pick(visible[active]);
+            close();
+            return onCommit(value);
+          }
+          if (e.key === "Escape") {
+            // Dismissing the menu is not abandoning the edit. Both layers above
+            // would read it as that if it bubbled — the modal closes on Escape,
+            // and App's handler blurs the focused field, which commits it.
+            if (open) {
+              e.preventDefault();
+              e.stopPropagation();
+              return close();
+            }
+            onCancel?.();
+          }
+        }}
+      />
+      {open && anchor && visible.length > 0 && (
+        <div
+          className="suggest-menu"
+          role="listbox"
+          style={{ left: anchor.left, top: anchor.top, width: anchor.width }}
+        >
+          {visible.map((name, index) => (
+            <button
+              key={name}
+              type="button"
+              role="option"
+              aria-selected={index === active}
+              className="suggest-option"
+              // Without this the input blurs before the click lands — and blur
+              // commits, so the field would be gone by the time the click
+              // arrived. The same trap EditableDate's clear button documents.
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setActive(index)}
+              onClick={() => pick(name)}
+            >
+              {name}
+              {name === value.trim() && <span className="suggest-current">current</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
   );
 }
 
