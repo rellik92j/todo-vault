@@ -84,6 +84,20 @@ This builds the core and opens the desktop app.
   open vault. Run `npm run vault -- git-status --vault ./vault` for detail if
   it's off and you expected it on.
 
+## Updating an existing copy
+
+Already cloned and just want the latest changes?
+
+```bash
+git pull
+npm run build     # skip if package.json / package-lock.json didn't change
+npm run dev
+```
+
+Only rerun `npm install` if that pull touched `package.json` or
+`package-lock.json`. Your vault and settings (API key, last-open vault) live
+outside the repo, so pulling never touches them.
+
 ## Everyday commands, once set up
 
 ```bash
