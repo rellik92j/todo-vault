@@ -8,6 +8,47 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## "Turn on history" — a button that sets git up for the chosen vault
+
+Setting up history today is a manual sequence nobody should have to know: copy a
+`.gitattributes` in, `git init`, `git add -A`, `git commit`, and — the step that
+actually bites — have a `user.name` and `user.email` configured first. Miss the
+identity and `git add` still succeeds while `git commit` fails, and `commit()`
+swallows that by design, so every write lands, none is committed, and nothing
+says so. That is the one failure mode in the whole design that loses work, and
+it is currently prevented only by the user knowing to prevent it.
+
+The diagnosis half is already built and already right. The banner in `App.tsx`
+distinguishes the three shapes — not a repo, sitting inside a repo that ignores
+it, or a repo whose last commit errored — and the sidebar dot shows healthy or
+not. What is missing is anything to click. Everything the button needs to decide
+is already in the `GitStatus` the snapshot carries; what is absent is a
+write-side action, since git is read-only across IPC today.
+
+Offer it in two places: on that banner, and at the first-run picker once a folder
+is chosen, since that is when the user is thinking about setup at all.
+
+The order matters and is the reason this wants writing down rather than
+improvising. `.gitattributes` (`* text eol=lf`) has to exist **before** the first
+`git add`, or Windows stages CRLF while the app writes LF and every file reads as
+wholly modified — which defeats the stable frontmatter ordering the diffs depend
+on. Identity gets checked before `git init`, not after, and if it is missing the
+button asks for a name and email rather than failing: that is two fields and the
+difference between history working and silently not.
+
+Then it must verify by *doing*, not by looking. `healthy` is false only once
+`lastCommitError` has been set, and that is only ever set by a commit that
+already failed, so a freshly initialized repo reports healthy whether or not
+commits can actually land. Making the initial commit and confirming it is both
+the setup and the proof.
+
+Two cases where the button should explain instead of act. If git is not on PATH
+there is nothing to initialize — say so and point at the download, do not offer a
+button that cannot work. And if the vault sits inside a repo that ignores it,
+`git init` would nest a second repo inside the first; that may well be what the
+user wants, but it is a choice they should make knowingly rather than a side
+effect of clicking Fix.
+
 ## A UI style guide, so the next screen matches the last one
 
 `index.css` is one 1,683-line file in twenty sections, and it is two different
