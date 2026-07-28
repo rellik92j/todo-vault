@@ -11,6 +11,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import type { Item, Status } from "todo-vault";
+import { isTickedFor, todayIso } from "todo-vault/recurrence";
 
 import { Cadence, STATUS_LABELS, canTransition, isOverdue } from "./pieces";
 import { boardColumns } from "./ordering";
@@ -243,7 +244,7 @@ function Card({
           {item.dueDate && (
             <span className={isOverdue(item) ? "due-overdue" : undefined}>{item.dueDate}</span>
           )}
-          <Cadence cadence={item.cadence} />
+          <Cadence cadence={item.cadence} ticked={isTickedFor(item, todayIso())} />
           {item.labels.slice(0, 2).map((label) => (
             <span className="label" key={label}>
               {label}

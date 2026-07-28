@@ -14,7 +14,7 @@ import {
   projectKey,
   type Item,
 } from "./schema.js";
-import { formatZodError, todayIso } from "./util.js";
+import { formatZodError, isTickedFor, todayIso } from "./util.js";
 import path from "node:path";
 
 /**
@@ -52,7 +52,15 @@ function summarize(item: Item): Record<string, unknown> {
     ...(item.category ? { category: item.category } : {}),
     ...(item.dueDate ? { dueDate: item.dueDate } : {}),
     ...(item.startDate ? { startDate: item.startDate } : {}),
-    ...(item.cadence !== "none" ? { cadence: item.cadence } : {}),
+    ...(item.cadence !== "none"
+      ? {
+          cadence: item.cadence,
+          // Last few only: a long-lived daily item has hundreds, and the
+          // question a model is answering from this is "is it handled".
+          completions: item.completions.slice(-5),
+          tickedThisPeriod: isTickedFor(item, todayIso()),
+        }
+      : {}),
     ...(item.labels.length ? { labels: item.labels } : {}),
     ...(item.sync.jiraKey ? { jiraKey: item.sync.jiraKey } : {}),
   };
@@ -211,6 +219,11 @@ Returns up to three sections, each tagged with 'kind':
 'due' and 'recurring' are separate because recurring work has no deadline —
 reporting them as one list implies the recurring items are due, which they are
 not. An item that is both due and recurring appears only under 'due'.
+
+'recurring' leaves out anything already ticked for the period in question, so
+the section is what is still owed rather than everything on a cadence. A daily
+item ticked today is gone from 'today' but still listed for 'week', because it
+comes round again inside that window.
 
 Args:
   - scope ('today'|'week'|'nextWeek'|'month', default 'today')
@@ -394,6 +407,9 @@ and out of open-only listings. They are not interchangeable: 'done' means the
 work happened, 'disregard' means it was decided against and will not happen.
 Pick the one the user actually said; do not disregard something on their behalf.
 
+If the item has a cadence, use vault_tick_item instead. 'done' retires a
+recurring item for good rather than completing this turn of it.
+
 Args:
   - key (string, required)
   - status (${STATUSES.join("|")}, required)
@@ -408,6 +424,60 @@ Use when: "mark ACME-12 done", "I've started on the vendor task", "we're not doi
     try {
       const item = await withFreshVault(() => vault.transition(key, status));
       return ok({ updated: summarize(item) }, `${item.key} is now ${item.status}.`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_tick_item",
+  {
+    title: "Log a recurring item as done for this period",
+    description: `Record that a recurring item (one with a cadence) was done, without closing it.
+
+Use this instead of vault_transition_item for anything with a cadence. Marking a
+recurring item 'done' retires it permanently — it drops out of the agenda and
+never comes back, which is almost never what someone means by "I did my daily
+standup". A tick records the completion and lets the item return when its
+cadence next comes round.
+
+The item's status is left exactly as it was. Reserve 'done' for a recurring item
+the user has actually stopped doing, e.g. "I've quit the daily standup".
+
+Ticking the same date twice is a no-op, not an error.
+
+Args:
+  - key (string, required)
+  - on (YYYY-MM-DD, optional): defaults to today. Use it to backfill a day that was missed.
+  - undo (boolean, optional): remove that date's completion instead of adding it.
+
+Returns: { ticked: { key, cadence, completions, tickedThisPeriod, ... } }
+
+Use when: "I did the daily review", "log my weekly report as done", "tick off ACME-3",
+"I forgot to mark yesterday's run".`,
+    inputSchema: {
+      key: itemKey,
+      on: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a plain calendar date, e.g. 2026-08-14")
+        .optional(),
+      undo: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key, on, undo }) => {
+    try {
+      const date = on ?? todayIso();
+      const item = await withFreshVault(() =>
+        undo ? vault.untickItem(key, date) : vault.tickItem(key, date),
+      );
+      return ok(
+        { ticked: summarize(item) },
+        undo
+          ? `Removed ${item.key}'s completion for ${date}.`
+          : `${item.key} logged as done for ${date}. Status is still ${item.status}; it returns when the ${item.cadence} cadence comes round.`,
+      );
     } catch (err) {
       return fail(err);
     }

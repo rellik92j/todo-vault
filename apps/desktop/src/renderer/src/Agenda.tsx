@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Item } from "todo-vault";
+import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import type { AgendaScope, AgendaView } from "@shared/api";
-import { AgendaDueDate, Cadence, PriorityMark, StatusPill } from "./pieces";
+import { AgendaDueDate, Cadence, PriorityMark, StatusPill, TickButton } from "./pieces";
 
 /** The phrase each scope reads naturally with, e.g. "Due ${phrase}". */
 const SCOPE_PHRASE: Record<AgendaScope, string> = {
@@ -37,6 +38,7 @@ export function Agenda({
   selected,
   onSelect,
   onOrder,
+  onTick,
 }: {
   scope: AgendaScope;
   items: Item[];
@@ -44,6 +46,8 @@ export function Agenda({
   onSelect: (key: string) => void;
   /** Reports the flat, visible key order so the parent can drive keyboard navigation. */
   onOrder?: (keys: string[]) => void;
+  /** Log a recurring item as done for this period, or undo that. */
+  onTick?: (key: string, undo: boolean) => void;
 }): React.JSX.Element {
   const [sections, setSections] = useState<AgendaView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,21 +135,26 @@ export function Agenda({
             {section.keys.map((key) => {
               const item = byKey.get(key);
               if (!item) return null;
+              // The ✓ is a sibling of the row, not a child: the row is itself a
+              // button, and nesting one inside another is invalid HTML that
+              // browsers resolve by dropping the inner control.
               return (
-                <button
-                  type="button"
-                  className="row"
-                  key={key}
-                  aria-selected={key === selected}
-                  onClick={() => onSelect(key)}
-                >
-                  <span className="cell-key">{item.key}</span>
-                  <span className="row-summary">{item.summary}</span>
-                  <Cadence cadence={item.cadence} />
-                  <AgendaDueDate item={item} section={section} />
-                  <PriorityMark priority={item.priority} />
-                  <StatusPill status={item.status} />
-                </button>
+                <div className="row-wrap" key={key}>
+                  <button
+                    type="button"
+                    className="row"
+                    aria-selected={key === selected}
+                    onClick={() => onSelect(key)}
+                  >
+                    <span className="cell-key">{item.key}</span>
+                    <span className="row-summary">{item.summary}</span>
+                    <Cadence cadence={item.cadence} ticked={isTickedFor(item, todayIso())} />
+                    <AgendaDueDate item={item} section={section} />
+                    <PriorityMark priority={item.priority} />
+                    <StatusPill status={item.status} />
+                  </button>
+                  <TickButton item={item} onTick={(undo) => onTick?.(item.key, undo)} />
+                </div>
               );
             })}
           </div>

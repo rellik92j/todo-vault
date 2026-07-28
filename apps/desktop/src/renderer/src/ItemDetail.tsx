@@ -8,6 +8,7 @@ import {
   type Priority,
   type Status,
 } from "todo-vault/constants";
+import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import type { Item } from "todo-vault";
 import type { Result, VaultSnapshot } from "@shared/api";
 
@@ -71,6 +72,8 @@ export function ItemDetail({
   const [dropping, setDropping] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [sourceDescription, setSourceDescription] = useState(false);
+
+  const ticked = isTickedFor(item, todayIso());
 
   useEffect(() => {
     let live = true;
@@ -237,8 +240,36 @@ export function ItemDetail({
               options={CADENCES}
               onCommit={(cadence) => patch({ cadence })}
             />
-            <CadencePill cadence={item.cadence} />
+            <CadencePill cadence={item.cadence} ticked={ticked} />
           </dd>
+
+          {/*
+            Only for recurring items, and the panel is where undo has to live:
+            ticking removes the row from the agenda, so the ✓ that did it is no
+            longer on screen to press again.
+          */}
+          {item.cadence !== "none" && (
+            <>
+              <dt>Done</dt>
+              <dd>
+                <button
+                  type="button"
+                  className={`tick-wide${ticked ? " tick-done" : ""}`}
+                  aria-pressed={ticked}
+                  onClick={() =>
+                    void mutate(() => window.vault.tickItem(item.key, undefined, ticked))
+                  }
+                >
+                  {ticked ? "✓ done this period — undo" : `✓ log as done`}
+                </button>
+                <span className="field-note">
+                  {item.completions.length === 0
+                    ? "never ticked"
+                    : `${item.completions.length} recorded, last ${item.completions[item.completions.length - 1]}`}
+                </span>
+              </dd>
+            </>
+          )}
 
           <dt>Estimate</dt>
           <dd>

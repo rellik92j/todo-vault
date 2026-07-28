@@ -5,7 +5,7 @@ import path from "node:path";
 import { Vault, VaultError } from "./vault.js";
 import { buildPushPlan, loadJiraMap, toJiraCsv } from "./jira.js";
 import { STATUSES, type Item, type Status } from "./schema.js";
-import { formatZodError, todayIso } from "./util.js";
+import { addDays, cadencePeriod, formatZodError, todayIso } from "./util.js";
 
 interface Args {
   _: string[];
@@ -61,6 +61,7 @@ Usage: vault <command> [options]
   set KEY --status done             Update fields on an item
   done KEY                          Shorthand for --status done
   disregard KEY                     Close it as "not doing this"
+  tick KEY [--on DATE] [--undo]     Log a recurring item as done for its period
   comment KEY "text"                Append a comment
   link KEY --url|--item|--file X    Attach a link
   attach KEY <path> [--no-copy]     Attach a file
@@ -104,6 +105,12 @@ function itemLine(item: Item): string {
   const cad = item.cadence !== "none" ? ` @${item.cadence}` : "";
   const parent = item.parent ? ` ^${item.parent}` : "";
   return `[${mark}] ${item.key.padEnd(10)} ${item.type.padEnd(7)} ${item.summary}${due}${cad}${parent}`;
+}
+
+/** When a just-ticked item comes round again: the day after its current period ends. */
+function nextTurn(item: Item, on: string): string {
+  const period = cadencePeriod(item.cadence, on);
+  return period ? addDays(period.to, 1) : on;
 }
 
 function fieldPatch(flags: Args["flags"]): Record<string, unknown> {
@@ -404,7 +411,17 @@ async function main(): Promise<void> {
       if (item.category) process.stdout.write(`category  ${item.category}\n`);
       if (item.startDate) process.stdout.write(`start     ${item.startDate}\n`);
       if (item.dueDate) process.stdout.write(`due       ${item.dueDate}\n`);
-      if (item.cadence !== "none") process.stdout.write(`cadence   ${item.cadence}\n`);
+      if (item.cadence !== "none") {
+        process.stdout.write(`cadence   ${item.cadence}\n`);
+        // Most recent first, capped: a long-running daily item accumulates
+        // hundreds of these and the point here is "am I on top of it", which
+        // the last handful answers.
+        const recent = [...item.completions].reverse().slice(0, 5);
+        const more = item.completions.length - recent.length;
+        process.stdout.write(
+          `done      ${recent.join(", ") || "not yet"}${more > 0 ? ` (+${more} earlier)` : ""}\n`,
+        );
+      }
       if (item.labels.length) process.stdout.write(`labels    ${item.labels.join(", ")}\n`);
       if (item.sync.jiraKey) process.stdout.write(`jira      ${item.sync.jiraKey} (${item.sync.state})\n`);
       if (item.description) process.stdout.write(`\n${item.description}\n`);
@@ -448,6 +465,20 @@ async function main(): Promise<void> {
     case "disregard": {
       const item = await vault.transition(_[1], "disregard" as Status);
       process.stdout.write(`${item.key} disregarded\n`);
+      return;
+    }
+
+    case "tick": {
+      const on = str(flags, "on") ?? todayIso();
+      const undo = flags.undo === true;
+      const item = undo
+        ? await vault.untickItem(_[1], on)
+        : await vault.tickItem(_[1], on);
+      process.stdout.write(
+        undo
+          ? `${item.key} completion on ${on} removed (${item.completions.length} left)\n`
+          : `${item.key} ticked for ${on} — back on the agenda ${nextTurn(item, on)}\n`,
+      );
       return;
     }
 

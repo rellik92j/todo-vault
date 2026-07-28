@@ -23,7 +23,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { Vault } from "../src/vault.js";
-import { pathExists } from "../src/util.js";
+import { addDays, pathExists, todayIso } from "../src/util.js";
 
 const args = process.argv.slice(2);
 const force = args.includes("--force");
@@ -31,9 +31,7 @@ const target = args.find((a) => !a.startsWith("-")) ?? "./vault";
 
 /** Dates relative to today, so the agenda views always have something in them. */
 function offset(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return addDays(todayIso(), days);
 }
 
 async function main(): Promise<void> {
@@ -262,7 +260,7 @@ async function main(): Promise<void> {
   });
 
   // ------------------------------------------------------- OPS: recurring
-  await vault.createItem({
+  const dailyCheck = await vault.createItem({
     project: "OPS",
     summary: "Morning check of the overnight batch",
     description: "Failures page automatically; this is for the ones that succeeded but look wrong.",
@@ -271,7 +269,7 @@ async function main(): Promise<void> {
     cadence: "daily",
   });
 
-  await vault.createItem({
+  const weeklyRollup = await vault.createItem({
     project: "OPS",
     summary: "Weekly rollup to the steering group",
     description: "What moved, what is stuck, what needs a decision from them.",
@@ -283,7 +281,7 @@ async function main(): Promise<void> {
     dueDate: offset(4),
   });
 
-  await vault.createItem({
+  const monthlySpend = await vault.createItem({
     project: "OPS",
     summary: "Reconcile cloud spend against the forecast",
     description: "Anything more than 10% over forecast needs a written explanation.",
@@ -292,6 +290,23 @@ async function main(): Promise<void> {
     reporter: finance,
     cadence: "monthly",
   });
+
+  /*
+    Completion histories, so the fixture covers all three states a recurring
+    item can be in rather than only the empty one.
+
+    Deliberately not "tick everything": the daily is left open for *today* so
+    the agenda has something with a pressable ✓ on it, while the weekly is
+    already done for this period so the ticked pill and the settled-window path
+    are both exercised without any hand-setup.
+  */
+  for (const day of [-3, -2, -1]) {
+    await vault.tickItem(dailyCheck.key, offset(day));
+  }
+  await vault.tickItem(weeklyRollup.key, todayIso());
+  for (const day of [-35, -70]) {
+    await vault.tickItem(monthlySpend.key, offset(day));
+  }
 
   await vault.createItem({
     project: "OPS",

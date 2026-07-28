@@ -203,6 +203,10 @@ export class VaultService extends EventEmitter {
     return this.write((v) => v.transition(key, status));
   }
 
+  tick(key: string, on: string | undefined, undo: boolean): Promise<Item> {
+    return this.write((v) => (undo ? v.untickItem(key, on) : v.tickItem(key, on)));
+  }
+
   moveItem(key: string, position: { after?: string; before?: string }): Promise<Item> {
     return this.write((v) => v.moveItem(key, position));
   }

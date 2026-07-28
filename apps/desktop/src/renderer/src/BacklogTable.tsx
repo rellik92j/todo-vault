@@ -1,4 +1,5 @@
 import type { Item } from "todo-vault";
+import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import { Cadence, DueDate, PriorityMark, StatusPill } from "./pieces";
 import { backlogOrder } from "./ordering";
 
@@ -62,7 +63,8 @@ export function BacklogTable({
               <DueDate item={item} />
             </td>
             <td className="cell-num">
-              {item.category ?? ""} <Cadence cadence={item.cadence} />
+              {item.category ?? ""}{" "}
+              <Cadence cadence={item.cadence} ticked={isTickedFor(item, todayIso())} />
             </td>
           </tr>
         ))}

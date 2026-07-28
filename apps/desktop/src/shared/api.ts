@@ -145,6 +145,11 @@ export interface VaultApi {
   createItem(input: CreateItemInput): Promise<Result<{ snapshot: VaultSnapshot; key: string }>>;
   updateItem(key: string, patch: UpdateItemInput): Promise<Result<VaultSnapshot>>;
   transitionItem(key: string, status: Status): Promise<Result<VaultSnapshot>>;
+  /**
+   * Log a recurring item as done for one period, leaving its status alone.
+   * `on` defaults to today; `undo` removes that date instead of adding it.
+   */
+  tickItem(key: string, on?: string, undo?: boolean): Promise<Result<VaultSnapshot>>;
   /** Manual reorder. Positions are list positions — see Vault.moveItem. */
   moveItem(
     key: string,
@@ -244,6 +249,7 @@ export const CHANNELS = {
   createItem: "vault:create-item",
   updateItem: "vault:update-item",
   transitionItem: "vault:transition-item",
+  tickItem: "vault:tick-item",
   moveItem: "vault:move-item",
   addComment: "vault:add-comment",
   addLink: "vault:add-link",

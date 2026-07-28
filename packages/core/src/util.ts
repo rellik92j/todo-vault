@@ -5,38 +5,26 @@ import { setTimeout as delay } from "node:timers/promises";
 
 export { randomUUID };
 
+/**
+ * Calendar arithmetic lives in recurrence.ts, which imports nothing, so the
+ * desktop renderer can share it. Re-exported here because this is where every
+ * existing caller looks for it.
+ */
+export {
+  addDays,
+  cadencePeriod,
+  endOfMonth,
+  endOfQuarter,
+  isSettledForWindow,
+  isTickedFor,
+  startOfMonth,
+  startOfQuarter,
+  startOfWeek,
+  todayIso,
+} from "./recurrence.js";
+
 export function nowIso(): string {
   return new Date().toISOString();
-}
-
-export function todayIso(d: Date = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-export function addDays(dateIso: string, days: number): string {
-  const d = new Date(`${dateIso}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return todayIso(d);
-}
-
-/** Monday-anchored start of the week containing `dateIso`. */
-export function startOfWeek(dateIso: string): string {
-  const d = new Date(`${dateIso}T00:00:00`);
-  const offset = (d.getDay() + 6) % 7;
-  return addDays(dateIso, -offset);
-}
-
-export function startOfMonth(dateIso: string): string {
-  return `${dateIso.slice(0, 7)}-01`;
-}
-
-export function endOfMonth(dateIso: string): string {
-  const d = new Date(`${dateIso}T00:00:00`);
-  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  return todayIso(last);
 }
 
 /**

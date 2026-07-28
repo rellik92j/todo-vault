@@ -249,6 +249,11 @@ function registerHandlers(): void {
     return service.snapshot();
   });
 
+  handle(CHANNELS.tickItem, async (key: string, on: string | undefined, undo: boolean) => {
+    await service.tick(key, on, undo === true);
+    return service.snapshot();
+  });
+
   handle(
     CHANNELS.moveItem,
     async (key: string, position: { after?: string; before?: string }) => {

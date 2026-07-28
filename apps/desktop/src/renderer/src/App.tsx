@@ -742,6 +742,9 @@ export function App(): React.JSX.Element {
               selected={selected}
               onSelect={open}
               onOrder={setAgendaOrder}
+              onTick={(key, undo) =>
+                void vault.mutate(() => window.vault.tickItem(key, undefined, undo))
+              }
             />
           )}
         </div>

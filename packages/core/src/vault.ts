@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 import {
+  CADENCES,
   CreateItemInput,
   DONE_STATUSES,
   FRONTMATTER_ORDER,
@@ -28,6 +29,7 @@ import {
   endOfMonth,
   formatZodError,
   fromPosixPath,
+  isSettledForWindow,
   nowIso,
   pathExists,
   randomUUID,
@@ -404,9 +406,18 @@ export class Vault {
 
     // A recurring item that also carries a due date belongs under "due" — that
     // is the one with a deadline attached.
+    //
+    // Ticked items drop out, but only once the tick covers the rest of the
+    // window: see isSettledForWindow. Today's daily task still belongs in the
+    // week's agenda, because it comes round again tomorrow.
     const alreadyListed = new Set([...overdue, ...due].map((i) => i.key));
     const recurring = open
-      .filter((i) => cadences.includes(i.cadence) && !alreadyListed.has(i.key))
+      .filter(
+        (i) =>
+          cadences.includes(i.cadence) &&
+          !alreadyListed.has(i.key) &&
+          !isSettledForWindow(i, reference, to),
+      )
       .sort(sortByWorkOrder);
 
     const sections: AgendaSection[] = [];
@@ -573,6 +584,62 @@ export class Vault {
 
   async transition(key: string, status: Status): Promise<Item> {
     return this.updateItem(key, { status });
+  }
+
+  /**
+   * Record that a recurring item was done for the period containing `on`.
+   *
+   * Deliberately not a status change. `done` means "this item is finished and
+   * should stop appearing", which is right when you abandon a habit and wrong
+   * when you perform one — so a tick leaves `status` untouched and appends to
+   * the item's own history instead. The agenda then hides the item until its
+   * cadence comes round again (see `isSettledForWindow`).
+   *
+   * Idempotent: ticking twice on the same date is a no-op rather than an error,
+   * because a double-click on the UI's ✓ should not be a failure state.
+   *
+   * The commit message names the completion rather than reusing `updateItem`'s
+   * generic `Update ${key}`, so the history stays greppable even though the
+   * frontmatter is already the authoritative record.
+   */
+  async tickItem(key: string, on: string = todayIso()): Promise<Item> {
+    const existing = this.getItem(key);
+    if (existing.cadence === "none") {
+      throw new VaultError(
+        `${key} has no cadence, so a tick has no period to apply to. Give it one ` +
+          `(${CADENCES.filter((c) => c !== "none").join("|")}), or transition it to done instead.`,
+      );
+    }
+    if (existing.completions.includes(on)) return existing;
+
+    // Sorted so the file stays stable regardless of the order ticks arrive in —
+    // backfilling a missed day should not reshuffle the whole list in the diff.
+    const completions = [...existing.completions, on].sort();
+    return this.persist(
+      { ...existing, completions, updated: nowIso() },
+      `Complete ${key} (${existing.cadence} ${on})`,
+    );
+  }
+
+  /**
+   * Remove one recorded completion. A ✓ with no undo is a trap, and a mis-tick
+   * otherwise has to be fixed by hand-editing the file.
+   *
+   * Unlike `tickItem` this does not require a cadence: clearing an item's
+   * cadence should not strand the completions it already accumulated.
+   */
+  async untickItem(key: string, on: string = todayIso()): Promise<Item> {
+    const existing = this.getItem(key);
+    if (!existing.completions.includes(on)) return existing;
+
+    return this.persist(
+      {
+        ...existing,
+        completions: existing.completions.filter((done) => done !== on),
+        updated: nowIso(),
+      },
+      `Undo completion of ${key} (${on})`,
+    );
   }
 
   async addComment(key: string, body: string, author = "me"): Promise<Item> {

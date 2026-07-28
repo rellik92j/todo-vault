@@ -660,6 +660,88 @@ button:focus-visible {
   background: var(--bg-inset);
 }
 
+/*
+   In the agenda a row and its ✓ are siblings rather than parent and child,
+   because a button cannot legally contain another button. There the wrapper
+   takes over the separator and the hover, so the line spans the ✓ as well and
+   hovering anywhere lights the whole row.
+
+   Scoped to the wrapper on purpose: `.row` is also used bare by the trash and
+   hidden-project panels and by the detail panel's children and backlinks, and
+   those still need to draw their own.
+*/
+.row-wrap {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-wrap:last-child {
+  border-bottom: none;
+}
+
+.row-wrap:hover {
+  background: var(--bg-inset);
+}
+
+.row-wrap > .row {
+  border-bottom: none;
+}
+
+/* Recurring rows only, so the gap does not appear on every other row. */
+.row-wrap > .tick {
+  margin-right: 8px;
+}
+
+.tick {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tick:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* Compound selectors so the ticked look wins over .tick-wide's own colours
+   without depending on which block happens to come later in this file. */
+.tick.tick-done,
+.tick-wide.tick-done {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* The detail panel's version: labelled rather than a bare glyph, because there
+   is room for words and undo needs to say what it undoes. */
+.tick-wide {
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.tick-wide:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.pill-ticked {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .row-summary {
   flex: 1;
   overflow: hidden;

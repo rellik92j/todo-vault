@@ -23,6 +23,7 @@ const api: VaultApi = {
   createItem: (input) => ipcRenderer.invoke(CHANNELS.createItem, input),
   updateItem: (key, patch) => ipcRenderer.invoke(CHANNELS.updateItem, key, patch),
   transitionItem: (key, status) => ipcRenderer.invoke(CHANNELS.transitionItem, key, status),
+  tickItem: (key, on, undo) => ipcRenderer.invoke(CHANNELS.tickItem, key, on, undo),
   moveItem: (key, position) => ipcRenderer.invoke(CHANNELS.moveItem, key, position),
   addComment: (key, body) => ipcRenderer.invoke(CHANNELS.addComment, key, body),
   addLink: (key, link) => ipcRenderer.invoke(CHANNELS.addLink, key, link),

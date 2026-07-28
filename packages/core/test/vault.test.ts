@@ -14,6 +14,7 @@ import {
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
 import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
+import { cadencePeriod } from "../src/recurrence.js";
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-test-"));
@@ -174,6 +175,126 @@ test("disregard closes an item without claiming the work happened", async () => 
     vault.listItems({}).items[0].key,
     live.key,
     "work order sinks closed items, disregarded ones included",
+  );
+});
+
+test("cadencePeriod bounds each cadence, and none has no period", () => {
+  // A Wednesday, mid-month, mid-quarter — so every boundary below is a real
+  // calculation rather than the reference date leaking through unchanged.
+  const ref = "2026-06-17";
+  assert.deepEqual(cadencePeriod("daily", ref), { from: ref, to: ref });
+  assert.deepEqual(
+    cadencePeriod("weekly", ref),
+    { from: "2026-06-15", to: "2026-06-21" },
+    "weeks run Monday to Sunday",
+  );
+  assert.deepEqual(cadencePeriod("monthly", ref), { from: "2026-06-01", to: "2026-06-30" });
+  assert.deepEqual(cadencePeriod("quarterly", ref), { from: "2026-04-01", to: "2026-06-30" });
+  assert.equal(cadencePeriod("none", ref), null);
+
+  assert.deepEqual(
+    cadencePeriod("weekly", "2026-06-15"),
+    cadencePeriod("weekly", "2026-06-21"),
+    "Monday and the Sunday after it are the same week",
+  );
+  assert.notDeepEqual(
+    cadencePeriod("weekly", "2026-06-21"),
+    cadencePeriod("weekly", "2026-06-22"),
+    "but the Monday after that is not",
+  );
+  assert.deepEqual(cadencePeriod("monthly", "2026-02-03").to, "2026-02-28", "short months");
+  assert.deepEqual(cadencePeriod("quarterly", "2026-12-31").from, "2026-10-01", "year end");
+});
+
+test("a tick records the date and leaves status alone", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({
+    project: "ACME",
+    summary: "Morning check",
+    cadence: "daily",
+  });
+
+  const ticked = await vault.tickItem(item.key, "2026-06-17");
+  assert.deepEqual(ticked.completions, ["2026-06-17"]);
+  assert.equal(ticked.status, "todo", "a tick is not a transition");
+
+  const again = await vault.tickItem(item.key, "2026-06-17");
+  assert.deepEqual(again.completions, ["2026-06-17"], "ticking the same date twice is a no-op");
+
+  // Backfilling an earlier day must not leave the list out of order.
+  const backfilled = await vault.tickItem(item.key, "2026-06-15");
+  assert.deepEqual(backfilled.completions, ["2026-06-15", "2026-06-17"]);
+
+  const undone = await vault.untickItem(item.key, "2026-06-15");
+  assert.deepEqual(undone.completions, ["2026-06-17"]);
+  assert.deepEqual(
+    (await vault.untickItem(item.key, "2020-01-01")).completions,
+    ["2026-06-17"],
+    "removing a date that was never there is a no-op, not an error",
+  );
+
+  const reopened = await Vault.open(vault.root);
+  assert.deepEqual(
+    reopened.getItem(item.key).completions,
+    ["2026-06-17"],
+    "completions survive the round trip through disk",
+  );
+});
+
+test("ticking refuses an item with no cadence, and names the way out", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "One-off" });
+  await assert.rejects(() => vault.tickItem(item.key, "2026-06-17"), /no cadence/);
+  await assert.rejects(() => vault.tickItem(item.key, "2026-06-17"), /done instead/);
+});
+
+test("a ticked item leaves only the agenda windows its period covers", async () => {
+  const vault = await tmpVault();
+  const daily = await vault.createItem({ project: "ACME", summary: "Standup", cadence: "daily" });
+  const weekly = await vault.createItem({ project: "ACME", summary: "Report", cadence: "weekly" });
+
+  const recurringIn = (scope: "today" | "week", ref = "2026-06-17"): string[] =>
+    vault.agenda(scope, ref).find((s) => s.kind === "recurring")?.items.map((i) => i.summary) ?? [];
+
+  assert.deepEqual(recurringIn("today"), ["Standup"]);
+  assert.deepEqual(recurringIn("week"), ["Standup", "Report"]);
+
+  await vault.tickItem(daily.key, "2026-06-17");
+  assert.deepEqual(recurringIn("today"), [], "today's daily work is done");
+  assert.deepEqual(
+    recurringIn("week"),
+    ["Standup", "Report"],
+    "but it comes round again tomorrow, which is inside this week",
+  );
+
+  await vault.tickItem(weekly.key, "2026-06-17");
+  assert.deepEqual(
+    recurringIn("week"),
+    ["Standup"],
+    "the weekly item's period covers the rest of the window, so it drops out",
+  );
+
+  // Yesterday's tick buys nothing today: the daily period has rolled over.
+  await vault.untickItem(daily.key, "2026-06-17");
+  await vault.tickItem(daily.key, "2026-06-16");
+  assert.deepEqual(recurringIn("today"), ["Standup"], "a daily tick expires overnight");
+});
+
+test("a tick never marks a pushed item as drifted", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({
+    project: "ACME",
+    summary: "Weekly report",
+    cadence: "weekly",
+  });
+  await vault.markPushed(item.key, "JIRA-1", "1");
+  assert.equal(vault.getItem(item.key).sync.state, "pushed");
+
+  const ticked = await vault.tickItem(item.key, "2026-06-17");
+  assert.equal(
+    ticked.sync.state,
+    "pushed",
+    "completions are local-only, so Jira has not gone stale",
   );
 });
 

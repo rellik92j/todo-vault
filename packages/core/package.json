@@ -20,6 +20,10 @@
     "./description": {
       "types": "./dist/description.d.ts",
       "default": "./dist/description.js"
+    },
+    "./recurrence": {
+      "types": "./dist/recurrence.d.ts",
+      "default": "./dist/recurrence.js"
     }
   },
   "files": [

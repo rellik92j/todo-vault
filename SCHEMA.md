@@ -92,6 +92,7 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `startDate` / `dueDate` | `YYYY-MM-DD` | `dueDate` is standard in Jira; `startDate` is a custom field. |
 | `estimate` | number | Story points or hours — `jira-map.yaml` decides which. |
 | `cadence` | enum | `daily` `weekly` `monthly` `quarterly` `none`. **Local only.** |
+| `completions` | `YYYY-MM-DD`[] | Dates this recurring item was ticked off, sorted. **Local only.** See below. |
 | `rank` | int | Manual sort position within the project. **Local only.** See below. |
 | `links` | Link[] | See below. |
 | `attachments` | Attachment[] | Paths relative to the vault root, always with forward slashes. |
@@ -250,6 +251,57 @@ merging them reads as though the recurring items were also due. Every item lands
 in exactly one section — something due last Tuesday is both inside this week's
 window and overdue, and `overdue` claims it — so the sections can be totalled
 without double-counting.
+
+`recurring` leaves out anything already ticked for the period in question, so it
+lists what is still owed rather than everything carrying a cadence. See below.
+
+## Recurring work
+
+A cadence is a schedule, not a deadline, and completing one turn of it is not the
+same as finishing the item. `done` and `disregard` retire an item permanently —
+right when you drop a habit, wrong when you perform one — so recurring work is
+completed with a **tick** instead:
+
+```yaml
+cadence: daily
+completions:
+  - 2026-07-26
+  - 2026-07-27
+  - 2026-07-28
+```
+
+`tickItem(key, on)` appends a date and `untickItem(key, on)` removes one. Neither
+touches `status`: a daily task sits in `todo` forever and accumulates
+completions. Ticking the same date twice is a no-op rather than an error.
+
+The record lives in the item file because git here is optional and non-fatal by
+design (see **Deletion** above) — a vault that was never `git init`ed still keeps
+a full completion history. When git *is* on, the commit
+message names the completion (`Complete OPS-1 (daily 2026-07-28)`) rather than
+the generic `Update OPS-1`, so the history is greppable too.
+
+### When a tick hides an item
+
+Each cadence has a **period** containing the reference date — a day, a
+Monday-to-Sunday week, a calendar month, a calendar quarter. An item drops out of
+an agenda window when it is ticked for its current period *and* that period runs
+to the end of the window, i.e. nothing more is owed before the window closes:
+
+| Item | `today` | `week` |
+|---|---|---|
+| `daily`, ticked today | hidden | **shown** — it comes round again tomorrow |
+| `weekly`, ticked Monday | hidden | hidden |
+| `monthly`, ticked | hidden | hidden |
+
+The simpler rule — "ticked means hide it" — is wrong in a way that is easy to
+miss: doing today's daily task would empty the weekly agenda of it too.
+
+`completions` is not in `pushableFields`, so a tick never marks a pushed item as
+drifted against Jira.
+
+The period arithmetic lives in `recurrence.ts`, which imports nothing, so the
+desktop renderer shares it rather than reimplementing it — the same reason
+`constants.ts` and `description.ts` are structured that way.
 
 ### Sync
 

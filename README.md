@@ -61,6 +61,16 @@ offers too, so neither route can propose a pairing the core would refuse.
 Deleting offers an undo backed by `.trash`, and refuses to orphan children until
 you confirm the cascade.
 
+Recurring items get a **✓** rather than a status change. A cadence is a schedule,
+not a deadline, so marking the daily check "done" would retire it permanently —
+right when you drop a habit, wrong when you perform one. The ✓ records the date
+in the item's own `completions` list, leaves the status alone, and drops the item
+off the agenda until its cadence comes round again: tick today's daily task and
+it disappears from **today** but stays on **this week**, because it is due again
+tomorrow. Press it again to undo. The cadence pill shows a ✓ wherever it appears,
+so a board card says whether this week's report is handled even though the acting
+happens in the agenda and the detail panel.
+
 The description renders as markdown rather than as one collapsed line, and edits
 as formatting rather than as syntax: Ctrl+B bolds, the toolbar makes headings,
 bullet and numbered lists, quotes, fenced code and links, and nothing shows its
@@ -125,7 +135,7 @@ run.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 48 core tests
+npm test               # 53 core tests
 npm run typecheck      # both workspaces
 ```
 
@@ -161,6 +171,7 @@ show KEY                          Full item, children, backlinks, comments
 set KEY --status done --due DATE  Update fields
 done KEY                          Shorthand
 disregard KEY                     Close it as "not doing this"
+tick KEY [--on DATE] [--undo]     Recurring work: done for this period
 comment KEY "text"                Append to the running log
 link KEY --url|--item|--outlook X Link arbitrary content
 attach KEY <path> [--no-copy]     Attach a file
@@ -203,7 +214,7 @@ Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
 note that legal signed off"*.
 
-Twenty-three tools are registered:
+Twenty-six tools are registered:
 
 | Tool | |
 |---|---|
@@ -214,6 +225,7 @@ Twenty-three tools are registered:
 | `vault_create_item` | Create, with hierarchy validation |
 | `vault_update_item` | Patch fields |
 | `vault_transition_item` | Move through the workflow |
+| `vault_tick_item` | Log recurring work as done for this period |
 | `vault_move_item` | Reorder by hand within a project |
 | `vault_add_comment` | Append to the log |
 | `vault_link_item` | Link a URL, file, item, or Outlook message |

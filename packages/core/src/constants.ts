@@ -88,6 +88,7 @@ export const FRONTMATTER_ORDER: readonly string[] = [
   "dueDate",
   "estimate",
   "cadence",
+  "completions",
   "rank",
   "links",
   "attachments",

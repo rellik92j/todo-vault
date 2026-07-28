@@ -115,6 +115,12 @@ export const ItemFrontmatterSchema = z
       .optional()
       .describe("Story points or hours, whatever your jira-map says it maps to"),
     cadence: z.enum(CADENCES).default("none").describe("Local only — drives the agenda views"),
+    completions: z
+      .array(isoDate)
+      .default([])
+      .describe(
+        "Local only — dates this recurring item was ticked off. Written by tick/untick, never by a status change: a cadence item stays in its own status while its completions accumulate.",
+      ),
     rank: z
       .number()
       .int()

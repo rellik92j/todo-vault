@@ -32,5 +32,7 @@ export {
   isLosslessDescription,
 } from "./description.js";
 export type { Block, Inline } from "./description.js";
+export { cadencePeriod, isTickedFor, isSettledForWindow } from "./recurrence.js";
+export type { Tickable } from "./recurrence.js";
 export { buildPushPlan, loadJiraMap, markdownToAdf, toJiraCsv, JiraMapSchema } from "./jira.js";
 export type { JiraMap, JiraPushPlan, JiraIssueDraft } from "./jira.js";

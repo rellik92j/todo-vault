@@ -2,6 +2,7 @@
 // Importing them from the package root would pull vault.js — and node:fs — into
 // the renderer bundle. Types are erased, so they can come from the root.
 import { DONE_STATUSES, TRANSITIONS, type ItemType, type Status } from "todo-vault/constants";
+import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import type { Item } from "todo-vault";
 
 /**
@@ -113,10 +114,10 @@ export const BOARD_ORDER = [
   "disregard",
 ] as const;
 
-export function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+// Was a hand-rolled copy of the core's, from before there was a pure module to
+// take it from. Re-exported rather than deleted so this stays the place the
+// renderer reaches for it, but there is now one implementation, not two.
+export { todayIso };
 
 export function isOverdue(item: Item, today = todayIso()): boolean {
   return Boolean(item.dueDate && item.dueDate < today && !isClosed(item.status));
@@ -153,10 +154,73 @@ export function DueDate({ item }: { item: Item }): React.JSX.Element | null {
 /**
  * Cadence is local-only and has nothing to do with a due date, so it reads as an
  * interval rather than a deadline.
+ *
+ * `ticked` marks this turn as already done. It is shown everywhere the pill is,
+ * including the places that have no ✓ to press — knowing the weekly report is
+ * handled is useful on a board card even when acting on it happens elsewhere.
  */
-export function Cadence({ cadence }: { cadence: string }): React.JSX.Element | null {
+export function Cadence({
+  cadence,
+  ticked = false,
+}: {
+  cadence: string;
+  ticked?: boolean;
+}): React.JSX.Element | null {
   if (cadence === "none") return null;
-  return <span className="pill" title="Recurring — a cadence, not a deadline">↻ {cadence}</span>;
+  return (
+    <span
+      className={`pill${ticked ? " pill-ticked" : ""}`}
+      title={
+        ticked
+          ? `Recurring — done for this ${cadence.replace(/ly$/, "")} period`
+          : "Recurring — a cadence, not a deadline"
+      }
+    >
+      ↻ {cadence}
+      {ticked && " ✓"}
+    </span>
+  );
+}
+
+/**
+ * The ✓ that logs a recurring item as done for the current period.
+ *
+ * Kept out of the Board card deliberately: those sit inside a dnd-kit
+ * draggable, where a nested button competes with the drag handler for the
+ * pointer. The board shows the ticked pill instead and the acting happens here
+ * and in the detail panel.
+ */
+export function TickButton({
+  item,
+  onTick,
+}: {
+  item: Item;
+  onTick: (undo: boolean) => void;
+}): React.JSX.Element | null {
+  if (item.cadence === "none") return null;
+  const ticked = isTickedFor(item, todayIso());
+  return (
+    <button
+      type="button"
+      className={`tick${ticked ? " tick-done" : ""}`}
+      aria-pressed={ticked}
+      // The visible glyph would otherwise be the accessible name, and "✓" tells
+      // a screen-reader user nothing about what pressing it does.
+      aria-label={
+        ticked
+          ? `Undo ${item.key}'s completion for this period`
+          : `Log ${item.key} as done for this ${item.cadence} period`
+      }
+      title={
+        ticked
+          ? `Done for this period — click to undo. Status stays ${item.status}.`
+          : `Log as done for this ${item.cadence.replace(/ly$/, "")} period. Does not change status.`
+      }
+      onClick={() => onTick(ticked)}
+    >
+      ✓
+    </button>
+  );
 }
 
 /**
