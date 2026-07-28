@@ -20,6 +20,13 @@ import path from "node:path";
 /**
  * stdio MCP server over a local vault.
  *
+ * The transport is stdio, and that is load-bearing beyond the obvious:
+ * `@modelcontextprotocol/sdk` carries an open advisory against its transitive
+ * `@hono/node-server`, and it is unreachable only because nothing here imports
+ * `StreamableHTTPServerTransport`. Adding an HTTP transport pulls that package
+ * into the running code — see "The `npm audit` finding that is not reachable"
+ * in PLAN.md before doing so.
+ *
  * Deliberately not a thin CRUD wrapper: `get_agenda` and `plan_jira_push`
  * exist because "what should I do today" and "what would go to Jira" are the
  * questions actually asked, and answering them in one call keeps far less

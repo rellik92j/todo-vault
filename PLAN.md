@@ -478,3 +478,32 @@ short and always rethrows on its last attempt rather than trying to tell them
 apart. `isTransientRenameError` is exported and tested; a real lock is not
 simulated, because doing so on Windows is flaky, and that is the honest coverage
 boundary.
+
+## The `npm audit` finding that is not reachable
+
+`npm audit --omit=dev` reports GHSA-frvp-7c67-39w9 — path traversal in
+`@hono/node-server`'s `serve-static` on Windows via an encoded backslash
+(`%5C`), fixed in 2.0.5. It arrives transitively: `@modelcontextprotocol/sdk`
+1.29.0 depends on `@hono/node-server` `^1.19.9`, which resolves to 1.19.15.
+
+**It is not reachable from this codebase, on two independent counts.** The SDK
+never imports `serve-static` at all — that is a separate subpath export
+(`@hono/node-server/serve-static`), and the SDK's only use of the package is
+`getRequestListener` from the package root. And that single import lives in
+`server/streamableHttp.js`, which is not in the transitive import closure of
+`server/mcp.js` plus `server/stdio.js` — the 16-file closure `mcp-server.ts`
+actually pulls in reaches nothing outside `ajv` and `zod`. The server speaks
+stdio; no HTTP listener is ever constructed, let alone a static file handler.
+
+**So it is recorded rather than fixed.** The upgrade was tried and does work —
+SDK 1.30.0 widens the range to `^1.19.9 || ^2.0.5`, and with
+`@hono/node-server` then pulled up to 2.0.12 the audit is clean, typecheck
+passes, the suite is unchanged, and a stdio smoke test still lists all 25 tools
+and returns real data. It is left undone because a major bump of an unused
+transport's unused dependency buys nothing but a quieter audit line, and the
+same bump is free to take later on its own merits.
+
+**What would invalidate this.** The reachability argument is contingent on the
+transport staying stdio. If `mcp-server.ts` ever imports
+`StreamableHTTPServerTransport`, `@hono/node-server` enters the running code and
+this section stops being true — see the note at that file's imports.
