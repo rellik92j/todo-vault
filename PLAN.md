@@ -349,6 +349,88 @@ The Jira side is a mapping, not a feature: `jira-map.example.yaml` gains a
 `disregard` transition, commented, because "Won't Do" is the common name for it
 and not a guaranteed one.
 
+## Collapsing a subtree in the backlog ✅ built and driven
+
+Promoted out of IDEAS.md. Renderer-only: no schema change, no IPC, nothing on
+disk. Collapse is view state, the same as the toolbar filters, and is forgotten
+when the window closes — an item's file never learns it was folded shut.
+
+`backlogOrder()` had already done the hard half, so the change inside it is four
+lines: a `collapsed` argument, and a `return` before the recursion.
+
+**The set lives in `App.tsx`, not in `BacklogTable`.** `App.tsx` calls
+`backlogOrder` a second time to build `orderedKeys`, the list `j`/`k` walk, and
+the comment above it already stated the rule — a cursor stepping through a
+different order than the eye sees is worse than no cursor at all. A table hiding
+rows privately would turn every collapsed subtree into a stretch of the keyboard
+walk where the highlight is off screen. So the set is passed into both calls,
+and it holds keys rather than row indices, because the array is re-derived from
+a fresh snapshot on every write.
+
+**Collapse hides the children of a *visible* parent, and only that.**
+`backlogOrder` promotes a child to a root when its parent is not in the filtered
+set, precisely so nothing disappears silently; a collapsed key that is itself
+filtered out must therefore not reach through and hide its children anyway. The
+check sits inside `walk()`, on an item that has just been emitted, which gives
+this for free — the line never runs for a parent that was never emitted. That is
+why it is not a filter over the finished array, and it is the one rule here
+worth a test.
+
+**The cursor comes up to the parent** when the subtree it was inside closes.
+Leaving it means the next `j` resumes from a row nobody can see. Whether it is
+still visible is asked of `backlogOrder` itself rather than re-derived from
+`parent` links in the handler: one answer to the question, and it cannot
+disagree with what the table drew.
+
+Two smaller calls, both from the idea doc:
+
+- **A twisty only where there is something to collapse**, which `childrenOf`
+  already knows — so `backlogOrder` returns `hasChildren` per row instead of the
+  table asking a second time. Childless rows get a blank of the same width; the
+  alternative is sibling summaries starting at two different offsets.
+- **`h`/`←` and `l`/`→`**, pairing vim and arrow keys the way `j`/`k` already
+  do. A row with no children is left alone rather than added to the set: it
+  would hide nothing today and quietly hide something the day it gains a child.
+
+Nothing prunes keys whose items have gone. A stale key matches nothing, and
+keeping it means a subtree filtered out and then back in returns the way the
+user left it.
+
+**This gave the desktop app its first tests.** `ordering.ts` is pure, so seven
+cases run under `node:test` via `tsx` — the same setup the core package uses,
+no new runner. They cover the nesting rule above, which is the part that would
+be easy to break later and impossible to notice. `tsconfig.test.json` is a third
+pass rather than an extension of `tsconfig.web.json`, because that config sets
+`"types": []` on purpose: renderer code must not see node's globals, or an `fs`
+import into a browser bundle typechecks cleanly. Root `npm test` now runs every
+workspace instead of only the core.
+
+**Driven in the real app**, against the demo vault under an isolated
+`--user-data-dir`, which is worth doing this way: the app remembers its vault in
+`userData/settings.json`, so a driver that does not override that path opens
+whatever real vault was last used. Twenty-five checks, including the two the
+unit tests cannot reach — that clicking a twisty does not also select the row or
+open the panel, and that `j` from a collapsed parent skips the rows underneath.
+
+The one thing driving it caught was the twisty itself, and it was invisible to
+every other kind of verification. At `font-size: 9px` in `--text-faint` it was
+an 11×9px target rendering as roughly four pixels of ink — on screen it read as
+dust on the display, not a control. Two separate mistakes:
+
+- **Size.** A backlog row is 36px with a 22px content box, so the button now
+  takes 16×20px of that and *nothing moves* — the row height is identical
+  before and after. There was never a reason for the target to be small.
+- **The codepoint.** `▸`/`▾` are the U+25B8 *small* triangles: most of their em
+  is whitespace, so they need ~16px to carry the weight `└` carries at 12.5px.
+  The full-size `▶`/`▼` look right at 11px, but they have emoji presentation
+  variants and can arrive as a colour emoji on a machine whose font stack
+  disagrees — so the small ones stay, at a larger size.
+
+The other open question answered itself: the cursor coming up to a collapsing
+parent reads as correct, not as the list moving, because the row it lands on is
+the one just clicked. It also holds two levels deep — collapsing a grandparent
+with the cursor on a grandchild lands on the grandparent.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user

@@ -8,39 +8,6 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
-## Collapsing a subtree in the backlog
-
-`backlogOrder()` already does the hard half. It walks parents depth-first into a
-flat `Array<{ item, depth }>`, which `BacklogTable` renders one row each from,
-indenting by `"　".repeat(depth)`. Collapsing is not walking into a subtree —
-a few lines inside `walk()`, given a set of collapsed keys.
-
-What needs deciding is where that set lives, and the answer is not
-`BacklogTable`. `App.tsx` calls `backlogOrder(filtered)` a second time to build
-`orderedKeys`, the list `j`/`k` step through, and the comment above it already
-states the rule: a cursor that steps through a different order than the eye sees
-is worse than no cursor at all. A table that hid rows privately would turn every
-collapsed subtree into a stretch of the keyboard walk where the highlight is off
-screen. So the collapsed set is view state in `App.tsx` beside the filters,
-passed into both calls — the same shape as `status` or `openOnly`. Hold keys,
-not row indices, since the array is re-derived from a new snapshot on every
-write.
-
-One rule worth writing down before it gets improvised: collapse hides the
-children of a *visible* parent, and only that. `backlogOrder` already promotes a
-child to a root when its parent is not in the filtered set, precisely so nothing
-disappears silently, and a collapsed key that is itself filtered out must not
-reach through and hide its children anyway — that is the exact failure the
-nesting rule exists to prevent. Recursing only from items already emitted gives
-this for free, which is the argument for the check living in `walk()` rather
-than filtering the finished array afterwards.
-
-Two smaller calls. Offer a twisty only where there is something to collapse —
-the `childrenOf` map already answers that, so it is a lookup the walk is doing
-regardless. And decide what happens to a cursor inside a subtree that just
-collapsed: moving it up to the parent keeps the selection on screen, leaving it
-means the next `j` resumes from somewhere invisible.
-
 ## A type filter, on the backlog and the board
 
 The toolbar filters on project, status, cadence, reporter and text; type is the

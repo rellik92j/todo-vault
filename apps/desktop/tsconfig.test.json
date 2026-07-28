@@ -1,0 +1,23 @@
+{
+  // A third pass, rather than adding test/** to tsconfig.web.json, because that
+  // config sets "types": [] on purpose: the renderer must not see node's
+  // globals, or a `fs` import into a browser bundle typechecks cleanly. Tests
+  // need both — node's test runner, and the DOM lib the renderer modules under
+  // test are written against.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": { "@shared/*": ["./src/shared/*"] }
+  },
+  "include": ["test/**/*.ts"]
+}

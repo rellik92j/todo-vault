@@ -11,13 +11,21 @@ import { backlogOrder } from "./ordering";
  * Children are nested under their parent so the hierarchy is visible without a
  * tree widget, but only when the parent is in the filtered set; otherwise an
  * orphaned child would silently disappear from view.
+ *
+ * Which subtrees are collapsed is not this component's to know: the keyboard
+ * cursor walks the same order, and a table that hid rows privately would put
+ * the highlight somewhere off screen. It comes in as a prop.
  */
 export function BacklogTable({
   items,
+  collapsed,
+  onToggleCollapse,
   selected,
   onSelect,
 }: {
   items: Item[];
+  collapsed: ReadonlySet<string>;
+  onToggleCollapse: (key: string) => void;
   selected: string | null;
   onSelect: (key: string) => void;
 }): React.JSX.Element {
@@ -25,7 +33,7 @@ export function BacklogTable({
     return <div className="empty">Nothing matches these filters.</div>;
   }
 
-  const ordered = backlogOrder(items);
+  const ordered = backlogOrder(items, collapsed);
 
   return (
     <table className="table">
@@ -41,7 +49,7 @@ export function BacklogTable({
         </tr>
       </thead>
       <tbody>
-        {ordered.map(({ item, depth }) => (
+        {ordered.map(({ item, depth, hasChildren }) => (
           <tr
             key={item.key}
             aria-selected={item.key === selected}
@@ -51,6 +59,26 @@ export function BacklogTable({
             <td className="type">{item.type}</td>
             <td className="cell-summary" title={item.summary}>
               {depth > 0 && <span className="indent">{"　".repeat(depth)}└ </span>}
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className="twisty"
+                  aria-expanded={!collapsed.has(item.key)}
+                  aria-label={`${collapsed.has(item.key) ? "Expand" : "Collapse"} ${item.key}`}
+                  // The row is itself a click target, so without this a twisty
+                  // would also move the cursor and open the panel.
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleCollapse(item.key);
+                  }}
+                >
+                  {collapsed.has(item.key) ? "▸" : "▾"}
+                </button>
+              ) : (
+                // A leaf gets the same width back as blank space; without it
+                // the summaries of siblings sit at two different offsets.
+                <span className="twisty-gap" />
+              )}
               {item.summary}
             </td>
             <td>

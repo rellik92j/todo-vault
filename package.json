@@ -11,7 +11,7 @@
     "vault": "tsx packages/core/src/cli.ts",
     "mcp": "tsx packages/core/src/mcp-server.ts",
     "seed": "tsx packages/core/scripts/seed-vault.ts",
-    "test": "npm run test -w todo-vault",
+    "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop"
