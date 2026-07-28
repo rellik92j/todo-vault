@@ -1,14 +1,32 @@
 import type { Item, Status } from "todo-vault";
 import { BOARD_ORDER } from "./pieces";
 
+export interface BacklogRow {
+  item: Item;
+  depth: number;
+  /**
+   * Whether this item has children in the filtered set — what decides if a row
+   * gets a twisty. The walk knows this already; recomputing it in the table
+   * would be a second answer to a question with one right one.
+   */
+  hasChildren: boolean;
+}
+
 /**
  * The backlog's display order: parents followed by their children, depth-first.
  *
  * Children are nested under their parent so the hierarchy is visible without a
  * tree widget, but only when the parent is in the filtered set; otherwise an
  * orphaned child would silently disappear from view.
+ *
+ * `collapsed` holds the keys whose children are hidden. It arrives as an
+ * argument rather than being read from anywhere because two callers must agree
+ * on the result — see the note above `orderedKeys` in App.tsx.
  */
-export function backlogOrder(items: Item[]): Array<{ item: Item; depth: number }> {
+export function backlogOrder(
+  items: Item[],
+  collapsed: ReadonlySet<string> = new Set(),
+): BacklogRow[] {
   const present = new Set(items.map((i) => i.key));
   const roots = items.filter((i) => !i.parent || !present.has(i.parent));
   const childrenOf = new Map<string, Item[]>();
@@ -20,10 +38,18 @@ export function backlogOrder(items: Item[]): Array<{ item: Item; depth: number }
     }
   }
 
-  const ordered: Array<{ item: Item; depth: number }> = [];
+  const ordered: BacklogRow[] = [];
   const walk = (item: Item, depth: number): void => {
-    ordered.push({ item, depth });
-    for (const child of childrenOf.get(item.key) ?? []) walk(child, depth + 1);
+    const children = childrenOf.get(item.key) ?? [];
+    ordered.push({ item, depth, hasChildren: children.length > 0 });
+    // Collapse is checked here, on an item that has just been emitted, rather
+    // than by filtering the finished array. That is what stops a collapsed key
+    // the filter dropped from reaching through and hiding its children anyway:
+    // those children were promoted to roots above, and this line never runs for
+    // a parent that was never emitted. Collapse hides the children of a visible
+    // parent, and only that.
+    if (collapsed.has(item.key)) return;
+    for (const child of children) walk(child, depth + 1);
   };
   for (const root of roots) walk(root, 0);
 

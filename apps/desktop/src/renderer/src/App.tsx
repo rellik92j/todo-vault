@@ -39,6 +39,19 @@ export function App(): React.JSX.Element {
   const [reporter, setReporter] = useState<string>("all");
   const [openOnly, setOpenOnly] = useState(true);
   const [text, setText] = useState("");
+  /**
+   * The backlog rows whose children are hidden — view state, sat here beside
+   * the filters rather than inside BacklogTable, because `orderedKeys` below is
+   * built from a second `backlogOrder` call and both must be given the same
+   * set. A table hiding rows privately would turn every collapsed subtree into
+   * a stretch of the keyboard walk where the highlight is off screen.
+   *
+   * Keys, not row indices: the array is re-derived from a fresh snapshot on
+   * every write. Nothing prunes keys whose items have gone — a stale one
+   * matches nothing, and keeping it means a subtree filtered out and then back
+   * in returns the way the user left it.
+   */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [scope, setScope] = useState<AgendaScope>("week");
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -191,6 +204,17 @@ export function App(): React.JSX.Element {
   );
 
   /**
+   * The backlog as it is drawn, kept whole rather than reduced straight to keys
+   * because `←`/`→` also need to know whether the row under the cursor has
+   * anything to collapse. `BacklogTable` derives the same rows from the same
+   * two inputs — see its own note on why the collapsed set is a prop.
+   */
+  const backlogRows = useMemo(
+    () => (view === "backlog" ? backlogOrder(filtered, collapsed) : []),
+    [view, filtered, collapsed],
+  );
+
+  /**
    * The keys of the current view, in the order it is actually displaying them,
    * which is what `j`/`k` walk. Each view's ordering is the one it renders with —
    * imported from `ordering.ts` rather than recomputed here, because a cursor
@@ -198,12 +222,12 @@ export function App(): React.JSX.Element {
    * cursor at all. The agenda's comes back over IPC, hence the reported copy.
    */
   const orderedKeys = useMemo<string[]>(() => {
-    if (view === "backlog") return backlogOrder(filtered).map(({ item }) => item.key);
+    if (view === "backlog") return backlogRows.map(({ item }) => item.key);
     if (view === "board") {
       return boardColumns(filtered, projectOrder).flatMap((c) => c.items.map((i) => i.key));
     }
     return agendaOrder;
-  }, [view, filtered, projectOrder, agendaOrder]);
+  }, [view, backlogRows, filtered, projectOrder, agendaOrder]);
 
   const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
   const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
@@ -231,6 +255,56 @@ export function App(): React.JSX.Element {
       setDetailKey((current) => (current === null ? null : key));
     },
     [orderedKeys, selected],
+  );
+
+  /**
+   * Collapse or expand one subtree.
+   *
+   * The cursor rule is the part worth stating: closing a subtree the cursor is
+   * inside would leave the next `j` resuming from a row nobody can see, so the
+   * cursor comes up to the parent that just closed. Whether it is still visible
+   * is asked of `backlogOrder` itself rather than re-derived from `parent`
+   * links here — one answer, and it cannot disagree with what the table draws.
+   */
+  const setCollapse = useCallback(
+    (key: string, next: boolean) => {
+      if (collapsed.has(key) === next) return;
+      const updated = new Set(collapsed);
+      if (next) updated.add(key);
+      else updated.delete(key);
+      setCollapsed(updated);
+
+      if (!next || !selected) return;
+      const visible = backlogOrder(filtered, updated);
+      if (!visible.some(({ item }) => item.key === selected)) setSelected(key);
+    },
+    [collapsed, filtered, selected],
+  );
+
+  const toggleCollapse = useCallback(
+    (key: string) => setCollapse(key, !collapsed.has(key)),
+    [collapsed, setCollapse],
+  );
+
+  /**
+   * ← and → on the backlog. A row with no children is left alone rather than
+   * added to the set: it would hide nothing today and quietly hide something
+   * the day it gains a child.
+   *
+   * Reports whether it did anything, so the handler can leave the key alone
+   * otherwise — the board is six columns wide and `.content` scrolls, and
+   * swallowing → there would take away the only way to scroll it from the
+   * keyboard.
+   */
+  const collapseSelected = useCallback(
+    (next: boolean): boolean => {
+      if (view !== "backlog" || !selected) return false;
+      const row = backlogRows.find(({ item }) => item.key === selected);
+      if (!row?.hasChildren) return false;
+      setCollapse(selected, next);
+      return true;
+    },
+    [view, selected, backlogRows, setCollapse],
   );
 
   // Keep the highlighted row on screen. Scoped to `.content` because the view
@@ -311,6 +385,14 @@ export function App(): React.JSX.Element {
           event.preventDefault();
           move(-1);
           return;
+        case "h":
+        case "ArrowLeft":
+          if (collapseSelected(true)) event.preventDefault();
+          return;
+        case "l":
+        case "ArrowRight":
+          if (collapseSelected(false)) event.preventDefault();
+          return;
         case "Enter":
           if (selected) {
             event.preventDefault();
@@ -361,7 +443,17 @@ export function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlaid, detailKey, selected, selectedItem, move, open, handleDelete, vault]);
+  }, [
+    overlaid,
+    detailKey,
+    selected,
+    selectedItem,
+    move,
+    open,
+    collapseSelected,
+    handleDelete,
+    vault,
+  ]);
 
   const onProjectDrop = (target: ProjectSummary): void => {
     if (!dragProject || dragProject === target.key) return;
@@ -712,7 +804,13 @@ export function App(): React.JSX.Element {
 
         <div className="content">
           {view === "backlog" && (
-            <BacklogTable items={filtered} selected={selected} onSelect={open} />
+            <BacklogTable
+              items={filtered}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapse}
+              selected={selected}
+              onSelect={open}
+            />
           )}
           {view === "board" && (
             <Board

@@ -444,6 +444,41 @@ button:focus-visible {
   font-family: var(--mono);
 }
 
+/* The twisty and the blank a childless row gets in its place must be the same
+   width, or sibling summaries start at two different offsets. */
+.twisty,
+.twisty-gap {
+  display: inline-block;
+  width: 16px;
+  margin-right: 2px;
+  text-align: center;
+}
+
+.twisty {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  /* A backlog row is 36px tall with a 22px content box, so these 20px cost
+     nothing — the row height is identical with the button and without it. The
+     9px it started at was a target you had to aim at, for no gain. */
+  height: 20px;
+  line-height: 20px;
+  vertical-align: middle;
+  /* Larger than the 12.5px table because ▸/▾ are the *small* triangle
+     codepoints — most of their em is whitespace, so at 10px they read as a
+     speck of dust rather than a control. The full-size ▶/▼ would carry their
+     weight at 11px, but those have emoji presentation variants and can come
+     out as a colour emoji on a machine whose font stack disagrees. */
+  font-size: 16px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.twisty:hover {
+  color: var(--text);
+}
+
 /* ---------------------------------------------------------------- pieces */
 .pill {
   display: inline-flex;

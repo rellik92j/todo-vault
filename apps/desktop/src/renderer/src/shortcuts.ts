@@ -28,6 +28,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["/"], label: "Focus the filter box", group: "Navigation" },
   { keys: ["j", "↓"], label: "Next item", group: "Navigation" },
   { keys: ["k", "↑"], label: "Previous item", group: "Navigation" },
+  { keys: ["h", "←"], label: "Collapse the subtree (backlog)", group: "Navigation" },
+  { keys: ["l", "→"], label: "Expand the subtree (backlog)", group: "Navigation" },
   { keys: ["Enter"], label: "Open the highlighted item", group: "Navigation" },
   { keys: ["Esc"], label: "Close panel or overlay", group: "Navigation", whileTyping: true },
 
