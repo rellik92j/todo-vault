@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CADENCES,
   ITEM_TYPES,
@@ -22,6 +22,7 @@ import {
 import {
   Cadence as CadencePill,
   STATUS_LABELS,
+  StatusPill,
   isOverdue,
   legalParents,
   legalTransitions,
@@ -62,9 +63,14 @@ export function ItemDetail({
   onDelete: (item: Item) => void;
   mutate: (call: () => Promise<Result<VaultSnapshot | null>>) => Promise<string | null>;
 }): React.JSX.Element {
-  const [related, setRelated] = useState<{ children: Item[]; backlinks: Item[] }>({
+  const [related, setRelated] = useState<{
+    children: Item[];
+    backlinks: Item[];
+    linked: Record<string, Status | null>;
+  }>({
     children: [],
     backlinks: [],
+    linked: {},
   });
   const [comment, setComment] = useState("");
   const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
@@ -74,6 +80,16 @@ export function ItemDetail({
   const [sourceDescription, setSourceDescription] = useState(false);
 
   const ticked = isTickedFor(item, todayIso());
+
+  /**
+   * Which of the keys on this panel the rest of the window agrees exist.
+   *
+   * `related` is resolved in main, over the whole vault, so it can name an item
+   * in a hidden project — deliberately, but it means a row here can be one the
+   * sidebar, the backlog and the board all say is not there. Clicking it would
+   * close this panel rather than move it, so the row says so first.
+   */
+  const inWindow = useMemo(() => new Set(items.map((i) => i.key)), [items]);
 
   useEffect(() => {
     let live = true;
@@ -375,7 +391,7 @@ export function ItemDetail({
                 <button type="button" className="row" key={child.key} onClick={() => onSelect(child.key)}>
                   <span className="cell-key">{child.key}</span>
                   <span className="row-summary">{child.summary}</span>
-                  <span className="pill">{STATUS_LABELS[child.status]}</span>
+                  <RelatedStatus status={child.status} inWindow={inWindow.has(child.key)} />
                 </button>
               ))}
             </div>
@@ -465,6 +481,17 @@ export function ItemDetail({
                   </>
                 )}
               </span>
+              {/*
+                Only `item` links have a status to carry — a url or a folder is
+                not work in progress. The lookup can miss in two different ways
+                and RelatedStatus tells them apart.
+              */}
+              {link.type === "item" && (
+                <RelatedStatus
+                  status={related.linked[link.target]}
+                  inWindow={inWindow.has(link.target)}
+                />
+              )}
               <button
                 className="clear-btn"
                 title="Remove link"
@@ -526,6 +553,7 @@ export function ItemDetail({
                 <button type="button" className="row" key={source.key} onClick={() => onSelect(source.key)}>
                   <span className="cell-key">{source.key}</span>
                   <span className="row-summary">{source.summary}</span>
+                  <RelatedStatus status={source.status} inWindow={inWindow.has(source.key)} />
                 </button>
               ))}
             </div>
@@ -565,6 +593,47 @@ export function ItemDetail({
         </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * A related item's status, in the colour every other view says it in.
+ *
+ * One component for all three sections, so Children, Links and "Linked from"
+ * cannot end up disagreeing about what a missing or an out-of-window target
+ * looks like.
+ *
+ * Three states, and they are three because collapsing any two of them lies.
+ * `undefined` is the map not having answered yet: `getRelated` is a round trip
+ * and this panel renders before it lands, so reading "no status" as "deleted"
+ * would flash `missing` on every open. `null` is the answer arriving and the
+ * target being gone — `addLink` validates the target exists and `doctor` checks
+ * for dangling item links anyway, because deleting the other end still happens,
+ * and a link that has lost its item should say so rather than leave a
+ * pill-shaped hole. Anything else is a status.
+ *
+ * `inWindow` is the other question, and it has a different source on purpose:
+ * the status comes from main, which holds the whole vault, while this comes
+ * from the `items` prop, which is what this window admits exists. Without the
+ * note a real status would imply a row you can click through to, and clicking
+ * one whose project is hidden closes the panel instead. Same split the parent
+ * field makes with `offProject`, for the same reason — name the key you could
+ * not place rather than go blank.
+ */
+function RelatedStatus({
+  status,
+  inWindow,
+}: {
+  status: Status | null | undefined;
+  inWindow: boolean;
+}): React.JSX.Element | null {
+  if (status === undefined) return null;
+  if (status === null) return <span className="field-note">missing</span>;
+  return (
+    <>
+      <StatusPill status={status} />
+      {!inWindow && <span className="field-note">not shown here</span>}
+    </>
   );
 }
 

@@ -170,9 +170,36 @@ export class VaultService extends EventEmitter {
       }));
   }
 
-  getRelated(key: string): { children: Item[]; backlinks: Item[] } {
+  /**
+   * Everything else in the vault that points at this item, or that it points at.
+   *
+   * The `linked` map is the part the renderer cannot work out for itself: an
+   * `item` link is a key, and the only list the panel has is the one this
+   * window admits exists. Resolving here means a link into a hidden project
+   * still reports its real status, at the price of this panel showing
+   * relationships across a boundary every other view honours — which is the
+   * bargain `backlinks` already struck, since it does not filter them either.
+   *
+   * `hasItem` rather than a try around `getItem`, in both places: `children`
+   * and `backlinks` return empty for a key that is gone rather than throwing,
+   * and a panel still open on an item deleted a moment ago should keep getting
+   * an answer rather than an error banner on its way out.
+   */
+  getRelated(key: string): {
+    children: Item[];
+    backlinks: Item[];
+    linked: Record<string, Status | null>;
+  } {
     const vault = this.requireVault();
-    return { children: vault.children(key), backlinks: vault.backlinks(key) };
+    const linked: Record<string, Status | null> = {};
+    const links = vault.hasItem(key) ? vault.getItem(key).links : [];
+    for (const link of links) {
+      if (link.type !== "item") continue;
+      linked[link.target] = vault.hasItem(link.target)
+        ? vault.getItem(link.target).status
+        : null;
+    }
+    return { children: vault.children(key), backlinks: vault.backlinks(key), linked };
   }
 
   // ----------------------------------------------------------- mutations

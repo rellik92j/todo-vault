@@ -120,8 +120,28 @@ export interface VaultApi {
 
   listItems(filter: Partial<ItemFilter>): Promise<Result<{ total: number; items: Item[] }>>;
   getAgenda(scope: AgendaScope): Promise<Result<AgendaView[]>>;
-  /** Children and backlinks for the detail panel. */
-  getRelated(key: string): Promise<Result<{ children: Item[]; backlinks: Item[] }>>;
+  /**
+   * Children, backlinks, and the statuses behind this item's `item` links, for
+   * the detail panel.
+   *
+   * `links` records a key, not an item, so a status has to be resolved from
+   * somewhere and the renderer is the wrong place: it holds `visibleItems`,
+   * which drops hidden projects, so a link pointing into one would resolve to
+   * nothing and the absent pill would read as "no status" rather than "not
+   * shown here". Main holds the whole vault, so it resolves them here — which
+   * is what `backlinks` already does, unfiltered, for the same panel.
+   *
+   * `null` means the target is gone. `addLink` validates that it exists and
+   * `doctor` checks for dangling item links anyway, because deleting the other
+   * end still happens.
+   */
+  getRelated(key: string): Promise<
+    Result<{
+      children: Item[];
+      backlinks: Item[];
+      linked: Record<string, Status | null>;
+    }>
+  >;
 
   /** Reveal an item's markdown, or an attachment, in the OS file manager. */
   revealPath(target: { kind: "item" | "attachment" | "vault"; value?: string }): Promise<Result<null>>;

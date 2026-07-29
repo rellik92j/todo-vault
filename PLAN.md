@@ -500,6 +500,71 @@ screenshotted in both colour schemes: this machine reports
 `prefers-color-scheme: light`, so the dark on-state would otherwise have gone
 unlooked-at on the strength of `--accent-dim` being defined in both blocks.
 
+## The detail panel's related items carry the status colour ✅ built and driven
+
+Promoted out of IDEAS.md. `StatusPill` was already the one place a status
+becomes a colour, and every view used it except the one screen devoted to a
+single item's relationships: Children drew the lozenge without the `.dot`, and
+Links and "Linked from" carried no status at all.
+
+Children and backlinks were free — `getRelated` already hands back full `Item`s.
+The Links section is where the decision was, because `item.links` records a key,
+not an item.
+
+**Statuses for `item` links are resolved in main, against the whole vault.** The
+renderer looked like the obvious place and is the wrong one: `ItemDetail`'s
+`items` prop is `visibleItems`, which drops hidden projects, so a link pointing
+into one would resolve to nothing and the absent pill would read as "no status"
+rather than "not shown here". `vault-service` holds the vault unfiltered, and
+this is the precedent `backlinks` already set — `vault.backlinks()` does not
+filter hidden projects either, so this panel could already name an item the rest
+of the window says is not there.
+
+So this panel shows relationships across a boundary every other view honours.
+That is now chosen rather than inherited, and it is paid for on screen: a row
+whose key is not in `items` gets a `not shown here` note. Clicking such a row
+still closes the panel — `App`'s `gone(detailKey)` recovery drops a selection
+outside `visibleItems` — and that papercut predates this and stays. The note is
+what makes it legible before the click rather than after it.
+
+**Three states, because collapsing any two of them lies.** `getRelated` returns
+`Record<string, Status | null>`, and `RelatedStatus` reads it as:
+
+- `undefined` — the round trip has not answered. Not a hypothetical: the panel
+  renders before the IPC lands, so treating "no status" as "deleted" flashed
+  `missing` on every open.
+- `null` — answered, and the target is gone. `addLink` validates the target
+  exists and `doctor` checks for dangling item links anyway, because deleting
+  the other end still happens; the row says `missing` rather than leaving a
+  pill-shaped hole.
+- a `Status` — the pill, in the same colour every other view uses.
+
+One component for all three sections, so they cannot drift apart on what a
+missing or an out-of-window target looks like. The two questions have different
+sources on purpose — the status from main, which holds everything; `inWindow`
+from the `items` prop, which is what this window admits exists. Same split the
+parent field makes with `offProject`.
+
+**No CSS.** `.link-row` is a left-packed flex row with no `margin-left: auto` on
+`.clear-btn`, so the pill drops into the existing gap; `.row` already ends with
+a pill everywhere else; `.field-note` already existed.
+
+**Driven in the real app** against a fixture vault holding all three cases at
+once — five children in five statuses, a link to a deleted item, and a link plus
+a backlink into a hidden project. Worth recording how, because the usual recipe
+did not apply: `playwright-core` is not installed, so instead of
+`_electron.launch` the driver spawns Electron with `--remote-debugging-port` and
+speaks CDP over Node's global `WebSocket`. No new dependency. The isolated
+`--user-data-dir` is still the load-bearing part, and it doubles as the way in:
+seeding `settings.json` under it points the app at the fixture vault without
+touching the first-run picker.
+
+Building that fixture turned up a rule worth knowing: **`project hide` refuses
+while any item is open**, so a hidden project reached by the normal path only
+ever contains closed work. The `in_progress` item behind the curtain had to be
+closed, hidden, then reopened via the CLI — which is exactly the cross-boundary
+write the parent field's `offProject` comment already describes.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
