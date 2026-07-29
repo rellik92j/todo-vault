@@ -59,8 +59,10 @@ data. Two options:
 npm run seed -- ./vault
 ```
 
-builds the worked example vault (two projects, an epic, recurring items,
-example links) — good for exploring the app.
+builds the worked example vault — three projects and fifteen items, covering an
+epic with children, recurring items with completion history, every link type, a
+hidden project, and both ways an item can close. Good for exploring the app,
+and it's what the UI is developed against.
 
 Or point the desktop app's first-run picker at a different folder if you're
 bringing your own vault across from another machine (copy it separately; it's
@@ -83,6 +85,9 @@ This builds the core and opens the desktop app.
 - **Git history**: the sidebar shows a "history on / history off" dot for the
   open vault. Run `npm run vault -- git-status --vault ./vault` for detail if
   it's off and you expected it on.
+- **Press `?`** for every keyboard shortcut. Ctrl+`+`/`−`/`0` size the text, and
+  the level is remembered across launches — worth setting once on a new display
+  rather than squinting at the default.
 
 ## Updating an existing copy
 
@@ -103,7 +108,7 @@ outside the repo, so pulling never touches them.
 ```bash
 npm run dev            # build core, launch the app
 npm run build           # both workspaces
-npm test                # core test suite
+npm test                # both workspaces — 53 core tests, 9 desktop
 npm run typecheck       # both workspaces
 npm run vault -- agenda week --vault ./vault   # CLI, run from repo root
 ```

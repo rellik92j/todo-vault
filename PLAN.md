@@ -1,12 +1,16 @@
 # Plan: the Electron desktop shell
 
-Stack is decided: **Electron**. This is the plan for phases 3, 4, and 6.
+Stack is decided: **Electron**. This started as the plan for the desktop shell
+and has become the log of what was built and why each call was made.
 
-**Phases 0, 0.5, and 0.6 are complete.** Node 24.18 is installed, the tree is
-split into `src/` and `test/`, both git repos exist, the example vault is seeded,
-and the suite is at 36 green tests. Ranking for items and projects, trash-based
-deletion, the full set of project operations, and the three-way agenda split are
-in the core, the CLI, and the MCP server. Phase 1 onwards is the remaining work.
+**Phases 0 through 4 are complete**, plus the run of smaller features recorded
+below them. The suite is at 62 green tests — 53 in the core, 9 over the app's
+`ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
+carries `vault jira discover` with it.
+
+Two other documents hold work this one does not: `PLAN-LINKS.md` designs
+OneDrive-aware links, of which the first half has shipped, and `IDEAS.md` holds
+what has not been scheduled. Ideas are promoted out of it into sections here.
 
 ## Phase 0 — make the existing code run ✅
 
@@ -247,7 +251,9 @@ row does not already display.
 
 **Fifteen shortcuts, generated from one registry.** `shortcuts.ts` is read by
 both the handler and the `?` overlay, because a hand-written cheatsheet drifting
-from the handler is the standard way this feature rots.
+from the handler is the standard way this feature rots. (Twenty now: collapse
+added `h`/`l` and zoom added a Display group. The registry earning its keep is
+the point — every one of those five appeared in the overlay for free.)
 
 **The cursor is not the selection.** The detail panel is `position: fixed` over
 the right 520px, so if `j` also opened it, every keystroke would slide a panel
@@ -348,6 +354,116 @@ Two decisions in it:
 The Jira side is a mapping, not a feature: `jira-map.example.yaml` gains a
 `disregard` transition, commented, because "Won't Do" is the common name for it
 and not a guaranteed one.
+
+## Openable `file` and `folder` links ✅ — the first half of `PLAN-LINKS.md`
+
+Steps 1 and 2 of that document's build order, which it says are worth landing on
+their own. `file` and `folder` links rendered as dead text and attachments only
+*revealed* in Explorer; both now open, through a single `openTarget` channel in
+main.
+
+The scheme allowlist came first, because it closes a live hole rather than adding
+a feature: `setWindowOpenHandler` passed anything to `shell.openExternal`, and a
+description or a link target can be written by an external Claude or by Notepad.
+The link form now refuses a scheme off that list while you are still looking at
+it, rather than storing one that could never be followed. Attachments keep an
+extension refusal list on top, since opening is a stronger act than revealing.
+
+**Steps 3–5 are not built** — `classifyLinkTarget`, `syncedRoots`, and the
+OneDrive routing on drop. That is the half that actually prevents a synced
+document being copied into `attachments/` and quietly forking, and `PLAN-LINKS.md`
+is explicit that 3 alone would look finished and prevent nothing.
+
+## Descriptions render as markdown, and edit as formatting ✅
+
+An item's description *is* the markdown body of its file, and the create dialog
+says so, but the panel passed it to `EditableText`, whose read mode is a button
+holding the raw string — so every newline, bullet and heading collapsed the
+moment you clicked away. The formatting survived on disk and survived a push to
+Jira; it disappeared only where you read it.
+
+**The grammar was not an open question.** `markdownToAdf` already defined which
+markdown this project honours, so rather than a second, subtly different parser
+for the renderer, it moved into `description.ts` — import-free, read by the app,
+the ADF converter and the editor's schema alike. The panel cannot show, and the
+toolbar cannot produce, formatting the push would drop.
+
+**The risk this is built around is the round trip, not the editor.** These files
+are written by things that are not this app, and `--git` commits every write, so
+an editor that normalised on the way out would restyle prose its author wrote
+deliberately and fill the history with commits nobody typed.
+`isLosslessDescription` asks whether this exact text survives a parse and a write
+byte for byte; only then is the rich editor offered, and anything else opens in a
+plain markdown box saying why. Lossless or plain text, never lossy.
+
+One deliberate departure reaches Jira: a newline inside a paragraph is a break
+rather than a soft wrap, in the app and in the ADF alike, because people type
+descriptions in a box and mean the line breaks they put there.
+
+Three things only driving it caught, all of them collisions with a host element
+rather than with the grammar: TipTap binds Mod-Enter to `hardBreak`, so Ctrl+Enter
+deleted the selected word before the save handler ran — the three keys this field
+claims are taken during capture now; a `<label>` around the field forwarded a
+click on the prose to the source toggle, because a contenteditable is not a form
+control and there was nothing else for the label to point at; and a selection that
+took the trailing space with the word wrote `**bold **text`, which our parser
+reads and CommonMark rejects. The space belongs to the sentence, not to the mark.
+
+## Zoom, owned by the app rather than by Electron's default menu ✅
+
+Ctrl+`−` zoomed out and Ctrl+`=` did nothing, which reads as a broken app rather
+than an undiscovered chord. Neither key was ours: the default menu is still there
+behind `autoHideMenuBar`, and its `zoomIn` role binds `CommandOrControl+Plus` — a
+character a US layout only produces with Shift held.
+
+`zoom.ts` claims the keys in main via `before-input-event`, which is what lets
+them work with a text field focused; `preventDefault` also suppresses the menu's
+own accelerator, so Ctrl+`−` is not applied twice. Both the physical `code` and
+the produced `key` are matched, so layouts that move plus and minus still work.
+The level is clamped to 58%–207% — past the ceiling the 900px minimum window
+width starts clipping the board — saved to `settings.json` debounced so
+auto-repeat does not hammer the file that also holds `vaultRoot`, and reapplied
+on load, since Chromium keys its own zoom to a host and neither `file://` nor
+localhost carries one worth trusting.
+
+## Recurring work completes with a tick, not a status change ✅
+
+Recurring items did not recur. `cadence` was a static tag that nothing read to
+generate a next occurrence, and `agenda()` filters to open items, so marking a
+daily task done removed it permanently. The only pattern that worked was leaving
+recurring items in `todo` forever — which meant no record of whether the thing
+was ever actually done.
+
+That record had nowhere durable to live. The file carried `status`, a single slot
+holding the current state rather than the fact that a completion happened, and
+`updated`, which every edit bumps. Git was the sole history, and it is
+deliberately optional here; even with it on, `updateItem` committed the literal
+string `Update ${key}`, so a completion was indistinguishable from fixing a typo.
+
+So completions live in the item's own frontmatter and status is left alone. **A
+tick is not a transition**: `done` still means retire this item, which is right
+when you drop a habit and wrong when you perform one. `tickItem` is idempotent,
+because a double-click on a checkmark should not be a failure state, and
+`untickItem` exists because a checkmark with no undo is a trap.
+
+**The agenda rule is the part worth stating.** An item drops out of a window when
+it is ticked for its current period *and* that period runs to the end of the
+window. The simpler rule — ticked means hide it — is wrong in a way that is easy
+to miss: doing today's daily task would empty the weekly agenda of it too, even
+though it comes round again tomorrow, well inside that window.
+
+Period arithmetic moved to `recurrence.ts`, which imports nothing, for the reason
+`constants.ts` and `description.ts` are shaped that way: the renderer decides
+whether to draw a row as ticked, and taking that from `util.ts` would pull
+`node:fs` into a browser bundle. Reimplementing it renderer-side was the
+alternative, and a tick the agenda and the UI disagree about is worse than no
+tick. `completions` is absent from `pushableFields`, so a tick never marks a
+pushed item as drifted.
+
+The checkmark is in the agenda and the detail panel, **not on board cards**:
+those sit inside a dnd-kit draggable, where a nested button competes with the
+drag handler for the pointer. The cadence pill shows ticked state everywhere
+instead, so a card still says whether this week's report is handled.
 
 ## Collapsing a subtree in the backlog ✅ built and driven
 
@@ -815,7 +931,8 @@ take. Recorded rather than closed, because it was not reproduced.
 
 ## Phase 0.6 — parity across the three surfaces ✅
 
-**MCP is level with the CLI again**, at 23 tools from 13. The ten additions are
+**MCP is level with the CLI again**, at 23 tools from 13 — 26 today, after
+`hide_project`, `unhide_project` and `tick_item`. The ten additions are
 `move_item`, `delete_item`, `restore_item`, `list_trash`, `update_project`,
 `rename_project`, `reorder_project`, `move_item_to_project`, `delete_project`,
 `restore_project`.
@@ -859,6 +976,15 @@ but left `due` and `overdue` double-listing the same three items.
 
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
+
+**The OneDrive half of `PLAN-LINKS.md` is designed and not built.** Links and
+attachments open, which was steps 1–2; a synced document can still be copied into
+`attachments/` and fork from the original, which is what steps 3–4 exist to
+prevent.
+
+**`reporter` is not pushed to Jira**, and editing it does not even mark an item as
+drifted — see the reporter section above for why that is a decision to make
+against a live instance rather than a gap to close now.
 
 **Recurring items showing a due date outside the window** — fixed in Phase 3.
 OPS-2 now reads `↻ weekly · due 2026-07-29 · after this window` under "recurring

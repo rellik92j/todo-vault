@@ -12,7 +12,13 @@ Two asks, which are less related than they look:
 Ask 2 is the one with the traps in it. Read the *Problems and gotchas* section
 before writing any code — three of them change what should be built.
 
-## Where things stand today
+> **Status: ask 1 is built, ask 2 is not.** Steps 1–2 of the build order shipped —
+> the scheme allowlist and the `openTarget` channel, so `file` and `folder` links
+> and attachment rows open on click. Everything about OneDrive below (steps 3–5,
+> and gotchas 1–3 and 9–11) is still a design, not a description. The table below
+> is left as it was written, as the record of what the code looked like before.
+
+## Where things stood before ask 1
 
 | | |
 |---|---|
@@ -22,6 +28,10 @@ before writing any code — three of them change what should be built.
 | Attachments | Button that **reveals** in Explorer, does not open ([ItemDetail.tsx:374](apps/desktop/src/renderer/src/ItemDetail.tsx:374) → `CHANNELS.revealPath` → `shell.showItemInFolder`) |
 | Attach from disk | `attachViaDialog(key, copy)` — "copy in" or "link in place"; `copy: false` writes a `file` link instead ([vault.ts:649](packages/core/src/vault.ts:649)) |
 | Drag and drop | Always `copy: true`, hardcoded ([ItemDetail.tsx:88](apps/desktop/src/renderer/src/ItemDetail.tsx:88)) |
+
+The first four rows are now the `openTarget` channel in `main/index.ts`, and
+reveal is kept alongside open rather than replaced, per gotcha 7. The last two
+are unchanged, and they are where ask 2 lives.
 
 So the *storage* side of ask 2 already exists — `copy: false` is exactly "point
 at it, don't duplicate it". What is missing is that nothing knows a OneDrive path
@@ -211,7 +221,7 @@ of adding links.
   visible note saying that is what happened and why.
 - Failed opens surface as the existing error toast rather than a dead click.
 
-**Tests** (`packages/core/test/vault.test.ts` — 36 green today, keep it green)
+**Tests** (`packages/core/test/vault.test.ts` — 53 green today, keep it green)
 
 `isSyncedPath` on nested/sibling/case-differing roots; `classifyLinkTarget`
 across the three OneDrive URL shapes plus a plain SharePoint library and a
@@ -221,8 +231,10 @@ accepting `copy: false`; the extension refusal list; unchanged behaviour when
 
 ## Order to build it
 
-1. Scheme allowlist on `setWindowOpenHandler` — smallest, and closes a live hole.
-2. `openTarget` channel + clickable `file`/`folder`/attachment rows. This is
+1. ✅ Scheme allowlist on `setWindowOpenHandler` — smallest, and closes a live
+   hole. It also guards links inside a rendered description, which arrived after
+   this was written and can be authored by anything with a text editor.
+2. ✅ `openTarget` channel + clickable `file`/`folder`/attachment rows. This is
    ask 1 whole, and it does not depend on anything below.
 3. `classifyLinkTarget` + the OneDrive option in the link form. Ask 2, web half.
 4. `syncedRoots` + the `addAttachment` rule + the drop-handler routing. Ask 2,
