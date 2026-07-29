@@ -56,6 +56,8 @@ test("round-trips an item through disk without losing fields", async () => {
     cadence: "weekly",
     category: "Procurement",
     labels: ["vendor", "legal"],
+    assignee: "Sam Okafor",
+    reporter: "Priya Raman",
   });
 
   const reopened = await Vault.open(vault.root);
@@ -64,7 +66,65 @@ test("round-trips an item through disk without losing fields", async () => {
   assert.equal(loaded.dueDate, "2026-08-14");
   assert.equal(loaded.cadence, "weekly");
   assert.deepEqual(loaded.labels, ["vendor", "legal"]);
+  assert.equal(loaded.assignee, "Sam Okafor");
+  assert.equal(loaded.reporter, "Priya Raman");
   assert.match(loaded.description, /legal review/);
+});
+
+/*
+ * Reporter is set from three surfaces that cannot see each other — the app's form,
+ * the CLI's --reporter, and the MCP server's tool schema — so the field is only
+ * useful if a name typed into one is findable from another. These cover the two
+ * ways it gets read back: the filter, and free-text search.
+ */
+test("filters by reporter, folding case the way the app's menu does", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "Raised properly", reporter: "John Doe" });
+  await vault.createItem({ project: "ACME", summary: "Raised again", reporter: "john doe" });
+  await vault.createItem({ project: "ACME", summary: "Someone else", reporter: "Priya Raman" });
+  await vault.createItem({ project: "ACME", summary: "Nobody asked" });
+
+  const summaries = (reporter: string): string[] =>
+    vault
+      .listItems({ reporter })
+      .items.map((i) => i.summary)
+      .sort();
+
+  // knownReporters offers one menu entry per person, so both spellings have to
+  // come back however the filter value was capitalised — otherwise picking a name
+  // off that menu silently hides half of what it claims to match.
+  assert.deepEqual(summaries("john doe"), ["Raised again", "Raised properly"]);
+  assert.deepEqual(summaries("JOHN DOE"), ["Raised again", "Raised properly"]);
+  assert.deepEqual(summaries("  John Doe  "), ["Raised again", "Raised properly"]);
+  assert.deepEqual(summaries("Priya Raman"), ["Someone else"]);
+  assert.deepEqual(summaries("Nobody"), [], "an unused name matches nothing, not everything");
+
+  // The point of the field: a name in `reporter` is queryable, where the same name
+  // buried in the description prose would only ever surface by accident.
+  assert.deepEqual(
+    vault
+      .listItems({ text: "priya" })
+      .items.map((i) => i.summary),
+    ["Someone else"],
+  );
+});
+
+test("reporter survives an update, and null clears it", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({
+    project: "ACME",
+    summary: "Check who asked",
+    reporter: "Priya Raman",
+  });
+
+  const renamed = await vault.updateItem(item.key, { reporter: "Sam Okafor" });
+  assert.equal(renamed.reporter, "Sam Okafor");
+
+  const cleared = await vault.updateItem(item.key, { reporter: null });
+  assert.equal(cleared.reporter, undefined);
+
+  const reopened = await Vault.open(vault.root);
+  assert.equal(reopened.getItem(item.key).reporter, undefined, "the clear has to reach disk");
 });
 
 test("writes stable frontmatter in a fixed key order", async () => {

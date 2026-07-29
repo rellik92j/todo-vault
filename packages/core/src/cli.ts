@@ -83,7 +83,7 @@ Item options for new/set:
   --type epic|story|task|bug|subtask   --status ${STATUSES.join("|")}
   --priority highest|high|medium|low|lowest
   --parent KEY      --category TEXT    --labels a,b,c
-  --assignee NAME   --start YYYY-MM-DD --due YYYY-MM-DD
+  --assignee NAME   --reporter NAME    --start YYYY-MM-DD --due YYYY-MM-DD
   --cadence daily|weekly|monthly|quarterly|none
   --estimate N      --description TEXT
 

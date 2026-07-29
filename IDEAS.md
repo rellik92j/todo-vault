@@ -8,6 +8,89 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## OneDrive links through the MCP server, not pasted into the description
+
+The OneDrive design is already written — `PLAN-LINKS.md` ask 2, gotchas 1–3 and
+9–11, build steps 3–4, none of it built. This entry is not that design restated.
+It is the one surface that design deliberately leaves out, and the reason that
+exclusion is worth reopening.
+
+Gotcha 2 rules that sync-root detection is Windows-shaped and machine-local, so
+the roots get passed into the core as `VaultOptions.syncedRoots` and the desktop
+main process is the thing that discovers them. The proposed shape then says the
+option is "empty by default, so CLI/MCP behaviour is unchanged", and calls that
+the honest outcome. It was the right call for a doc scoped to the app. But the
+MCP server is arguably the *likeliest* surface to be handed a OneDrive path —
+nobody drags a file into a chat, they paste
+`C:\Users\bisch\OneDrive - Contoso\Docs\plan.xlsx` as text — and with
+`syncedRoots` empty, `vault_attach_file` defaults to `copy: true` and makes the
+diverging second copy that ask 2 exists to prevent. The desktop app would refuse.
+The agent won't, silently, on the path the user is most likely to use.
+
+The web half fails differently, and this is the part that prompted writing it
+down. `vault_link_item` already accepts `type: 'url'` with any target, so an
+agent *can* record a share URL correctly today — nothing in the tool description
+tells it that it should. So the model does the obvious thing and writes the URL
+into the markdown description body instead, where it is not in `links`, never
+reaches the detail panel's link rows, and never goes through the Jira push's
+`url` handling. Not lost; filed somewhere that cannot be queried — the same shape
+of failure as a reporter buried in prose.
+
+The split worth noticing is that these two halves have very different costs.
+`classifyLinkTarget` is specified as a pure helper, testable without a
+filesystem, so the URL heuristic needs no configuration at all — the MCP server
+could have it the moment it exists. Only the local-path rule needs to be told
+where the sync roots are, and a headless server has no main process to ask. That
+is the open question this entry is really holding: an env var, a config key, or
+accepting that the local half stays app-only.
+
+Cheapest first step is neither: it is the two tool descriptions. `vault_link_item`
+describes `url` as "a web address", and `vault_attach_file` justifies `copy:
+false` only by "large files or files on a network share" — neither mentions
+synced cloud storage at all. Naming that case in both is a text edit, needs no
+schema change, and stays inside gotcha 3's ruling not to add a link type. It is
+guidance rather than a guard, so it does not replace the core rule — but it is
+the difference between a model that has been told and one that never had a
+chance.
+
+One thing to carry over from gotcha 11 rather than rediscover: share URLs are
+capability URLs, and an agent adding them in bulk to a vault that auto-commits to
+a remote is that concern multiplied. Still a note in `SCHEMA.md` rather than a
+mechanism, but decided knowingly.
+
+## "Requested by" is "Reporter" — the Claude draft box should know that
+
+The MCP half of this is built: `reporter` is now in `detail()`, in both write
+tools' `inputSchema`, and in `ItemFilter`, where it matches folded so `listItems`
+agrees with the app that "John Doe" and "john doe" are one person. What is left is
+the other surface that takes prose instead of form fields — the draft box.
+
+`DRAFT_SCHEMA` in `claude.ts` has no `reporter` property, so a note that says
+"Priya asked for this" has nowhere structured to put the name and the model does
+the reasonable thing: writes it into the description body, where `knownReporters`
+will never find it and the reporter filter will never match it. Not lost, filed
+where it cannot be queried — harder to notice *and* harder to correct than an
+empty field, which is why this is worth closing rather than leaving.
+
+The schema change itself is one property. `ItemDraft.input` is `CreateItemInput`,
+which already carries the field, and `stripEmpty` already treats `""` as absent
+exactly as it does for `category`, so nothing else on the main-process side moves.
+
+The trap is one layer up, and it is the reason this entry is still here rather
+than done. `CreateDialog.tsx` deliberately does *not* apply a draft's reporter,
+and says so: "the draft tool schema never asks Claude for one, so it has nothing
+to say about it, and a name typed before pressing Draft is still who asked for the
+work." Add the property without touching that and the drafted name is silently
+dropped — the same failure this entry exists to fix, one layer higher. The fix
+follows the precedent already beside it (`if (input.priority) setPriority(...)`):
+apply it only when non-empty, so a name typed before pressing Draft still survives
+a note that names nobody. The comment has to change with it.
+
+One thing not to do casually: don't accept `requestedBy` as a second key. One
+field, one key — the synonym belongs in the property description and the system
+prompt where the model reads it, not in a schema that would then need a rule for
+what happens when both arrive.
+
 ## "Turn on history" — a button that sets git up for the chosen vault
 
 Setting up history today is a manual sequence nobody should have to know: copy a

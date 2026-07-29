@@ -71,6 +71,7 @@ function detail(item: Item): Record<string, unknown> {
     ...summarize(item),
     description: item.description,
     assignee: item.assignee,
+    reporter: item.reporter,
     estimate: item.estimate,
     links: item.links,
     attachments: item.attachments,
@@ -131,9 +132,10 @@ Args:
   - status (string[], optional): any of ${STATUSES.join(", ")}
   - cadence ('daily'|'weekly'|'monthly'|'quarterly'|'none', optional)
   - category, label, assignee, parent (string, optional)
+  - reporter (string, optional): who asked for the work — also spoken as "requested by". Matched case-insensitively, so "john doe" finds "John Doe".
   - dueBefore / dueAfter (YYYY-MM-DD, optional)
   - open (boolean, optional): true excludes closed items — both 'done' and 'disregard'
-  - text (string, optional): case-insensitive match on summary and description
+  - text (string, optional): case-insensitive match on summary, description, category, labels, and reporter
   - limit (number, 1-500, default 100), offset (number, default 0)
 
 Returns: { total, count, offset, items: [{ key, type, summary, status, priority, dueDate?, ... }], has_more }
@@ -148,6 +150,7 @@ Don't use when: you want today's or this week's priorities — vault_get_agenda 
       category: z.string().optional(),
       label: z.string().optional(),
       assignee: z.string().optional(),
+      reporter: z.string().optional(),
       parent: itemKey.optional(),
       dueBefore: z.string().optional(),
       dueAfter: z.string().optional(),
@@ -313,6 +316,7 @@ Args:
   - priority (${PRIORITIES.join("|")}, default 'medium')
   - parent (string, optional): epic key for a story/task/bug, task key for a subtask
   - category, assignee (string, optional)
+  - reporter (string, optional): who asked for the work. Set this whenever the request names one — "Priya asked for this", "requested by Sam", "raised by the vendor" all mean reporter. A name left in the description body cannot be filtered or read back.
   - labels (string[], optional)
   - startDate / dueDate (YYYY-MM-DD, optional)
   - cadence (${CADENCES.join("|")}, default 'none'): marks this as a recurring daily/weekly/monthly item
@@ -332,6 +336,7 @@ Error handling: returns a message naming the valid options if the project does n
       parent: itemKey.optional(),
       category: z.string().max(60).optional(),
       assignee: z.string().max(120).optional(),
+      reporter: z.string().max(120).optional(),
       labels: z.array(z.string().max(60)).optional(),
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -359,6 +364,7 @@ server.registerTool(
 Args:
   - key (string, required)
   - summary, description, category, assignee (string, optional)
+  - reporter (string or null, optional): who asked for the work — "requested by", "asked for by", and "raised by" all mean this field. null clears it.
   - status (${STATUSES.join("|")}, optional)
   - priority (${PRIORITIES.join("|")}, optional)
   - parent (string or null, optional): null clears it
@@ -378,6 +384,7 @@ Status moves are validated against the workflow. If a move is rejected the error
       parent: itemKey.nullable().optional(),
       category: z.string().max(60).nullable().optional(),
       assignee: z.string().max(120).nullable().optional(),
+      reporter: z.string().max(120).nullable().optional(),
       labels: z.array(z.string().max(60)).optional(),
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
       dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),

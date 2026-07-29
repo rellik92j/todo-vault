@@ -100,6 +100,51 @@ Board columns are grouped by project and then by manual rank, since ranks are pe
 project — comparing two projects' rank numbers directly is meaningless, and doing
 so made a single drag look like it reshuffled everything.
 
+The backlog nests children under their parents, and a subtree folds shut from the
+twisty or with `h`/`←`. Collapse is view state — it lives in the window, never in
+the file, so nothing on disk learns an item was folded. The keyboard cursor walks
+the order the eye sees rather than the unfiltered array, which is why the
+collapsed set is held once at the top and passed into both, and why the cursor
+comes up to the parent when the subtree it was in closes.
+
+Five type chips filter the backlog and the board together. Empty means every
+type, so the unfiltered state is both the default and where turning the last chip
+off returns to. They are toggles rather than a select because "everything except
+subtasks" is one of the two things worth asking for and a select cannot say it.
+Filtering to a middle type flattens the tree — a matched task whose epic is
+filtered out is promoted to a root rather than hidden — which is the behaviour the
+backlog has had since Phase 1 for every other filter, and is now covered by a test
+so it reads as a decision rather than as a bug.
+
+**Reporter** — who asked for it — sits beside Assignee in the detail panel, on the
+create form, and as a filter. The suggestion menu is derived from the snapshot
+the renderer already holds, never stored: there is no second list on disk to fall
+out of sync with the items that are the actual source of truth. Typing draws on every item, hidden projects included,
+because hiding a project should not make a colleague un-nameable; filtering draws
+only on what this window shows, since a name used only inside a hidden project
+could return nothing but an empty view. Spellings that differ only in case are
+folded together for display and never rewritten on disk.
+
+The same field is set and read through `vault --reporter` and through the MCP
+server, which takes it on create, on update, and as a list filter, and returns it
+on every full record. The fold holds there too: `listItems` matches reporter
+case-insensitively, so the menu's claim that two spellings are one person stays
+true when an agent acts on it. Every tool description names "requested by" as a
+synonym, because a model handed prose has to land that phrase on this field rather
+than bury the name in the description body, where nothing can query it.
+
+Every relationship on the detail panel carries the status colour every other view
+uses — children, links, and backlinks alike. Statuses for item links are resolved
+in the main process against the whole vault rather than in the renderer, which
+only knows about visible projects; a target the window does not admit exists gets
+a `not shown here` note, and a deleted one reads `missing` rather than leaving a
+pill-shaped hole.
+
+`?` lists every shortcut, generated from the same registry the handler reads, so
+the cheatsheet cannot drift from the keys. Ctrl+`+`/`−`/`0` size the text and are
+claimed in the main process before the key reaches the page, which is what lets
+them work mid-sentence in a text field.
+
 The renderer imports runtime values from `todo-vault/constants`, never from the
 package root: the root pulls in `vault.ts` and with it `node:fs`, which cannot be
 bundled for a browser context. Types are erased, so those come from the root.
@@ -127,21 +172,24 @@ in one constant, `CLAUDE_MODEL` — `claude-sonnet-5`, because drafting one task
 from one sentence is structured extraction rather than reasoning. Drafting is off
 until a key is added, and the box says so rather than disappearing. Every draft
 is validated against `CreateItemInput` before it reaches the form, and it fills
-the form rather than writing: the confirmation step is the feature. The call
-itself is still unproven against the live API — nothing has been sent to
-Anthropic from this app — and `PLAN.md` lists what to check on the first real
-run.
+the form rather than writing: the confirmation step is the feature. The path is
+proven against the live API — a real key has been entered and a draft requested
+and returned — as a smoke test only; `PLAN.md` lists the specific behaviours
+(date resolution, project inference, what a vague prompt does) that a surprising
+draft is worth checking against.
 
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 53 core tests
+npm test               # 64 tests: 55 in the core, 9 over the app's ordering
 npm run typecheck      # both workspaces
 ```
 
-A worked example vault is included at `./vault` — two projects, an epic with
-stories, tasks, a subtask and a bug, recurring daily/weekly/monthly items, and
-examples of every link type. Rebuild it from scratch at any time:
+A worked example vault is included at `./vault` — three projects and fifteen
+items: an epic with stories, tasks, a subtask and a bug, recurring
+daily/weekly/monthly items, examples of every link type, both ways an item can
+close, a hidden project, and one item already pushed to Jira. Rebuild it from
+scratch at any time:
 
 ```bash
 npm run seed -- ./vault --force
@@ -173,12 +221,12 @@ done KEY                          Shorthand
 disregard KEY                     Close it as "not doing this"
 tick KEY [--on DATE] [--undo]     Recurring work: done for this period
 comment KEY "text"                Append to the running log
-link KEY --url|--item|--outlook X Link arbitrary content
+link KEY --url|--item|--file X    Link arbitrary content
 attach KEY <path> [--no-copy]     Attach a file
-agenda [today|week|month]         What needs attention
+agenda [today|week|nextWeek|month] What needs attention
 move KEY --after K --before K     Reorder by hand
 delete KEY [--cascade]            Move to .trash, recoverable
-trash                             List what is in .trash
+trash [--projects]                List what is in .trash
 restore FILE                      Bring one back
 git-status                        Whether writes are being committed
 jira plan [--out plan.json]       Reviewable push payload
@@ -186,9 +234,10 @@ jira csv  [--out issues.csv]      For Jira's CSV importer
 ```
 
 `list --sort rank` gives the manual order; the default `--sort work` gives the
-derived one (overdue, due date, priority). Deletes go to `.trash/` rather than
-being unlinked, so recovery does not depend on git being set up — run
-`git-status` to see whether it actually is.
+derived one (overdue, due date, priority). `link` takes any of six kinds —
+`--url`, `--item`, `--file`, `--folder`, `--outlook`, `--note`. Deletes go to
+`.trash/` rather than being unlinked, so recovery does not depend on git being
+set up — run `git-status` to see whether it actually is.
 
 ## Wiring up Claude
 
@@ -292,21 +341,29 @@ silently dropping your dates.
 npm test
 ```
 
-Forty-eight tests covering key allocation, disk round-trips, frontmatter
+Fifty-three tests over the core: key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
-backlinks, attachments, agenda sectioning, the description grammar in both
-directions — including that parsing survives a write unchanged, and that every
-description in the example vault is one the rich editor may touch — ADF
-conversion, push ordering, drift detection, manual reordering of both items and projects, trash and restore,
+ticking recurring work and the period it counts for, backlinks, attachments,
+agenda sectioning, the description grammar in both directions — including that
+parsing survives a write unchanged, and that every description in the example
+vault is one the rich editor may touch — ADF conversion, push ordering, drift
+detection, manual reordering of both items and projects, trash and restore,
 hiding and unhiding a project, project rename and cross-project moves, path
 portability, git health reporting, atomic writes, and which Windows rename
 failures are worth retrying.
 
+Nine more over the desktop app, on `ordering.ts` — the pure function behind the
+backlog's nesting, collapse, and type filtering. It gets tests because it is the
+one piece of renderer logic where a wrong answer is invisible: rows would simply
+not be where you expected, and the keyboard cursor would walk an order the eye
+never sees. `npm test` from the root runs both workspaces.
+
 ## What is not here yet
 
-- **A first real Claude call.** The drafting path is built and driven end to end,
-  but nothing has ever been sent to Anthropic from this app. `PLAN.md` says what
-  to check first, in order.
+- **OneDrive-aware attachments.** `file` and `folder` links and attachments open
+  on click, which was the first half of `PLAN-LINKS.md`; the second half — a
+  OneDrive file linked as OneDrive rather than copied into `attachments/` — is
+  designed and not built.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
 - **Renaming and deleting projects in the app.** They can be created from the
@@ -319,8 +376,10 @@ failures are worth retrying.
 ```
 packages/core/src/
 ├── schema.ts       zod schema — the source of truth
+├── constants.ts    the pure enums and TRANSITIONS, importable by a browser
 ├── markdown.ts     frontmatter with stable key ordering
 ├── description.ts  the description grammar, both ways, shared with the app
+├── recurrence.ts   which period a tick covers, and when the next one is due
 ├── util.ts         dates, hashing, atomic writes, rank arithmetic
 ├── vault.ts        core: load, validate, index, write atomically
 ├── jira.ts         field mapping, markdown→ADF, push plans
@@ -333,9 +392,23 @@ packages/core/scripts/
 
 apps/desktop/src/
 ├── shared/api.ts   the IPC contract, imported by both sides
-├── main/           Vault instance, chokidar watcher, IPC handlers
+├── main/           Vault instance, chokidar watcher, IPC handlers, key storage
 ├── preload/        contextBridge — the renderer's only way in
 └── renderer/       React: backlog, board, agenda, detail
+
+apps/desktop/test/
+└── ordering.test.ts  nesting, collapse, and type filtering
 ```
 
 Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.
+
+## The other documents
+
+| | |
+|---|---|
+| `SCHEMA.md` | The data model and the rules that hold it together |
+| `PLAN.md` | What was built, phase by phase, and why each call was made |
+| `IDEAS.md` | Unscheduled ideas, newest first — promoted into `PLAN.md` when built |
+| `PLAN-LINKS.md` | The design for OneDrive-aware links; first half built |
+| `PACKAGING.md` | Moving a working copy, and the plan for a real `.exe` |
+| `GETTING-STARTED.md` | Running it on a machine that has never seen it |
