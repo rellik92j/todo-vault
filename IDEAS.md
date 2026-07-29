@@ -8,6 +8,39 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## The detail panel's related items should carry the status colour
+
+`StatusPill` puts a dot in `var(--<status>)` beside the label, and the backlog,
+the agenda and the palette all use it. `ItemDetail` is the one place that does
+not. Its Children rows render `<span className="pill">{STATUS_LABELS[child.status]}</span>`
+— the lozenge without the `.dot` — so status arrives as grey text in a grey
+capsule, and the one screen devoted to a single item's relationships is the one
+screen where the colour is absent. The Links section's `item` rows and the
+"Linked from" rows carry no status at all, just a key and a summary.
+
+Two of the three are already free. `getRelated` hands back full `Item`s, so
+`child.status` and `source.status` are both in hand: Children wants `StatusPill`
+swapped in for the bare pill, and the backlink row wants the same element added.
+`pieces.tsx` exports it and `ItemDetail` already imports from there.
+
+The Links section is where the decision is. `item.links` are `{type, target,
+label}` records — a key, not an item — so a status has to be resolved from
+somewhere. The `items` prop looks like that somewhere and is the wrong answer:
+`App` passes `visibleItems`, which drops hidden projects, so a link pointing
+into one resolves to nothing and the absent pill reads as "no status" rather
+than "not shown here". The parent field hit this exact wall and settled it with
+`offProject` — render the key it could not place rather than go blank.
+
+Resolving in `getRelated` avoids it, since `vault-service` holds the whole vault
+unfiltered, and it matches what backlinks already do: `vault.backlinks()` does
+not filter hidden projects, so "Linked from" can already name an item the rest
+of the window says is not there. That is the precedent worth following, but it
+means deciding out loud that this panel shows relationships across a boundary
+every other view honours. And whatever resolves the key has to survive a target
+that has since gone: `addLink` validates the target exists, `doctor` checks for
+dangling item links because they happen anyway, and a link whose item is deleted
+should say so rather than leave a pill-shaped hole.
+
 ## "Turn on history" — a button that sets git up for the chosen vault
 
 Setting up history today is a manual sequence nobody should have to know: copy a
