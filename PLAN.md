@@ -4,7 +4,7 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 62 green tests — 53 in the core, 9 over the app's
+below them. The suite is at 64 green tests — 55 in the core, 9 over the app's
 `ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
 carries `vault jira discover` with it.
 

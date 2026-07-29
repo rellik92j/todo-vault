@@ -125,6 +125,14 @@ only on what this window shows, since a name used only inside a hidden project
 could return nothing but an empty view. Spellings that differ only in case are
 folded together for display and never rewritten on disk.
 
+The same field is set and read through `vault --reporter` and through the MCP
+server, which takes it on create, on update, and as a list filter, and returns it
+on every full record. The fold holds there too: `listItems` matches reporter
+case-insensitively, so the menu's claim that two spellings are one person stays
+true when an agent acts on it. Every tool description names "requested by" as a
+synonym, because a model handed prose has to land that phrase on this field rather
+than bury the name in the description body, where nothing can query it.
+
 Every relationship on the detail panel carries the status colour every other view
 uses — children, links, and backlinks alike. Statuses for item links are resolved
 in the main process against the whole vault rather than in the renderer, which
@@ -173,7 +181,7 @@ draft is worth checking against.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 62 tests: 53 in the core, 9 over the app's ordering
+npm test               # 64 tests: 55 in the core, 9 over the app's ordering
 npm run typecheck      # both workspaces
 ```
 
