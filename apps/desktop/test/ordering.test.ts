@@ -82,3 +82,35 @@ test("keys of items that are gone are inert", () => {
 test("no collapsed set at all is the old behaviour", () => {
   assert.deepEqual(keys(backlogOrder(tree)), keys(backlogOrder(tree, new Set())));
 });
+
+/**
+ * What the type filter does to the tree, asserted so it reads as a decision
+ * rather than as a bug someone finds later.
+ *
+ * Filtering to a type that is not at the top drops the parents that place the
+ * matches, and the promotion rule above then makes those matches roots — the
+ * tree flattens. Nothing is lost, which is the point, but the hierarchy goes at
+ * the moment someone narrowed the view. It is allowed to: "Hide closed" already
+ * does exactly this to the children of a done epic, and the two type filters
+ * actually worth asking for do not hit it at all — epics have no parents to
+ * lose, and subtasks are leaves, so excluding them prunes without flattening.
+ */
+test("filtering to one type flattens the tree rather than hiding matches", () => {
+  const tasksOnly = [item("T1", "E1"), item("T2", "E1")];
+  const rows = backlogOrder(tasksOnly);
+  assert.deepEqual(keys(rows), ["T1", "T2"]);
+  assert.deepEqual(
+    rows.map(({ depth }) => depth),
+    [0, 0],
+  );
+});
+
+test("excluding a leaf type leaves the tree standing", () => {
+  const withoutSubtasks = tree.filter(({ key }) => key !== "S1");
+  const rows = backlogOrder(withoutSubtasks);
+  assert.deepEqual(keys(rows), ["E1", "T1", "T2"]);
+  assert.deepEqual(
+    rows.map(({ depth }) => depth),
+    [0, 1, 1],
+  );
+});

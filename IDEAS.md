@@ -8,40 +8,6 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
-## A type filter, on the backlog and the board
-
-The toolbar filters on project, status, cadence, reporter and text; type is the
-obvious gap. On the board it is one line in `filtered` and a select — and unlike
-the project and reporter filters, this one is drawn from `ITEM_TYPES` rather
-than from the items, so it can never dangle and none of the recovery in the
-effect above `filtered` applies to it. The constant is already imported into the
-renderer by `CreateDialog` and `ItemDetail`.
-
-The cost is toolbar width. The comment on the reporter select already notes the
-toolbar is five wide, and that is why that menu is absent rather than empty in a
-vault where nobody fills the field; a sixth control has to earn its place. Which
-raises one select or several checkboxes. There are five types, not two, and the
-two things worth asking for are "epics only", which reads as a roadmap, and
-"everything except subtasks", which is noise reduction. A single select gives
-the first and cannot express the second.
-
-The backlog is where this stops being mechanical. Filter to `task` and every
-epic leaves the set, so `backlogOrder` finds those parents absent, promotes
-their children to roots, and the tree flattens completely — nothing is lost, but
-the hierarchy vanishes at exactly the moment someone narrowed the view to look
-at structure. Filter to `epic` and the children are gone because the filter
-dropped them, which on screen is indistinguishable from someone having collapsed
-them.
-
-So the decision this is really about: does the filter mean "show only these
-types", or "show these types plus whatever ancestors place them"? The second
-keeps the backlog a tree and costs a pass to pull in the parents of matches, but
-then the view contains items that do not match the filter, which no other filter
-here does. Worth settling first, because the board wants the first reading and
-the backlog probably wants the second — and "the same control behaves
-differently per view" is defensible only when it was chosen rather than
-discovered.
-
 ## "Turn on history" — a button that sets git up for the chosen vault
 
 Setting up history today is a manual sequence nobody should have to know: copy a

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// The constants subpath, not the package root — see the note at the top of
+// pieces.tsx: the root pulls vault.js, and node:fs with it, into the bundle.
+import { ITEM_TYPES, type ItemType } from "todo-vault/constants";
 import type { Item, Status } from "todo-vault";
 import type { AgendaScope, ProjectSummary } from "@shared/api";
 
@@ -37,6 +40,25 @@ export function App(): React.JSX.Element {
    * "john doe" are one person holds when you act on it.
    */
   const [reporter, setReporter] = useState<string>("all");
+  /**
+   * The type filter, holding the types to *keep*. Empty means every type.
+   *
+   * A set rather than a single value because there are five types and the two
+   * things worth asking for are "epics only", which reads as a roadmap, and
+   * "everything except subtasks", which is noise reduction. One select gives
+   * the first and cannot express the second.
+   *
+   * Empty-means-all rather than starting full: it makes the unfiltered view the
+   * default state *and* the place clicking the last chip off returns to, so the
+   * one failure mode a multi-toggle has over a select — emptying the view by
+   * deselecting everything — is unreachable.
+   *
+   * Absent from the dangling-filter recovery above `filtered`, and that is not
+   * an oversight. That effect exists because the project and reporter menus are
+   * derived from the items, so an option can vanish under a live filter.
+   * ITEM_TYPES is a constant; these cannot dangle.
+   */
+  const [types, setTypes] = useState<ReadonlySet<ItemType>>(() => new Set());
   const [openOnly, setOpenOnly] = useState(true);
   const [text, setText] = useState("");
   /**
@@ -187,6 +209,7 @@ export function App(): React.JSX.Element {
     return visibleItems.filter((item) => {
       if (project && item.project !== project) return false;
       if (status !== "all" && item.status !== status) return false;
+      if (types.size && !types.has(item.type)) return false;
       if (cadence !== "all" && item.cadence !== cadence) return false;
       if (reporter !== "all" && item.reporter?.trim().toLowerCase() !== reporter) return false;
       if (openOnly && isClosed(item.status)) return false;
@@ -196,7 +219,7 @@ export function App(): React.JSX.Element {
       }
       return true;
     });
-  }, [snapshot, visibleItems, project, status, cadence, reporter, openOnly, text]);
+  }, [snapshot, visibleItems, project, status, types, cadence, reporter, openOnly, text]);
 
   const projectOrder = useMemo(
     () => visibleProjects.map((p) => p.key),
@@ -236,6 +259,15 @@ export function App(): React.JSX.Element {
   const open = useCallback((key: string) => {
     setSelected(key);
     setDetailKey(key);
+  }, []);
+
+  /** One type chip on or off. A new Set each time — the state is read-only. */
+  const toggleType = useCallback((type: ItemType) => {
+    setTypes((current) => {
+      const next = new Set(current);
+      if (!next.delete(type)) next.add(type);
+      return next;
+    });
   }, []);
 
   const move = useCallback(
@@ -715,6 +747,31 @@ export function App(): React.JSX.Element {
                   ))}
                 </select>
               )}
+              {/*
+                Toggles rather than a select, because "everything except
+                subtasks" is one of the two things worth asking for and a select
+                cannot say it. A role=group of aria-pressed buttons, not a
+                tablist: selection here is not exclusive, and aria-selected
+                would tell a screen reader it was.
+              */}
+              <div
+                className="chips"
+                role="group"
+                aria-label="Filter by type"
+                title="Show only these types. With none picked, every type is shown."
+              >
+                {ITEM_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className="chip"
+                    aria-pressed={types.has(t)}
+                    onClick={() => toggleType(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
               <label
                 className="status-line"
                 style={{ cursor: "pointer" }}

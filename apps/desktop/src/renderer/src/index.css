@@ -287,6 +287,51 @@ button {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
 }
 
+/*
+ * The type filter, built to read as a sibling of .tabs — same inset trough,
+ * same 12px, so the toolbar has one idiom for "a row of small toggles".
+ *
+ * The on-state is where it deliberately differs. A tab group always has exactly
+ * one selected, so merely raising it out of the trough is contrast enough. Here
+ * *none* may be on, and the on-state has to be legible with nothing beside it
+ * to compare against — hence a filled --accent-dim rather than a raised
+ * surface. Both are defined in the light block too, so this needs no second
+ * rule there.
+ */
+.chips {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-inset);
+  border-radius: var(--radius);
+  /*
+   * The same 1px border the selects carry, and it is load-bearing rather than
+   * decorative. In the default state every chip is off, so without it the group
+   * is five unadorned words sitting in a row of bordered selects — it reads as a
+   * caption, not as something you can press. The tabs get away with a bare
+   * trough only because one of them is always raised out of it.
+   */
+  border: 1px solid var(--border);
+  padding: 1px;
+}
+
+.chip {
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* So a chip reads exactly like the .type cell it filters. */
+  text-transform: capitalize;
+}
+
+.chip:hover {
+  color: var(--text);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
 .spacer {
   flex: 1;
 }

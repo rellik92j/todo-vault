@@ -431,6 +431,75 @@ parent reads as correct, not as the list moving, because the row it lands on is
 the one just clicked. It also holds two levels deep — collapsing a grandparent
 with the cursor on a grandchild lands on the grandparent.
 
+## A type filter, on the backlog and the board ✅ built and driven
+
+Promoted out of IDEAS.md. Renderer-only, like collapse: view state beside the
+other toolbar filters, forgotten when the window closes, nothing on disk.
+
+The mechanical half is one line in `filtered` — `if (types.size &&
+!types.has(item.type)) return false;` — and that one line covers the board, the
+backlog *and* the keyboard cursor, because `orderedKeys` is derived from the
+same array.
+
+**The filter means "show only these types", in both views.** The idea doc left
+this open, expecting the board to want that reading and the backlog to want
+"these types plus whatever ancestors place them". Three things settled it the
+other way:
+
+- **Neither use case that motivated the feature hits the problem.** Epics have
+  no parents to lose, so "epics only" is a flat list either way. Subtasks are
+  leaves, so "everything except subtasks" prunes without disturbing the tree at
+  all. The flattening only bites when filtering to a *middle* type, and "show me
+  the tasks" is a worklist request, not a structural one.
+- **The backlog already flattens under a filter, and has since Phase 1.** Turn
+  on "Hide closed" with a done epic and its children are promoted to roots by
+  the same rule. Type filtering does not introduce the behaviour; it makes an
+  existing one easier to notice.
+- **The alternative puts rows on screen that do not match the filter**, which no
+  other filter here does. That is a real cost, paid in every view, to rescue a
+  case neither user story asks for.
+
+Both halves of that ruling are now tests in `ordering.test.ts` — one asserting
+the flattening happens, one asserting that excluding a leaf type leaves the
+hierarchy standing. They assert nothing new about the code; what they add is a
+name, so the flattening reads as a decision rather than as a bug someone finds
+later and fixes.
+
+**Toggles, not a select**, because "everything except subtasks" is one of the
+two things worth asking for and a select cannot say it. Five chips styled as a
+sibling of `.tabs`, since the toolbar should have one idiom for "a row of small
+toggles". They are `aria-pressed` buttons in a `role="group"`, not a tablist:
+selection is not exclusive here, and `aria-selected` would tell a screen reader
+that it was.
+
+**Empty means every type.** Starting with all five on and letting the user
+deselect would make "no filter" unrepresentable and put an empty view one click
+away. Empty-means-all makes the unfiltered state both the default and the place
+turning the last chip off returns to.
+
+**It is deliberately absent from the dangling-filter recovery** in the effect
+above `filtered`, and the comment says so, because its absence otherwise reads
+as an oversight. That effect exists because the project and reporter menus are
+derived from the items, so an option can vanish under a live filter. `ITEM_TYPES`
+is a constant; these cannot dangle.
+
+**Driving it caught the one thing nothing else could**, the same way the twisty
+was caught above. Every check passed and the control was still wrong: with all
+five chips off — the state every user meets first — the group was five unadorned
+words sitting in a row of bordered selects, and it read as a caption rather than
+as something you could press. The tabs get away with a bare trough only because
+one of them is always raised out of it; a group where *none* may be on has no
+such anchor. One `1px solid var(--border)`, the same border the selects carry,
+and it reads as a control. That border is load-bearing, not decorative.
+
+Driven against the seeded vault under an isolated `--user-data-dir`, for the
+reason recorded above — eleven checks, including that a chip click moves neither
+the keyboard cursor nor the detail panel, that the chips are absent on the
+agenda, and that the group sits level with the selects beside it. Also
+screenshotted in both colour schemes: this machine reports
+`prefers-color-scheme: light`, so the dark on-state would otherwise have gone
+unlooked-at on the strength of `--accent-dim` being defined in both blocks.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
