@@ -4,6 +4,11 @@ dist/
 # Personal Claude Code settings. .claude/settings.json is the shared one.
 .claude/settings.local.json
 
+# Claude Code's worktrees, which are checkouts of this repo living inside it.
+# Tracking them would commit a copy of the tree into itself; they are also
+# transient, and `git worktree remove` is what disposes of them, not a delete.
+.claude/worktrees/
+
 # MCP server config with machine-specific absolute paths (dist/ output, vault dir).
 .mcp.json
 
