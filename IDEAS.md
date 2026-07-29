@@ -58,43 +58,38 @@ capability URLs, and an agent adding them in bulk to a vault that auto-commits t
 a remote is that concern multiplied. Still a note in `SCHEMA.md` rather than a
 mechanism, but decided knowingly.
 
-## "Requested by" is "Reporter" — the MCP server and Claude should know that
+## "Requested by" is "Reporter" — the Claude draft box should know that
 
-`reporter` reached the desktop app but neither of the two surfaces that take
-language instead of form fields. The MCP server never mentions it: absent from
-`vault_create_item` and `vault_update_item`'s `inputSchema`, absent from
-`vault_list_items`' filters, and — the part that bites hardest — absent from
-`detail()`, so an agent cannot even read back who asked for the thing it is
-looking at. `DRAFT_SCHEMA` in `claude.ts` has no `reporter` property either.
+The MCP half of this is built: `reporter` is now in `detail()`, in both write
+tools' `inputSchema`, and in `ItemFilter`, where it matches folded so `listItems`
+agrees with the app that "John Doe" and "john doe" are one person. What is left is
+the other surface that takes prose instead of form fields — the draft box.
 
-Both surfaces are handed prose, and prose says "requested by" at least as often
-as it says "reporter". Whichever word the user reaches for has to land on the
-same field. The stored key stays `reporter` — that decision is already made and
-argued in PLAN.md, and the app's label follows the file. What is missing is that
-no tool description and no system prompt says the two are the same thing, so a
-model has nothing to map "Priya asked for this" onto.
+`DRAFT_SCHEMA` in `claude.ts` has no `reporter` property, so a note that says
+"Priya asked for this" has nowhere structured to put the name and the model does
+the reasonable thing: writes it into the description body, where `knownReporters`
+will never find it and the reporter filter will never match it. Not lost, filed
+where it cannot be queried — harder to notice *and* harder to correct than an
+empty field, which is why this is worth closing rather than leaving.
 
-The failure mode is worse than a dropped field. With nowhere to put a name, the
-model does the reasonable thing and writes it into the description prose — where
-`knownReporters` will never find it, the reporter filter will never match it, and
-search will only surface it by accident. The name is not lost, it is filed
-somewhere that cannot be queried, which is both harder to notice and harder to
-correct than an empty field.
+The schema change itself is one property. `ItemDraft.input` is `CreateItemInput`,
+which already carries the field, and `stripEmpty` already treats `""` as absent
+exactly as it does for `category`, so nothing else on the main-process side moves.
 
-Most of the work is declaration, not plumbing. `CreateItemInput` and
-`UpdateItemInput` already carry `reporter` (`schema.ts`) and `updateItem` spreads
-its patch straight through, so MCP needs the field named in two `inputSchema`
-blocks, one line in `detail()`, and the synonym stated in both descriptions. The
-Claude path needs one property on `DRAFT_SCHEMA`; `stripEmpty` already treats
-`""` as absent, exactly as it does for `category`.
+The trap is one layer up, and it is the reason this entry is still here rather
+than done. `CreateDialog.tsx` deliberately does *not* apply a draft's reporter,
+and says so: "the draft tool schema never asks Claude for one, so it has nothing
+to say about it, and a name typed before pressing Draft is still who asked for the
+work." Add the property without touching that and the drafted name is silently
+dropped — the same failure this entry exists to fix, one layer higher. The fix
+follows the precedent already beside it (`if (input.priority) setPriority(...)`):
+apply it only when non-empty, so a name typed before pressing Draft still survives
+a note that names nobody. The comment has to change with it.
 
-Two things not to do casually. Don't accept `requestedBy` as a second key on the
-wire — one field, one key, and the synonym belongs in the description text where
-the model reads it, not in a schema that would then need a rule for what happens
-when both arrive. And filtering by reporter is the one part that is not free:
-`ItemFilter` has `assignee` and no `reporter`, and it matches with `!==` where
-the app folds case, so adding it means deciding whether `listItems` agrees with
-the app that "John Doe" and "john doe" are one person. The app already said yes.
+One thing not to do casually: don't accept `requestedBy` as a second key. One
+field, one key — the synonym belongs in the property description and the system
+prompt where the model reads it, not in a schema that would then need a rule for
+what happens when both arrive.
 
 ## "Turn on history" — a button that sets git up for the chosen vault
 

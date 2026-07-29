@@ -290,11 +290,20 @@ export const ItemFilter = z
     category: z.string().optional(),
     label: z.string().optional(),
     assignee: z.string().optional(),
+    reporter: z
+      .string()
+      .optional()
+      .describe(
+        "Matched case-insensitively, so 'John Doe' and 'john doe' are one person — the app's reporter menu folds the same way and this has to agree with it.",
+      ),
     parent: itemKey.optional(),
     dueBefore: isoDate.optional(),
     dueAfter: isoDate.optional(),
     open: z.boolean().optional().describe("true = exclude done items"),
-    text: z.string().optional().describe("Case-insensitive match on summary and description"),
+    text: z
+      .string()
+      .optional()
+      .describe("Case-insensitive match on summary, description, category, labels, and reporter"),
     sort: z
       .enum(["work", "rank"])
       .default("work")
