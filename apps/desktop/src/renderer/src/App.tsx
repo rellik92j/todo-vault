@@ -19,7 +19,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
-import { backlogOrder, boardColumns } from "./ordering";
+import { backlogOrder, boardLanes } from "./ordering";
 import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters } from "./pieces";
 
 type View = "backlog" | "board" | "agenda";
@@ -60,6 +60,19 @@ export function App(): React.JSX.Element {
    */
   const [types, setTypes] = useState<ReadonlySet<ItemType>>(() => new Set());
   const [openOnly, setOpenOnly] = useState(true);
+  /**
+   * Whether the board splits into one band per project.
+   *
+   * Board-only, and held here beside the other view state rather than inside
+   * `Board` for the reason `collapsed` is: `orderedKeys` below has to build the
+   * keyboard walk from the same grouping the board draws, and grouping changes
+   * that order from status-major to lane-major.
+   *
+   * Not persisted, because nothing here is — not even which view is open. See
+   * `settings.ts`, which remembers the vault and the zoom level and deliberately
+   * nothing else.
+   */
+  const [grouped, setGrouped] = useState(false);
   const [text, setText] = useState("");
   /**
    * The backlog rows whose children are hidden — view state, sat here beside
@@ -226,6 +239,12 @@ export function App(): React.JSX.Element {
     [visibleProjects],
   );
 
+  /** Key -> name, for the board's lane headers. */
+  const projectNames = useMemo(
+    () => new Map(visibleProjects.map((p) => [p.key, p.name])),
+    [visibleProjects],
+  );
+
   /**
    * The backlog as it is drawn, kept whole rather than reduced straight to keys
    * because `←`/`→` also need to know whether the row under the cursor has
@@ -247,10 +266,12 @@ export function App(): React.JSX.Element {
   const orderedKeys = useMemo<string[]>(() => {
     if (view === "backlog") return backlogRows.map(({ item }) => item.key);
     if (view === "board") {
-      return boardColumns(filtered, projectOrder).flatMap((c) => c.items.map((i) => i.key));
+      return boardLanes(filtered, projectOrder, grouped).flatMap((lane) =>
+        lane.columns.flatMap((c) => c.items.map((i) => i.key)),
+      );
     }
     return agendaOrder;
-  }, [view, backlogRows, filtered, projectOrder, agendaOrder]);
+  }, [view, backlogRows, filtered, projectOrder, grouped, agendaOrder]);
 
   const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
   const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
@@ -445,6 +466,12 @@ export function App(): React.JSX.Element {
         case "3":
           setView("agenda");
           return;
+        // Gated on the board rather than global: it is the only view with lanes,
+        // and a key that silently changes something two views away is worse than
+        // one that does nothing.
+        case "g":
+          if (view === "board") setGrouped((on) => !on);
+          return;
         case "n":
           event.preventDefault();
           setCreating(true);
@@ -477,6 +504,7 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     overlaid,
+    view,
     detailKey,
     selected,
     selectedItem,
@@ -784,6 +812,25 @@ export function App(): React.JSX.Element {
                 />
                 Hide closed
               </label>
+              {/*
+                Board-only, so it is absent on the backlog rather than present
+                and inert. A checkbox and not a .chip: .chip capitalizes its
+                label, which would render this as "Group By Project".
+              */}
+              {view === "board" && (
+                <label
+                  className="status-line"
+                  style={{ cursor: "pointer" }}
+                  title="One band per project, in sidebar order (g)"
+                >
+                  <input
+                    type="checkbox"
+                    checked={grouped}
+                    onChange={(e) => setGrouped(e.target.checked)}
+                  />
+                  Group by project
+                </label>
+              )}
             </>
           )}
 
@@ -873,6 +920,8 @@ export function App(): React.JSX.Element {
             <Board
               items={filtered}
               projectOrder={projectOrder}
+              projectNames={projectNames}
+              grouped={grouped}
               selected={selected}
               onSelect={open}
               onTransition={(key, next) =>

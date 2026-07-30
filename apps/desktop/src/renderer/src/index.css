@@ -680,6 +680,131 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/*
+ * The board grouped by project.
+ *
+ * A plain block holding one grid for the status header and one per band, rather
+ * than a single grid holding everything. Sibling grids line up regardless,
+ * because `minmax(170px, 320px)` never consults content — same template, same
+ * available width, identical tracks. What one big grid costs is the sticky
+ * header: a sticky grid item may not leave its grid area, and the header cells'
+ * area is one row exactly as tall as they are, so it had nowhere to travel and
+ * simply scrolled away.
+ *
+ * `min-width: min-content` is what keeps the header the same width as the bands
+ * once the window is too narrow for six columns and `.content` starts scrolling
+ * sideways. Without it the header would be viewport-wide while the bands were
+ * wider, and the two would come apart exactly when you scrolled right.
+ */
+.board-grouped {
+  padding: 14px 16px;
+  min-height: 100%;
+  min-width: min-content;
+}
+
+.board-head-row,
+.lane-columns {
+  display: grid;
+  /* The flex column's `flex: 1 1 0` / `min-width` / `max-width`, as tracks. See
+     the note on `.column` for why the floor is 170. `justify-content: start`
+     pools the slack on the right the way the flex row does, rather than
+     stretching six columns across an ultrawide window. */
+  grid-template-columns: repeat(var(--columns), minmax(170px, 320px));
+  gap: 0 12px;
+  justify-content: start;
+}
+
+/*
+ * The status names, drawn once, sticky against `.content` — the only scroll
+ * ancestor, since `.main` and `.app` set no overflow.
+ */
+.board-head-row {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Opaque or the cards scroll through it. --bg is set in both themes, so this
+     needs no second rule in the light block. */
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.board-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/*
+ * A band's columns carry no surface of their own.
+ *
+ * Grid stretches every column to the tallest in its band — which is what makes
+ * an empty column a full-height drop target, and worth keeping for that alone.
+ * But `.column`'s inset background and border then draw five empty grey panels
+ * beside the one column that has cards, and under a status filter that is the
+ * whole board. The border stays, transparent, so `.column-over` has something to
+ * colour and nothing shifts when it lights up.
+ */
+.board-grouped .column {
+  background: none;
+  border-color: transparent;
+  /* The track sizes the column now; these would fight it. */
+  min-width: 0;
+  max-width: none;
+}
+
+/* Keeps a card the keyboard cursor just landed on from parking underneath the
+   sticky header — App.tsx scrolls it into view with `block: "nearest"`. */
+.board-grouped .column-body > div {
+  scroll-margin-top: 44px;
+}
+
+/* The separator itself: a full-width bar rather than a label in a left gutter,
+   which six columns at their 170px floor leave no room for. */
+.lane-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 18px 0 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+/* Not :first-of-type — that means "first <header> among siblings", which is true
+   here only because .board-head-row happens to be a div. */
+.lane:first-of-type .lane-head {
+  margin-top: 12px;
+}
+
+.lane-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.lane-name {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.lane-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.lane-empty {
+  padding: 18px 2px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
 /* ---------------------------------------------------------------- agenda */
 .agenda {
   padding: 14px 16px 28px;
@@ -1431,6 +1556,18 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 /* --------------------------------------------------------------- drag/drop */
 .column-blocked {
+  opacity: 0.4;
+}
+
+/*
+ * A band belonging to another project, while a card is in flight.
+ *
+ * One opacity on the band, not one per column plus one on the header: `.lane` is
+ * a real box wrapping both, and nested opacities would multiply to 0.16. Which is
+ * why `.column` only ever carries `.column-blocked` for an illegal *transition*
+ * inside a band that is otherwise willing.
+ */
+.lane-blocked {
   opacity: 0.4;
 }
 

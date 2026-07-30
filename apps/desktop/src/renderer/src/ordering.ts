@@ -57,6 +57,65 @@ export function backlogOrder(
 }
 
 /**
+ * One horizontal band of the board.
+ *
+ * `project` is null in exactly one case: ungrouped mode, which is a single lane
+ * holding every project. Null rather than a sentinel string because it is the
+ * one value a project key can never be, so nothing downstream has to know which
+ * made-up key means "all of them".
+ */
+export interface BoardLane {
+  project: string | null;
+  columns: Array<{ status: Status; items: Item[] }>;
+}
+
+/**
+ * The board as it is drawn: a list of lanes, each a full row of status columns.
+ *
+ * One function for both modes, called by the board *and* by `orderedKeys` in
+ * App.tsx — see the note there. The keyboard cursor walks the order the eye
+ * sees, and the only way to guarantee that is for there to be one answer to
+ * what that order is.
+ *
+ * Grouping changes the flattened order from status-major to lane-major, which is
+ * the point: with lanes on screen, walking every project's To do column before
+ * any project's In progress column would send the cursor back up the page.
+ */
+export function boardLanes(
+  items: Item[],
+  projectOrder: string[],
+  grouped: boolean,
+): BoardLane[] {
+  if (!grouped) return [{ project: null, columns: boardColumns(items, projectOrder) }];
+
+  const byProject = new Map<string, Item[]>();
+  for (const item of items) {
+    const list = byProject.get(item.project);
+    if (list) list.push(item);
+    else byProject.set(item.project, [item]);
+  }
+
+  // Sidebar order for the projects the sidebar knows, then anything left over.
+  // The leftovers cannot normally happen — every item's project has a project
+  // file — but `boardColumns` already sorts an unknown project last rather than
+  // dropping it, and the same rule here keeps the promise the whole file is
+  // written around: nothing in `items` may silently fail to appear.
+  const known = projectOrder.filter((key) => byProject.has(key));
+  const knownSet = new Set(known);
+  const rest = [...byProject.keys()]
+    .filter((key) => !knownSet.has(key))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  // A project with nothing in the filtered set gets no lane. Under a filter —
+  // and "Hide closed" is one, on by default — the alternative is a screen of
+  // empty bands with the cards buried among them.
+  return [...known, ...rest].map((project) => ({
+    project,
+    columns: boardColumns(byProject.get(project) ?? [], projectOrder),
+  }));
+}
+
+/**
  * The board's columns: grouped by project, then by manual rank inside each project.
  *
  * Ranks are per project, so two ranks from different projects are numbers from
@@ -64,6 +123,9 @@ export function backlogOrder(
  * reshuffle every project at once. Grouping first gives a stable order that can
  * be explained: project blocks in the order the sidebar shows, each internally
  * in the order you dragged.
+ *
+ * Still sorts by project when called for one lane, where every item shares a
+ * project and that comparison is a no-op. Cheaper than a second code path.
  */
 export function boardColumns(
   items: Item[],

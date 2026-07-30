@@ -100,6 +100,30 @@ Board columns are grouped by project and then by manual rank, since ranks are pe
 project — comparing two projects' rank numbers directly is meaningless, and doing
 so made a single drag look like it reshuffled everything.
 
+**Group by project** (`g`, or the checkbox beside Hide closed) makes that grouping
+visible: the board splits into one band per project in sidebar order, separated by a
+labelled bar, with the status headers drawn once at the top. Each band and the header
+are separate CSS grids sharing one track definition, which is what keeps them lined
+up — and keeps the header sticky, since a sticky grid item cannot escape its own grid
+area and one big grid gave it nowhere to travel.
+
+Grouping also makes the reorder rule above redundant inside a band, which is the
+strongest reason to reach for it: every card in a band shares a project, so a drop
+attaches to the card you actually dropped on rather than to the nearest same-project
+neighbour. Ungrouped, a drop onto a foreign-project card reorders against a different
+card than the one under the cursor — an honest compromise, but a compromise. Grouped
+is the mode where drag-to-reorder stops lying. It is the same walk either way; inside
+a band it just finds the target on its first step.
+
+Another project's band refuses the drop and dims, the way an illegal status
+transition already does. Moving an item between projects re-keys it — `WEB-4` becomes
+`API-12`, and anything linking to the old key dangles — which is not something a
+stray drag should be able to do. Use the detail panel for that.
+
+The keyboard cursor changes with the grouping, because it walks the order the eye
+sees: ungrouped it crosses every project's To do before reaching any project's In
+progress, and grouped it finishes one band before starting the next.
+
 The backlog nests children under their parents, and a subtree folds shut from the
 twisty or with `h`/`←`. Collapse is view state — it lives in the window, never in
 the file, so nothing on disk learns an item was folded. The keyboard cursor walks
