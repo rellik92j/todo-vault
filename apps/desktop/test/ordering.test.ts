@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Item } from "todo-vault";
-import { backlogOrder } from "../src/renderer/src/ordering.js";
+import type { Item, Status } from "todo-vault";
+import { backlogOrder, boardColumns, boardLanes } from "../src/renderer/src/ordering.js";
 
 /**
  * Enough of an Item to order. `backlogOrder` reads `key` and `parent` and
@@ -25,6 +25,11 @@ function item(key: string, parent?: string): Item {
     created: "2026-01-01T00:00:00.000Z",
     updated: "2026-01-01T00:00:00.000Z",
   } as unknown as Item;
+}
+
+/** The three fields the board actually orders on, over the same filler. */
+function card(key: string, project: string, status: Status, rank?: number): Item {
+  return { ...item(key), project, status, rank } as unknown as Item;
 }
 
 /** The tree used throughout: E1 > T1 > S1, plus a childless T2 under E1. */
@@ -112,5 +117,140 @@ test("excluding a leaf type leaves the tree standing", () => {
   assert.deepEqual(
     rows.map(({ depth }) => depth),
     [0, 1, 1],
+  );
+});
+
+// ------------------------------------------------------------------ the board
+
+/**
+ * Two projects with work in two statuses, and a third project in the sidebar
+ * with nothing in it — which is what makes the empty-lane rule testable.
+ */
+const order = ["WEB", "API", "OPS"];
+const board = [
+  card("W1", "WEB", "todo", 1000),
+  card("W2", "WEB", "in_progress", 1000),
+  card("A1", "API", "todo", 1000),
+  card("A2", "API", "todo", 2000),
+];
+
+/** Exactly what `orderedKeys` in App.tsx builds for the keyboard cursor. */
+const laneKeys = (lanes: ReturnType<typeof boardLanes>): string[] =>
+  lanes.flatMap((lane) => lane.columns.flatMap((c) => c.items.map((i) => i.key)));
+
+test("ungrouped is one lane holding exactly the columns the board already drew", () => {
+  const lanes = boardLanes(board, order, false);
+  assert.equal(lanes.length, 1);
+  assert.equal(lanes[0].project, null);
+  assert.deepEqual(lanes[0].columns, boardColumns(board, order));
+});
+
+test("grouped emits a lane per project in sidebar order, skipping the empty ones", () => {
+  assert.deepEqual(
+    boardLanes(board, order, true).map((l) => l.project),
+    ["WEB", "API"],
+  );
+});
+
+/**
+ * Lane order comes from the sidebar, not from where the items happen to sit in the
+ * array — which is what makes dragging a project in the sidebar reorder the bands.
+ */
+test("lane order follows the sidebar, not the item order", () => {
+  assert.deepEqual(
+    boardLanes(board, ["API", "WEB", "OPS"], true).map((l) => l.project),
+    ["API", "WEB"],
+  );
+});
+
+/**
+ * The trailing lanes are sorted rather than left in map-insertion order, so the
+ * board does not reshuffle between two renders of the same vault.
+ */
+test("unknown projects are ordered deterministically among themselves", () => {
+  const strays = [card("B1", "BBB", "todo", 1000), card("A1x", "AAA", "todo", 1000)];
+  assert.deepEqual(
+    boardLanes(strays, order, true).map((l) => l.project),
+    ["AAA", "BBB"],
+  );
+});
+
+/**
+ * `boardColumns` sorts a fresh array out of `.filter()`, and `boardLanes` now
+ * calls it once per project. If those buckets ever came to share backing arrays
+ * the symptom would be an intermittent reshuffle nothing else would catch.
+ */
+test("the input array is left alone", () => {
+  const before = board.map((i) => i.key);
+  boardLanes(board, order, true);
+  boardLanes(board, order, false);
+  assert.deepEqual(
+    board.map((i) => i.key),
+    before,
+  );
+});
+
+test("every lane carries a column per status, so the grid always gets a full row", () => {
+  const statuses = boardColumns([], order).map((c) => c.status);
+  for (const lane of boardLanes(board, order, true)) {
+    assert.deepEqual(
+      lane.columns.map((c) => c.status),
+      statuses,
+    );
+  }
+});
+
+test("a grouped lane holds only its own project's cards", () => {
+  for (const lane of boardLanes(board, order, true)) {
+    for (const column of lane.columns) {
+      for (const i of column.items) assert.equal(i.project, lane.project);
+    }
+  }
+});
+
+/**
+ * The promise the whole file is written around. A project the sidebar has never
+ * heard of cannot happen from the app — every item's project has a project file —
+ * but `boardColumns` sorts an unknown project last rather than dropping it, and a
+ * card simply absent from the board is the one failure mode with no symptom.
+ */
+test("a project the sidebar does not know still gets a lane, at the end", () => {
+  const withStray = [...board, card("Z1", "ZZZ", "todo", 1000)];
+  assert.deepEqual(
+    boardLanes(withStray, order, true).map((l) => l.project),
+    ["WEB", "API", "ZZZ"],
+  );
+});
+
+test("every item appears exactly once, grouped or not", () => {
+  const withStray = [...board, card("Z1", "ZZZ", "todo", 1000)];
+  const expected = withStray.map((i) => i.key).sort();
+  for (const grouped of [false, true]) {
+    assert.deepEqual(laneKeys(boardLanes(withStray, order, grouped)).sort(), expected);
+  }
+});
+
+/**
+ * What `orderedKeys` depends on, asserted so it reads as a decision. Ungrouped,
+ * the cursor walks every project's To do before any project's In progress;
+ * grouped it walks one band at a time, because with bands on screen the other
+ * order sends it back up the page.
+ */
+test("grouping turns the keyboard order from status-major into lane-major", () => {
+  assert.deepEqual(laneKeys(boardLanes(board, order, false)), ["W1", "A1", "A2", "W2"]);
+  assert.deepEqual(laneKeys(boardLanes(board, order, true)), ["W1", "W2", "A1", "A2"]);
+});
+
+/**
+ * Why the board's reorder walk needs no second code path when grouped: a lane's
+ * column is one project in rank order, so the nearest same-project card in the
+ * direction of travel is always the card that was dropped on.
+ */
+test("a grouped lane column is one project in rank order", () => {
+  const api = boardLanes(board, order, true).find((l) => l.project === "API");
+  const todo = api?.columns.find((c) => c.status === "todo");
+  assert.deepEqual(
+    todo?.items.map((i) => i.key),
+    ["A1", "A2"],
   );
 });

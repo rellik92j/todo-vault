@@ -207,6 +207,11 @@ Three problems this turned up:
   one drag appeared to reshuffle every project. Columns are now grouped by
   project in sidebar order, then by rank inside each, and a reorder attaches to
   the nearest same-project neighbour in the direction of travel.
+  *Since superseded in one mode:* the **Group by project** toggle draws that
+  grouping as bands, and inside a band every card shares a project, so the walk
+  finds the drop target itself on its first step. The same-project search is kept
+  because ungrouped columns still interleave, and one code path that is exactly
+  right in both modes beats two.
 - **Failed mutations were silent.** `mutate` returned the message but every
   caller passed the result to `void`, so a rejected reorder looked like a card
   that just refused to move. It now surfaces the error as well as returning it;

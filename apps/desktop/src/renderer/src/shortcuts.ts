@@ -37,6 +37,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["2"], label: "Board", group: "Views" },
   { keys: ["3"], label: "Agenda", group: "Views" },
 
+  { keys: ["g"], label: "Group the board by project", group: "Display" },
+
   // The three below are the one group the App.tsx handler never sees: the main
   // process claims them in zoom.ts, before the key reaches the page, which is
   // what lets them work mid-sentence in a text field. They are listed here
