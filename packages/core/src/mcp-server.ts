@@ -374,7 +374,9 @@ Args:
 
 Returns: { updated: { key, ... } }
 
-Status moves are validated against the workflow. If a move is rejected the error names the statuses reachable from the current one. An item already pushed to Jira is flagged as drifted when its pushable content changes.`,
+Status moves are validated against the workflow. If a move is rejected the error names the statuses reachable from the current one. An item already pushed to Jira is flagged as drifted when its pushable content changes.
+
+Setting status to 'in_progress' also sets startDate to today when the item has none — the same rule as vault_transition_item, since it is the same write path. Passing a startDate in the same call wins over the stamp.`,
     inputSchema: {
       key: itemKey,
       summary: z.string().min(1).max(255).optional(),
@@ -416,6 +418,11 @@ Pick the one the user actually said; do not disregard something on their behalf.
 
 If the item has a cadence, use vault_tick_item instead. 'done' retires a
 recurring item for good rather than completing this turn of it.
+
+Moving into 'in_progress' sets startDate to today if the item has none, so you
+do not need to pass one — it comes back in the response. An item that already
+has a startDate keeps it, and one whose dueDate has already passed is left
+alone rather than failing the move.
 
 Args:
   - key (string, required)

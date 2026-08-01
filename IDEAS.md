@@ -54,10 +54,10 @@ reading, as a filter beside the existing cadence dropdown in `App.tsx`, not as a
 status.
 
 **The scheduled half is a genuine gap, in a different field.** `startDate` is
-stored, editable in `ItemDetail`, and in `pushableFields` — and filters nothing,
-anywhere. `ItemFilter` has `dueBefore` and `dueAfter` with no start equivalent,
-so work that begins in September is indistinguishable, in every view, from work
-actionable this morning. That is the clog described, and the missing piece is the
+stored, editable in `ItemDetail`, in `pushableFields`, and now written by the app
+when work starts — and it filters nothing, anywhere. `ItemFilter` has `dueBefore`
+and `dueAfter` with no start equivalent, so work that begins in September is
+indistinguishable, in every view, from work actionable this morning. That is the clog described, and the missing piece is the
 neighbour `dueBefore` never got, not a new value in an enum.
 
 Which is the distinction worth writing down, because it decides this and will
@@ -77,7 +77,9 @@ way. If that is what is wanted it should be named for the decision, `parked` or
 
 One point genuinely on the status side, since it cuts against deriving: `status`
 is not in `pushableFields` but `startDate` is. Expressing "later" by typing a date
-flips a pushed item to `drifted` against Jira; a status change would not.
+flips a pushed item to `drifted` against Jira; a status change does that only on
+the one move that now writes a date — into `in_progress` — and never on a move
+that means "not yet".
 
 If it does turn out to be `parked`, the cost is not distributed the way the
 `disregard` phase would suggest. Jira is free — `statusTransitions` is a

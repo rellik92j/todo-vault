@@ -686,6 +686,70 @@ ever contains closed work. The `in_progress` item behind the curtain had to be
 closed, hidden, then reopened via the CLI — which is exactly the cross-boundary
 write the parent field's `offProject` comment already describes.
 
+## Starting something date-stamps it ✅ built
+
+Promoted out of IDEAS.md. `startDate` was stored, editable and pushed to Jira,
+and nothing ever wrote it except a person typing into the detail panel. Nobody
+types the date they started something on the day they start it, so the field was
+empty on exactly the items being worked — which is what made it useless as the
+filter the "Scheduled" idea still wants it to become.
+
+**The rule lives in `updateItem`, and that is the whole implementation.**
+`transition()` is a one-line delegation to it, so the board drag, the detail
+panel's status control, `vault done`/`vault disregard` and
+`vault_transition_item` were never the risk. The risk was the callers that skip
+`transition` entirely and patch `status` directly: `vault_update_item` and
+`vault set --status`. A rule written inside `transition` would have looked
+complete while missing both — the two least likely to be checked by hand. The
+desktop `vault:update-item` IPC is a third, latent: it passes `patch: unknown`
+through unfiltered, so nothing but `UpdateItemInput` stops a status arriving that
+way, and now it would be handled if one did.
+
+**Any move into `in_progress`, not `todo → in_progress`.** `TRANSITIONS` reaches
+`in_progress` from every other status, and `todo → blocked → in_progress` is the
+ordinary shape of picking up work that was waiting on somebody. The narrow rule
+never fires there and leaves the item in progress with no date, which is the case
+it exists to fix. "Unless already set" makes the broader rule identical
+everywhere else.
+
+**Skipped, not clamped, when it would collide with `dueDate`.**
+`ItemFrontmatterSchema` rejects `startDate > dueDate`, and it refines the merged
+object, so stamping an overdue item would fail the whole write — including the
+status change — and blame two dates the user never typed together. Dragging an
+overdue card into In Progress worked before this and still does. A convenience
+must never be why an action fails, so it yields. The cost is honest and worth
+stating: the items likeliest to be started late are the ones this does nothing
+for. Due *today* still stamps, since the check is strict `>`.
+
+**Creation too**, because `CreateItemInput.status` takes any status and there is
+no transition to hang the rule on. `vault new --status in_progress` is the only
+live route in — `vault_create_item` has no `status`, the desktop dialog sends
+none, and `DRAFT_SCHEMA` has neither `status` nor `startDate` — but discovering
+that gap later would have been worse than closing it now.
+
+Two writers were left alone deliberately. `restoreItem` and `rekeyItems`
+re-serialize frontmatter straight through `writeAndIndex`, carrying `status`
+verbatim, so an item trashed while `in_progress` comes back untouched: restoring
+is not starting, and renaming a project is not either.
+
+**It drifts pushed items, and that is now safe.** `startDate` is in
+`pushableFields` while `status` and `rank` are not, so this is the first time a
+plain status change can flip an item to `drifted`. Investigating this idea is
+what turned up why that used to be dangerous — `buildPushPlan` checked only
+`state === "pushed"`, so a drifted item was re-drafted as a duplicate issue with
+no warning. That is fixed separately, and it was a prerequisite rather than a
+side note.
+
+`todayIso()` is local-time, built from `getFullYear`/`getDate`, so a late-evening
+start records today rather than tomorrow. It takes the date as a parameter for
+the same reason `tickItem` does.
+
+One limit accepted rather than engineered around: `updateItem` clears fields by
+mapping `null` to `undefined`, so "no `startDate`" cannot distinguish "never had
+one" from "deliberately emptied". Clear it, cycle through `blocked`, and it comes
+back. The rule reads the *merged* value, so at least clearing it and moving in
+the same call does not immediately refill it.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
