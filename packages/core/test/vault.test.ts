@@ -14,13 +14,21 @@ import {
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
 import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
-import { cadencePeriod } from "../src/recurrence.js";
+import { cadencePeriod, todayIso, addDays } from "../src/recurrence.js";
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-test-"));
   const vault = await Vault.init(dir);
   await vault.createProject({ key: "ACME", name: "Acme rollout" });
   return vault;
+}
+
+/** The minimum map buildPushPlan needs, for tests that care about eligibility. */
+function planMap() {
+  return JiraMapSchema.parse({
+    jiraProjectKey: "ENG",
+    issueTypes: { epic: "Epic", story: "Story", task: "Task", bug: "Bug", subtask: "Subtask" },
+  });
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -189,6 +197,84 @@ test("validates status transitions", async () => {
   await vault.transition(item.key, "in_review");
   const done = await vault.transition(item.key, "done");
   assert.equal(done.status, "done");
+});
+
+test("starting something dates it, whichever way the status is set", async () => {
+  const vault = await tmpVault();
+
+  const dragged = await vault.createItem({ project: "ACME", summary: "Via transition" });
+  assert.equal(dragged.startDate, undefined, "nothing types a start date up front");
+  const started = await vault.transition(dragged.key, "in_progress");
+  assert.equal(started.startDate, todayIso());
+
+  // The caller a rule written inside transition() would silently skip.
+  const patched = await vault.createItem({ project: "ACME", summary: "Via updateItem" });
+  const direct = await vault.updateItem(patched.key, { status: "in_progress" });
+  assert.equal(direct.startDate, todayIso(), "vault_update_item and `vault set --status` land here");
+
+  // Born in progress, so there is no transition to hang the rule on.
+  const born = await vault.createItem({
+    project: "ACME",
+    summary: "Born in progress",
+    status: "in_progress",
+  });
+  assert.equal(born.startDate, todayIso());
+
+  const reopened = await Vault.open(vault.root);
+  assert.equal(reopened.getItem(started.key).startDate, todayIso(), "and it survives a round trip");
+});
+
+test("the start stamp never overwrites, and never blocks the move", async () => {
+  const vault = await tmpVault();
+
+  const planned = await vault.createItem({
+    project: "ACME",
+    summary: "Started when I said",
+    startDate: "2026-01-05",
+  });
+  const kept = await vault.transition(planned.key, "in_progress");
+  assert.equal(kept.startDate, "2026-01-05", "an explicit date always wins");
+
+  // dueDate cannot precede startDate, so stamping an overdue item would reject
+  // the whole write — including the status change, which works today.
+  const overdue = await vault.createItem({
+    project: "ACME",
+    summary: "Overdue before it began",
+    dueDate: addDays(todayIso(), -7),
+  });
+  const moved = await vault.transition(overdue.key, "in_progress");
+  assert.equal(moved.status, "in_progress", "the drag must still succeed");
+  assert.equal(moved.startDate, undefined, "and it is skipped rather than clamped");
+
+  // Due today is legal: the schema rejects startDate > dueDate, not equality.
+  const dueToday = await vault.createItem({
+    project: "ACME",
+    summary: "Due today",
+    dueDate: todayIso(),
+  });
+  assert.equal((await vault.transition(dueToday.key, "in_progress")).startDate, todayIso());
+});
+
+test("any route into in_progress stamps, and no other status does", async () => {
+  const vault = await tmpVault();
+
+  // todo -> blocked -> in_progress is the ordinary shape of picking up work
+  // that was waiting on somebody, and the narrow todo-only rule misses it.
+  const waiting = await vault.createItem({ project: "ACME", summary: "Was blocked" });
+  await vault.transition(waiting.key, "blocked");
+  assert.equal((await vault.transition(waiting.key, "in_progress")).startDate, todayIso());
+
+  const closed = await vault.createItem({ project: "ACME", summary: "Straight to done" });
+  const done = await vault.transition(closed.key, "done");
+  assert.equal(done.startDate, undefined, "only in_progress means started");
+
+  const dropped = await vault.createItem({ project: "ACME", summary: "Not doing it" });
+  assert.equal((await vault.transition(dropped.key, "disregard")).startDate, undefined);
+
+  // Reopening an item that already ran keeps the date it started the first time.
+  const resumed = await vault.transition(waiting.key, "done");
+  const again = await vault.transition(resumed.key, "in_progress");
+  assert.equal(again.startDate, todayIso(), "the original date, not a second one");
 });
 
 test("disregard closes an item without claiming the work happened", async () => {
@@ -728,6 +814,41 @@ test("flags drift after a pushed item is edited", async () => {
 
   const changed = await vault.updateItem(item.key, { summary: "Changed after push" });
   assert.equal(changed.sync.state, "drifted");
+});
+
+test("a drifted item is warned about rather than drafted in silence", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.markPushed(item.key, "ENG-9");
+  await vault.updateItem(item.key, { summary: "Changed after push" });
+  await vault.load();
+
+  const plan = buildPushPlan(vault.listItems({ limit: 500 }).items, planMap(), vault);
+  assert.ok(
+    plan.warnings.some((w) => w.includes(item.key) && /creates a NEW issue/.test(w)),
+    "a drifted item must say it is about to duplicate ENG-9, not appear as an ordinary draft",
+  );
+  assert.ok(plan.drafts.some((d) => d.localKey === item.key));
+});
+
+test("a drifted item reverted to its pushed content is skipped", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.markPushed(item.key, "ENG-9");
+  await vault.updateItem(item.key, { summary: "Changed after push" });
+  const reverted = await vault.updateItem(item.key, { summary: "Original" });
+  await vault.load();
+
+  // updateItem only ever moves pushed -> drifted, so the label is still wrong here.
+  assert.equal(reverted.sync.state, "drifted", "the state does not heal on its own");
+
+  const plan = buildPushPlan(vault.listItems({ limit: 500 }).items, planMap(), vault);
+  assert.ok(
+    plan.skipped.some((s) => s.localKey === item.key),
+    "the hash matches Jira again, so this must not be re-drafted on the label alone",
+  );
+  assert.equal(plan.warnings.length, 0);
+  assert.equal(plan.drafts.length, 0);
 });
 
 test("doctor-style load reports invalid files instead of throwing", async () => {

@@ -107,7 +107,11 @@ export const ItemFrontmatterSchema = z
     components: z.array(z.string().max(60)).default([]),
     assignee: z.string().max(120).optional(),
     reporter: z.string().max(120).optional(),
-    startDate: isoDate.optional(),
+    startDate: isoDate
+      .optional()
+      .describe(
+        "Written by the app when an item moves into in_progress, unless it already has a value — the converse of completions, which a status change never touches. Skipped rather than clamped when today would fall after dueDate, so the stamp can never be why a transition fails.",
+      ),
     dueDate: isoDate.optional(),
     estimate: z
       .number()

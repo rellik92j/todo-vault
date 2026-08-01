@@ -89,7 +89,7 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `components` | string[] | Passes straight through to Jira. |
 | `assignee` | string | Who is doing it. Pushed to Jira's `assignee`. |
 | `reporter` | string | Who asked for it. Filtered case-insensitively, unlike `assignee` — spellings of one person fold together, so the app's reporter menu and `listItems` agree. **Not pushed** — `buildPushPlan` maps `assignee` only, and `pushableFields` ignores this, so editing it does not count as drift. |
-| `startDate` / `dueDate` | `YYYY-MM-DD` | `dueDate` is standard in Jira; `startDate` is a custom field. |
+| `startDate` / `dueDate` | `YYYY-MM-DD` | `dueDate` is standard in Jira; `startDate` is a custom field. **`startDate` is written by the app** when an item enters `in_progress` — see below. |
 | `estimate` | number | Story points or hours — `jira-map.yaml` decides which. |
 | `cadence` | enum | `daily` `weekly` `monthly` `quarterly` `none`. **Local only.** |
 | `completions` | `YYYY-MM-DD`[] | Dates this recurring item was ticked off, sorted. **Local only.** See below. |
@@ -320,7 +320,9 @@ because Jira assigned a different one.
 
 `contentHash` covers only the fields that actually get pushed. Changing
 `cadence` — which Jira never sees — will not flip an item to `drifted`.
-Changing the summary will.
+Changing the summary will. So will moving an item into `in_progress` for the
+first time, because that writes `startDate`, which is pushed — a status change
+on its own is not drift, but the date it stamps is.
 
 ## Rules the vault enforces
 
@@ -342,6 +344,20 @@ or bug. Cycles are rejected on re-parenting.
 `todo → in_review` is rejected on purpose: something that was never in progress
 should not appear in a "what got worked on this week" rollup. Loosen this in
 `TRANSITIONS` if it annoys you.
+
+**Starting something dates it.** Any move into `in_progress` sets `startDate` to
+today, unless the item already has one. Nobody types that date on the day it
+happens, so without this the field is empty on exactly the items being worked.
+It applies to every route into the status — the board, the detail panel,
+`vault set --status`, both MCP write tools — because the rule lives in
+`updateItem`, which all of them go through; an item created directly into
+`in_progress` gets it too. Three things it deliberately does not do. It never
+overwrites an existing date. It is skipped, not clamped, when today would fall
+after `dueDate`, since `dueDate` cannot precede `startDate` and a convenience
+must never be why a drag fails — so an item already overdue when you start it
+gets nothing. And it cannot tell a field you cleared from one that was never
+set, so clearing `startDate` and later passing back through `in_progress`
+refills it.
 
 **The two closed states.** `done` and `disregard` are both endings, and
 `DONE_STATUSES` holds both — so the `open` filter, the agenda, and the work-order

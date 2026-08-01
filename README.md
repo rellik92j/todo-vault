@@ -205,7 +205,7 @@ draft is worth checking against.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 64 tests: 55 in the core, 9 over the app's ordering
+npm test               # 80 tests: 60 in the core, 20 over the app's board ordering
 npm run typecheck      # both workspaces
 ```
 

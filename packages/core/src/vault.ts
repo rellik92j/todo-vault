@@ -528,13 +528,18 @@ export class Vault {
     const key = await this.allocateKey(input.project);
     const now = nowIso();
 
+    // An item can be born in_progress — CreateItemInput takes any status and
+    // there is no transition here to hang the rule on — so it gets the same
+    // stamp updateItem would have given it.
+    const status = input.status ?? "todo";
+
     const frontmatter = ItemFrontmatterSchema.parse({
       id: randomUUID(),
       key,
       project: input.project,
       type: input.type,
       summary: input.summary,
-      status: input.status ?? "todo",
+      status,
       priority: input.priority ?? "medium",
       parent: input.parent,
       category: input.category,
@@ -542,7 +547,10 @@ export class Vault {
       components: input.components ?? [],
       assignee: input.assignee,
       reporter: input.reporter,
-      startDate: input.startDate,
+      startDate:
+        status === "in_progress"
+          ? startDateOnPickup(input.startDate, input.dueDate)
+          : input.startDate,
       dueDate: input.dueDate,
       estimate: input.estimate,
       cadence: input.cadence ?? "none",
@@ -576,6 +584,15 @@ export class Vault {
       if (value === undefined) continue;
       if (field === "description") continue;
       merged[field] = value === null ? undefined : value;
+    }
+    // Picking work up dates it. This sits here rather than in transition()
+    // because vault_update_item and `vault set --status` both patch status
+    // directly, and a rule one level up would silently skip them.
+    if (patch.status === "in_progress" && existing.status !== "in_progress") {
+      merged.startDate = startDateOnPickup(
+        merged.startDate as string | undefined,
+        merged.dueDate as string | undefined,
+      );
     }
     merged.updated = nowIso();
 
@@ -1827,6 +1844,32 @@ export function compareProjectsByRank(a: Project, b: Project): number {
 function stripDescription(obj: Record<string, unknown>): Record<string, unknown> {
   const { description, ...rest } = obj;
   return rest;
+}
+
+/**
+ * The `startDate` an item being picked up should carry, given what it has.
+ *
+ * Nobody types the date they started something on the day they start it, so the
+ * field stays empty on exactly the items that are being worked. Moving into
+ * `in_progress` fills it in; an explicit date always wins, so this only ever
+ * writes into an empty field.
+ *
+ * Returns the existing value unchanged when today would fall after `dueDate`,
+ * and that is the whole reason this returns a value rather than assigning one.
+ * `ItemFrontmatterSchema` rejects `startDate > dueDate`, so stamping an overdue
+ * item would fail the write and blame two dates the user never typed together —
+ * and dragging an overdue card into In Progress works today. A convenience must
+ * never be why an action fails, so it yields instead. The honest cost is that
+ * the items likeliest to be started late are the ones it does nothing for.
+ */
+function startDateOnPickup(
+  startDate: string | undefined,
+  dueDate: string | undefined,
+  today: string = todayIso(),
+): string | undefined {
+  if (startDate) return startDate;
+  if (dueDate && today > dueDate) return undefined;
+  return today;
 }
 
 /** Only the fields that actually get pushed to Jira, for drift detection. */
