@@ -157,6 +157,12 @@ true when an agent acts on it. Every tool description names "requested by" as a
 synonym, because a model handed prose has to land that phrase on this field rather
 than bury the name in the description body, where nothing can query it.
 
+The drafting box is the third surface that takes prose instead of form fields, and
+it asks for the same field for the same reason: "Priya asked for this" fills the
+form's Reporter, not the description. A draft that names nobody comes back empty
+and leaves a name typed before pressing Draft exactly where it was — the note said
+nothing about who asked, which is not the same as saying nobody did.
+
 Every relationship on the detail panel carries the status colour every other view
 uses — children, links, and backlinks alike. Statuses for item links are resolved
 in the main process against the whole vault rather than in the renderer, which

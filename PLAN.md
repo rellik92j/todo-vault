@@ -4,7 +4,7 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 64 green tests — 55 in the core, 9 over the app's
+below them. The suite is at 80 green tests — 60 in the core, 20 over the app's
 `ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
 carries `vault jira discover` with it.
 
@@ -868,10 +868,11 @@ and reopen the menu just chosen from.
    since Assignee is still not on it. Deliberate: who asked for something is known
    while you are logging it, whereas who will do it usually is not yet.
 3. **Filter bar** — an "Any reporter" `<select>` beside status and cadence,
-   applied client-side in `filtered`. The core's `ItemFilter` has `assignee` and
-   no `reporter`, and needs neither: nothing in this window goes through
-   `listItems`. Absent rather than empty where nobody has used the field — a
-   select offering only "Any reporter" is a control that cannot do anything.
+   applied client-side in `filtered`, and needing nothing from the core:
+   nothing in this window goes through `listItems`. (`ItemFilter` gained
+   `reporter` later, for the MCP server — see below.) Absent rather than empty
+   where nobody has used the field — a select offering only "Any reporter" is a
+   control that cannot do anything.
 
    It holds a *folded* name rather than the displayed one. `knownReporters` picks
    the spelling the vault uses most, so the canonical one can change under a live
@@ -884,9 +885,10 @@ and reopen the menu just chosen from.
 4. **View search** — `reporter` joins the haystack in `filtered`, so `/` finds a
    person's items by name.
 
-Not doing: a Reporter column in the backlog table, already seven columns wide, and
-MCP parity — `vault_create_item` and `vault_update_item` do not accept `reporter`
-either. Both are cheap once this lands and neither blocks it.
+Not doing: a Reporter column in the backlog table, already seven columns wide.
+MCP parity was deferred here too and has since landed — `reporter` is in `detail()`,
+in both write tools' `inputSchema`, and in `ItemFilter`, where it matches folded so
+`listItems` agrees with the app about who is one person.
 
 ### The fixture demonstrates it
 
@@ -997,6 +999,64 @@ stray writes. The likeliest remaining explanation is the overlapping instances,
 one of them holding renderer state for files that had been rewritten underneath
 it by a `git reset` — an artefact of how it was driven, not a path a user can
 take. Recorded rather than closed, because it was not reproduced.
+
+## The draft box knows that "requested by" is `reporter` ✅ built
+
+Promoted out of IDEAS.md, and the last surface that took prose and had nowhere to
+put a name. The MCP tools got there first; `DRAFT_SCHEMA` in `claude.ts` still had
+no `reporter`, so a note reading *"Priya asked for this"* left the model one
+reasonable option — write the name into the description body, where
+`knownReporters` never sees it and the reporter filter never matches it. Not lost;
+filed where it cannot be queried, which is harder to notice than an empty field and
+harder to correct.
+
+**One property, and two paragraphs of prose.** The wire schema gained `reporter` in
+`required` and in `properties`, and that is the entire main-process change:
+`ItemDraft.input` is already `CreateItemInput`, which carries the field, and
+`stripEmpty` already turns `""` into absence exactly as it does for `category`. The
+work is in the description text and a new paragraph in the system prompt, because
+those are the only places a model can learn that "requested by", "asked for by" and
+"raised by" all name this field. Both say the same three things: the synonyms, that
+a note naming nobody answers `""`, and that a name left in the description is
+findable only by accident.
+
+**The note's author is not a reporter**, said in both places. The prompt is written
+in the first person by the person creating the item, and a model asked who wanted
+the work will otherwise sometimes answer with them. Work you raised yourself has no
+reporter, which is the state the field is in most of the time.
+
+**The trap was one layer up.** `CreateDialog` deliberately did *not* apply a draft's
+reporter, and its comment gave the reason: the schema never asked for one. Adding
+the property without touching that comment would have dropped the drafted name
+silently — the same failure this fixes, one layer higher, and the same shape as the
+`labels`/`cadence` gap Phase 4 records having caught. So it is applied
+conditionally, `if (input.reporter)`, rather than with the unconditional
+`?? ""` clear the fields above it use. That asymmetry is load-bearing: a note that
+mentions nobody must not wipe a name typed before pressing Draft, because "the note
+said nothing about who asked" is not "nobody asked".
+
+**One key, not two.** `requestedBy` is not accepted as an alias. The synonym belongs
+in the text the model reads; a schema carrying both keys would immediately need a
+rule for what happens when both arrive, and there is no good answer to that.
+
+**The vault's existing reporter names are not passed into the prompt**, though the
+categories and labels beside them are, for exactly that purpose. The cases differ.
+A near-miss category splits a facet permanently and nobody notices, because nobody
+knows the existing set by heart; a person's name you just typed into your own note,
+you do. The draft lands in a `Suggest` field with the known names one keystroke
+away, in a form that has to be read before Create — and case is folded by the
+filter already, so what is left is `Priya` against `Priya Raman`, which the
+confirmation step catches. Cheap to add if drafts ever start inventing spellings.
+
+**Verified as far as it can be without a key.** Typecheck clean, and the wire
+payload `DRAFT_SCHEMA` now emits was run through `stripEmpty` and `CreateItemInput`
+both with a name and with `""`, with the conditional guard exercised in both
+directions. `claude.ts` cannot be imported outside Electron — `secrets.ts` pulls in
+`safeStorage` — which is why the draft schema still has no committed test and why
+this check reproduced the contract rather than the module. Unverified is the half
+that needs the model: whether a note naming someone actually comes back with the
+name in `reporter` rather than in the description. That wants a real key and one
+draft.
 
 ## Phase 0.6 — parity across the three surfaces ✅
 

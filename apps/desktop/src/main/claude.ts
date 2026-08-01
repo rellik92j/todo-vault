@@ -58,6 +58,7 @@ const DRAFT_SCHEMA = {
     "labels",
     "dueDate",
     "cadence",
+    "reporter",
     "notes",
   ],
   properties: {
@@ -96,6 +97,11 @@ const DRAFT_SCHEMA = {
       type: "string",
       enum: [...CADENCES],
       description: "How often the work recurs. 'none' for one-off work, which is most work.",
+    },
+    reporter: {
+      type: "string",
+      description:
+        'Who asked for the work — "requested by", "asked for by" and "raised by" all mean this field, and "Priya asked for this" makes it Priya. Empty string when the note names nobody, which includes work the writer raised for themselves. Never guess a name, and never leave one only in the description, where nothing can filter on it.',
     },
     notes: {
       type: "string",
@@ -138,6 +144,12 @@ function systemPrompt(context: DraftContext): string {
     context.labels.length
       ? `Labels already in use: ${context.labels.join(", ")}`
       : "No labels are in use yet.",
+    "",
+    "A person named in the note is usually who asked for the work, however it is",
+    'phrased — "Priya asked for this", "requested by Sam", "the vendor wants it" all',
+    "belong in `reporter`. Put the name there rather than in the description, which",
+    "nothing can filter on. The note's own author is not a reporter: work someone",
+    "raised for themselves has none, and that is the ordinary case.",
     "",
     "Draft exactly what the note asks for. Do not add scope, invent detail, or",
     "split one note into several tasks. When the note is vague, leave fields empty",

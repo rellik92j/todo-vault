@@ -112,9 +112,14 @@ export function CreateDialog({
     setCategory(input.category ?? "");
     setLabels((input.labels ?? []).join(", "));
     setCadence(input.cadence ?? "none");
-    // Reporter is deliberately left alone rather than cleared with the rest: the
-    // draft tool schema never asks Claude for one, so it has nothing to say about
-    // it, and a name typed before pressing Draft is still who asked for the work.
+    // Applied only when the draft names someone, unlike the fields above which
+    // are cleared when it does not. The schema does ask Claude for a reporter
+    // now, but most notes name nobody and come back empty — and an empty answer
+    // must not wipe a name typed before pressing Draft, since that person still
+    // asked for the work. Overwriting it when the note *does* name someone is
+    // the point: a name only Claude saw would otherwise reach the description
+    // body, where the reporter filter can never find it.
+    if (input.reporter) setReporter(input.reporter);
     setNotes(caveat);
   };
 

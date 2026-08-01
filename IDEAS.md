@@ -153,39 +153,6 @@ capability URLs, and an agent adding them in bulk to a vault that auto-commits t
 a remote is that concern multiplied. Still a note in `SCHEMA.md` rather than a
 mechanism, but decided knowingly.
 
-## "Requested by" is "Reporter" — the Claude draft box should know that
-
-The MCP half of this is built: `reporter` is now in `detail()`, in both write
-tools' `inputSchema`, and in `ItemFilter`, where it matches folded so `listItems`
-agrees with the app that "John Doe" and "john doe" are one person. What is left is
-the other surface that takes prose instead of form fields — the draft box.
-
-`DRAFT_SCHEMA` in `claude.ts` has no `reporter` property, so a note that says
-"Priya asked for this" has nowhere structured to put the name and the model does
-the reasonable thing: writes it into the description body, where `knownReporters`
-will never find it and the reporter filter will never match it. Not lost, filed
-where it cannot be queried — harder to notice *and* harder to correct than an
-empty field, which is why this is worth closing rather than leaving.
-
-The schema change itself is one property. `ItemDraft.input` is `CreateItemInput`,
-which already carries the field, and `stripEmpty` already treats `""` as absent
-exactly as it does for `category`, so nothing else on the main-process side moves.
-
-The trap is one layer up, and it is the reason this entry is still here rather
-than done. `CreateDialog.tsx` deliberately does *not* apply a draft's reporter,
-and says so: "the draft tool schema never asks Claude for one, so it has nothing
-to say about it, and a name typed before pressing Draft is still who asked for the
-work." Add the property without touching that and the drafted name is silently
-dropped — the same failure this entry exists to fix, one layer higher. The fix
-follows the precedent already beside it (`if (input.priority) setPriority(...)`):
-apply it only when non-empty, so a name typed before pressing Draft still survives
-a note that names nobody. The comment has to change with it.
-
-One thing not to do casually: don't accept `requestedBy` as a second key. One
-field, one key — the synonym belongs in the property description and the system
-prompt where the model reads it, not in a schema that would then need a rule for
-what happens when both arrive.
-
 ## "Turn on history" — a button that sets git up for the chosen vault
 
 Setting up history today is a manual sequence nobody should have to know: copy a
