@@ -8,6 +8,99 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## A drifted item still cannot be pushed as an update
+
+Fixing the planner's eligibility check left the harder half standing: nothing in
+the repo updates an existing Jira issue. `buildPushPlan` only ever creates, so a
+drifted item's choices are a duplicate issue or a hand edit. The plan now says so
+in a warning, which is honest, but the remedy is still manual — edit Jira, then
+call `vault_mark_pushed` again to re-stamp the baseline. That call rebuilds
+`sync` from scratch (`vault.ts:766-772`), so it wants `jiraKey` re-supplied and
+`jiraId` re-supplied too, or the id is silently dropped. No README, SCHEMA.md, or
+tool description says any of this, and there is no CLI `mark-pushed` at all —
+which makes `README.md`'s claim that the MCP surface, the CLI and `Vault` all
+cover the same operations untrue today.
+
+A smaller thing worth folding in whenever this is picked up: `updateItem` only
+ever moves `pushed → drifted` and never back, so an item edited and then reverted
+keeps the `drifted` pill in the detail panel forever. The push planner no longer
+cares — it compares hashes rather than trusting the label — but the UI still
+misreports it.
+
+One caution for whoever picks this up: drift claims in this repo have gone stale
+before. `PLAN-LINKS.md` states that adding links to a pushed item flips it to
+`drifted`. It does not — `links` is absent from `pushableFields`, and `addLink`
+persists without recomputing anything. Check the field list rather than the
+prose.
+
+## "Scheduled" as a seventh status — and the two clogs it would paper over
+
+The complaint is real and `SCHEMA.md` already concedes it in as many words: a
+daily task "sits in `todo` forever and accumulates completions". Nothing about
+that is a bug, and it is exactly what makes the `todo` pile stop being a list of
+what to do next. But the ask bundles two failures with different shapes, and they
+want separating before a mechanism gets picked, because neither one obviously
+needs a status.
+
+**The recurring half is not an information problem.** `isSettledForWindow` and
+`isTickedFor` already exist in `recurrence.ts`, import nothing, and are already
+imported by `Board.tsx` and `BacklogTable.tsx` — both render `<Cadence ticked>`
+on the card. So the board already knows this period's turn is done and already
+says so. What it does not do is *act*: a daily item ticked an hour ago holds the
+same slot in the `todo` column, and counts the same in the sidebar, as one nobody
+has touched all week. The agenda got this right and is the precedent — it drops
+settled items rather than retiring them. The board and table want the same
+reading, as a filter beside the existing cadence dropdown in `App.tsx`, not as a
+status.
+
+**The scheduled half is a genuine gap, in a different field.** `startDate` is
+stored, editable in `ItemDetail`, and in `pushableFields` — and filters nothing,
+anywhere. `ItemFilter` has `dueBefore` and `dueAfter` with no start equivalent,
+so work that begins in September is indistinguishable, in every view, from work
+actionable this morning. That is the clog described, and the missing piece is the
+neighbour `dueBefore` never got, not a new value in an enum.
+
+Which is the distinction worth writing down, because it decides this and will
+decide the next one like it: **does the item leave the state on its own, or does a
+person decide it leaves?** A start date arriving is the clock, so it should be
+derived — a status for it goes stale the morning it comes true, and the only fixes
+are a sweep on load or nothing. A sweep means the app rewrites `status` on files
+it merely opened, which lands in git history as an edit nobody made, and the
+frontmatter ordering exists precisely so diffs mean something.
+
+That leaves one case a status genuinely fits, and it is worth asking whether it is
+the real ask: *"I have decided not to look at this until later, and I will not
+invent a start date to say so."* That is a decision, not a date, and nothing in
+the schema records it — `blocked` is close but claims something external is in the
+way. If that is what is wanted it should be named for the decision, `parked` or
+`deferred`, not `scheduled`, which promises a date it does not have.
+
+One point genuinely on the status side, since it cuts against deriving: `status`
+is not in `pushableFields` but `startDate` is. Expressing "later" by typing a date
+flips a pushed item to `drifted` against Jira; a status change would not.
+
+If it does turn out to be `parked`, the cost is not distributed the way the
+`disregard` phase would suggest. Jira is free — `statusTransitions` is a
+defaulted record that nothing reads yet, so an unmapped status is a doc edit.
+`TRANSITIONS` is where the work actually is: a new row plus a decision in each of
+six existing rows, every one the same rollup-integrity question that makes
+`todo → in_review` a refusal. `DONE_STATUSES` is the trap — its comment reads "no
+longer needs attention", which a parked item satisfies, but `open` must still
+find it or this is `disregard` with a friendlier label; reuse silently retires the
+item, and a second set means every existing caller has to say which of the two it
+meant. `BOARD_ORDER` forces the choice the disregard column dodged, since
+`pieces.tsx` already records that six columns overflow the default window and
+that a status missing from the list makes cards vanish rather than merge. And the
+dot has to pass `--disregard`'s test — seventh hue distinguishable from six others
+at 7px — while wanting to read as *quiet*, which is what `--todo`'s grey already
+is.
+
+Cheapest first step is the same either way, and it is neither: the two filters.
+Both are additive, both use helpers that already exist, and together they make
+the pile mean "actionable now" without committing the schema to anything. If it
+still feels clogged afterwards, what is left is the parked decision — visible on
+its own, which is the only honest way to price a seventh status.
+
 ## OneDrive links through the MCP server, not pasted into the description
 
 The OneDrive design is already written — `PLAN-LINKS.md` ask 2, gotchas 1–3 and

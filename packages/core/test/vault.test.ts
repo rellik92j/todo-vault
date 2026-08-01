@@ -23,6 +23,14 @@ async function tmpVault(): Promise<Vault> {
   return vault;
 }
 
+/** The minimum map buildPushPlan needs, for tests that care about eligibility. */
+function planMap() {
+  return JiraMapSchema.parse({
+    jiraProjectKey: "ENG",
+    issueTypes: { epic: "Epic", story: "Story", task: "Task", bug: "Bug", subtask: "Subtask" },
+  });
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await fs.stat(p);
@@ -728,6 +736,41 @@ test("flags drift after a pushed item is edited", async () => {
 
   const changed = await vault.updateItem(item.key, { summary: "Changed after push" });
   assert.equal(changed.sync.state, "drifted");
+});
+
+test("a drifted item is warned about rather than drafted in silence", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.markPushed(item.key, "ENG-9");
+  await vault.updateItem(item.key, { summary: "Changed after push" });
+  await vault.load();
+
+  const plan = buildPushPlan(vault.listItems({ limit: 500 }).items, planMap(), vault);
+  assert.ok(
+    plan.warnings.some((w) => w.includes(item.key) && /creates a NEW issue/.test(w)),
+    "a drifted item must say it is about to duplicate ENG-9, not appear as an ordinary draft",
+  );
+  assert.ok(plan.drafts.some((d) => d.localKey === item.key));
+});
+
+test("a drifted item reverted to its pushed content is skipped", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.markPushed(item.key, "ENG-9");
+  await vault.updateItem(item.key, { summary: "Changed after push" });
+  const reverted = await vault.updateItem(item.key, { summary: "Original" });
+  await vault.load();
+
+  // updateItem only ever moves pushed -> drifted, so the label is still wrong here.
+  assert.equal(reverted.sync.state, "drifted", "the state does not heal on its own");
+
+  const plan = buildPushPlan(vault.listItems({ limit: 500 }).items, planMap(), vault);
+  assert.ok(
+    plan.skipped.some((s) => s.localKey === item.key),
+    "the hash matches Jira again, so this must not be re-drafted on the label alone",
+  );
+  assert.equal(plan.warnings.length, 0);
+  assert.equal(plan.drafts.length, 0);
 });
 
 test("doctor-style load reports invalid files instead of throwing", async () => {

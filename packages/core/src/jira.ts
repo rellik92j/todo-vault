@@ -175,11 +175,17 @@ export function buildPushPlan(items: Item[], map: JiraMap, vault: Vault): JiraPu
   const selected = new Map(items.map((i) => [i.key, i]));
 
   const eligible = items.filter((item) => {
-    if (item.sync.state === "pushed") {
-      const drifted =
+    // `drifted` carries a push baseline exactly as `pushed` does, so both belong
+    // here. Checking only `pushed` let a drifted item fall through with no skip
+    // and no warning, drafted as a brand-new issue for work Jira already had.
+    if (item.sync.state === "pushed" || item.sync.state === "drifted") {
+      // The hash decides, not the label. updateItem only ever moves
+      // pushed -> drifted and never back, so an item that was edited and then
+      // reverted still reads `drifted` while matching what Jira holds.
+      const changed =
         item.sync.contentHash &&
         contentHash(pushableFields(item)) !== item.sync.contentHash;
-      if (!drifted) {
+      if (!changed) {
         skipped.push({
           localKey: item.key,
           reason: `Already pushed as ${item.sync.jiraKey} and unchanged since`,
