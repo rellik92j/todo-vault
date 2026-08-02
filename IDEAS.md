@@ -53,9 +53,12 @@ want separating before a mechanism gets picked, because neither one obviously
 needs a status.
 
 **The recurring half is not an information problem.** `isSettledForWindow` and
-`isTickedFor` already exist in `recurrence.ts`, import nothing, and are already
-imported by `Board.tsx` and `BacklogTable.tsx` — both render `<Cadence ticked>`
-on the card. So the board already knows this period's turn is done and already
+`isTickedFor` already exist in `recurrence.ts` and import nothing. `isTickedFor`
+is already imported by `Board.tsx` and `BacklogTable.tsx` — both render
+`<Cadence ticked>` on the card — while `isSettledForWindow`, which is the one a
+filter would actually want, is so far used only by `agenda()` in the core. It is
+exported on the same `todo-vault/recurrence` subpath, so reaching it is an
+import, not a plumbing job. So the board already knows this period's turn is done and already
 says so. What it does not do is *act*: a daily item ticked an hour ago holds the
 same slot in the `todo` column, and counts the same in the sidebar, as one nobody
 has touched all week. The agenda got this right and is the precedent — it drops
@@ -102,7 +105,9 @@ find it or this is `disregard` with a friendlier label; reuse silently retires t
 item, and a second set means every existing caller has to say which of the two it
 meant. `BOARD_ORDER` forces the choice the disregard column dodged, since
 `pieces.tsx` already records that six columns overflow the default window and
-that a status missing from the list makes cards vanish rather than merge. And the
+that a status missing from the list makes cards vanish rather than merge — and
+the grouped board now derives its grid's `--columns` from that same length, so a
+seventh status widens every lane at once rather than misaligning one of them. And the
 dot has to pass `--disregard`'s test — seventh hue distinguishable from six others
 at 7px — while wanting to read as *quiet*, which is what `--todo`'s grey already
 is.
@@ -206,8 +211,8 @@ effect of clicking Fix.
 
 ## A UI style guide, so the next screen matches the last one
 
-`index.css` is one 1,683-line file in twenty sections, and it is two different
-things stacked on top of each other. The colour layer is a real system: `:root`
+`index.css` is one file of nearly two thousand lines in twenty sections, and it
+is two different things stacked on top of each other. The colour layer is a real system: `:root`
 tokens for surfaces, text, priorities and statuses, several carrying the reason
 they are what they are — `--disregard` is warm on purpose, because at a 7px dot
 hue is most of what separates it from `--todo`'s cool grey. That thinking is

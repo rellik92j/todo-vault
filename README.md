@@ -332,8 +332,19 @@ Because the vault is plain markdown, a Claude with only filesystem access can
 already read and edit it. The MCP server adds schema validation, key allocation,
 and hierarchy rules on top — worth having, but not a hard dependency.
 
-The MCP surface, the CLI, and `Vault` all cover the same operations, so nothing
-is reachable from one and not the others.
+The MCP surface and the CLI cover the same operations on items and projects, so
+neither is a second-class way in. Four things are one-sided today, and it is
+worth knowing which rather than assuming symmetry:
+
+- `doctor`, `git-status` and `jira csv` are **CLI-only**. The first two are
+  diagnostics and the third is an export; none is an edit.
+- `vault_mark_pushed` is **MCP-only**. There is no `vault mark-pushed`, which
+  matters because the section below tells you to call it after a push — from the
+  CLI, that step has to go through `Vault.markPushed`.
+- Removing a link is **`Vault.removeLink` and the desktop app only**. Both
+  surfaces can add one; neither can take one away.
+- Renaming, deleting and restoring a **project** are CLI and MCP only. The app
+  creates, reorders, hides and unhides.
 
 ## Pushing to Jira
 
