@@ -332,8 +332,19 @@ Because the vault is plain markdown, a Claude with only filesystem access can
 already read and edit it. The MCP server adds schema validation, key allocation,
 and hierarchy rules on top — worth having, but not a hard dependency.
 
-The MCP surface, the CLI, and `Vault` all cover the same operations, so nothing
-is reachable from one and not the others.
+The MCP surface and the CLI cover the same operations on items and projects, so
+neither is a second-class way in. Four things are one-sided today, and it is
+worth knowing which rather than assuming symmetry:
+
+- `doctor`, `git-status` and `jira csv` are **CLI-only**. The first two are
+  diagnostics and the third is an export; none is an edit.
+- `vault_mark_pushed` is **MCP-only**. There is no `vault mark-pushed`, which
+  matters because the section below tells you to call it after a push — from the
+  CLI, that step has to go through `Vault.markPushed`.
+- Removing a link is **`Vault.removeLink` and the desktop app only**. Both
+  surfaces can add one; neither can take one away.
+- Renaming, deleting and restoring a **project** are CLI and MCP only. The app
+  creates, reorders, hides and unhides.
 
 ## Pushing to Jira
 
@@ -371,22 +382,24 @@ silently dropping your dates.
 npm test
 ```
 
-Fifty-three tests over the core: key allocation, disk round-trips, frontmatter
+Sixty-four tests over the core: key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
-ticking recurring work and the period it counts for, backlinks, attachments,
-agenda sectioning, the description grammar in both directions — including that
-parsing survives a write unchanged, and that every description in the example
-vault is one the rich editor may touch — ADF conversion, push ordering, drift
-detection, manual reordering of both items and projects, trash and restore,
-hiding and unhiding a project, project rename and cross-project moves, path
-portability, git health reporting, atomic writes, and which Windows rename
-failures are worth retrying.
+the date a pickup stamps, ticking recurring work and the period it counts for,
+backlinks, attachments, agenda sectioning, the description grammar in both
+directions — including that parsing survives a write unchanged, and that every
+description in the example vault is one the rich editor may touch — ADF
+conversion, push ordering, drift detection down to a link's target and label,
+manual reordering of both items and projects, trash and restore, hiding and
+unhiding a project, project rename and cross-project moves, path portability,
+git health reporting, atomic writes, and which Windows rename failures are worth
+retrying.
 
-Nine more over the desktop app, on `ordering.ts` — the pure function behind the
-backlog's nesting, collapse, and type filtering. It gets tests because it is the
-one piece of renderer logic where a wrong answer is invisible: rows would simply
-not be where you expected, and the keyboard cursor would walk an order the eye
-never sees. `npm test` from the root runs both workspaces.
+Twenty more over the desktop app, on `ordering.ts` — the pure functions behind
+the backlog's nesting, collapse and type filtering, and the board's lanes. They
+get tests because this is the one piece of renderer logic where a wrong answer
+is invisible: rows would simply not be where you expected, and the keyboard
+cursor would walk an order the eye never sees. `npm test` from the root runs
+both workspaces.
 
 ## What is not here yet
 

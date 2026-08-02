@@ -185,9 +185,12 @@ export function Board({
       onDragCancel={() => setDragging(null)}
     >
       {grouped ? (
-        // --columns rather than a literal 6 in the CSS: BOARD_ORDER owns how many
-        // statuses there are, and a seventh would not merely misalign the grid —
-        // the extra header cell would wrap onto the lanes' row.
+        // --columns rather than a literal 6 in the CSS: the header row and every
+        // lane are *separate* grids that have to agree on their track count, or
+        // the names stop sitting above the columns they name. BOARD_ORDER owns
+        // how many statuses there are, so it owns the track count too — one
+        // number feeding both grids, rather than a 6 in the stylesheet that a
+        // seventh status would silently leave behind.
         <div
           className="board-grouped"
           style={{ "--columns": BOARD_ORDER.length } as React.CSSProperties}

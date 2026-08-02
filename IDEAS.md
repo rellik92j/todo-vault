@@ -15,23 +15,33 @@ the repo updates an existing Jira issue. `buildPushPlan` only ever creates, so a
 drifted item's choices are a duplicate issue or a hand edit. The plan now says so
 in a warning, which is honest, but the remedy is still manual — edit Jira, then
 call `vault_mark_pushed` again to re-stamp the baseline. That call rebuilds
-`sync` from scratch (`vault.ts:766-772`), so it wants `jiraKey` re-supplied and
-`jiraId` re-supplied too, or the id is silently dropped. No README, SCHEMA.md, or
-tool description says any of this, and there is no CLI `mark-pushed` at all —
-which makes `README.md`'s claim that the MCP surface, the CLI and `Vault` all
-cover the same operations untrue today.
+`sync` from scratch (`Vault.markPushed`), so it wants `jiraKey` re-supplied and
+`jiraId` re-supplied too, or the id is silently dropped. No SCHEMA.md entry or
+tool description says any of this. There is also no CLI `mark-pushed` at all;
+`README.md` used to paper over that with a blanket claim of parity and now names
+it as a gap instead, which is honest but is not the same as closing it.
 
-A smaller thing worth folding in whenever this is picked up: `updateItem` only
-ever moves `pushed → drifted` and never back, so an item edited and then reverted
-keeps the `drifted` pill in the detail panel forever. The push planner no longer
-cares — it compares hashes rather than trusting the label — but the UI still
-misreports it.
+A smaller thing worth folding in whenever this is picked up: drift is one-way —
+`markDriftIfChanged` moves `pushed → drifted` and never back — so an item edited
+and then reverted keeps the `drifted` pill in the detail panel forever. The push
+planner no longer cares, since it compares hashes rather than trusting the
+label, but the UI still misreports it. Healing the label needs a rule about what
+`pushed` means when nothing was pushed, which is why it sits here rather than
+having been fixed alongside the hash.
 
-One caution for whoever picks this up: drift claims in this repo have gone stale
-before. `PLAN-LINKS.md` states that adding links to a pushed item flips it to
-`drifted`. It does not — `links` is absent from `pushableFields`, and `addLink`
-persists without recomputing anything. Check the field list rather than the
-prose.
+One caution for whoever picks this up, kept because getting it wrong once is
+instructive: this entry used to warn that `PLAN-LINKS.md` was wrong to say
+adding a link flips a pushed item to `drifted`. The observation was right —
+`links` was absent from `pushableFields` and `addLink` persisted without
+recomputing anything — and the conclusion was backwards. Links *are* pushed, in
+the description footer, so the doc described correct behaviour that had never
+been built. Both halves are fixed now (see PLAN.md, "Links count as drift"): the
+field list gained `links`, and the recomputation moved into `persist`, where the
+writers that skip `updateItem` go through it too.
+
+So the standing advice survives in a sharper form. Check the field list rather
+than the prose — and when the two disagree, ask which one Jira would agree with
+before assuming the prose is the stale half.
 
 ## "Scheduled" as a seventh status — and the two clogs it would paper over
 
@@ -43,9 +53,12 @@ want separating before a mechanism gets picked, because neither one obviously
 needs a status.
 
 **The recurring half is not an information problem.** `isSettledForWindow` and
-`isTickedFor` already exist in `recurrence.ts`, import nothing, and are already
-imported by `Board.tsx` and `BacklogTable.tsx` — both render `<Cadence ticked>`
-on the card. So the board already knows this period's turn is done and already
+`isTickedFor` already exist in `recurrence.ts` and import nothing. `isTickedFor`
+is already imported by `Board.tsx` and `BacklogTable.tsx` — both render
+`<Cadence ticked>` on the card — while `isSettledForWindow`, which is the one a
+filter would actually want, is so far used only by `agenda()` in the core. It is
+exported on the same `todo-vault/recurrence` subpath, so reaching it is an
+import, not a plumbing job. So the board already knows this period's turn is done and already
 says so. What it does not do is *act*: a daily item ticked an hour ago holds the
 same slot in the `todo` column, and counts the same in the sidebar, as one nobody
 has touched all week. The agenda got this right and is the precedent — it drops
@@ -92,7 +105,9 @@ find it or this is `disregard` with a friendlier label; reuse silently retires t
 item, and a second set means every existing caller has to say which of the two it
 meant. `BOARD_ORDER` forces the choice the disregard column dodged, since
 `pieces.tsx` already records that six columns overflow the default window and
-that a status missing from the list makes cards vanish rather than merge. And the
+that a status missing from the list makes cards vanish rather than merge — and
+the grouped board now derives its grid's `--columns` from that same length, so a
+seventh status widens every lane at once rather than misaligning one of them. And the
 dot has to pass `--disregard`'s test — seventh hue distinguishable from six others
 at 7px — while wanting to read as *quiet*, which is what `--todo`'s grey already
 is.
@@ -196,8 +211,8 @@ effect of clicking Fix.
 
 ## A UI style guide, so the next screen matches the last one
 
-`index.css` is one 1,683-line file in twenty sections, and it is two different
-things stacked on top of each other. The colour layer is a real system: `:root`
+`index.css` is one file of nearly two thousand lines in twenty sections, and it
+is two different things stacked on top of each other. The colour layer is a real system: `:root`
 tokens for surfaces, text, priorities and statuses, several carrying the reason
 they are what they are — `--disregard` is warm on purpose, because at a 7px dot
 hue is most of what separates it from `--todo`'s cool grey. That thinking is

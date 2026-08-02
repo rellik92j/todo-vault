@@ -4,7 +4,7 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 80 green tests — 60 in the core, 20 over the app's
+below them. The suite is at 84 green tests — 64 in the core, 20 over the app's
 `ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
 carries `vault jira discover` with it.
 
@@ -256,9 +256,10 @@ row does not already display.
 
 **Fifteen shortcuts, generated from one registry.** `shortcuts.ts` is read by
 both the handler and the `?` overlay, because a hand-written cheatsheet drifting
-from the handler is the standard way this feature rots. (Twenty now: collapse
-added `h`/`l` and zoom added a Display group. The registry earning its keep is
-the point — every one of those five appeared in the overlay for free.)
+from the handler is the standard way this feature rots. (Twenty-two now:
+collapse added `h`/`l`, zoom added a Display group, and the board's `g` joined
+it. The registry earning its keep is the point — every one of those seven
+appeared in the overlay for free.)
 
 **The cursor is not the selection.** The detail panel is `position: fixed` over
 the right 520px, so if `j` also opened it, every keystroke would slide a panel
@@ -686,6 +687,79 @@ ever contains closed work. The `in_progress` item behind the curtain had to be
 closed, hidden, then reopened via the CLI — which is exactly the cross-boundary
 write the parent field's `offProject` comment already describes.
 
+## The board groups into one band per project ✅ built and driven
+
+Promoted out of IDEAS.md. Renderer-only, like collapse and the type filter: view
+state behind `g`, forgotten when the window closes, nothing on disk.
+
+A board column mixes projects, and Phase 2 records the two bugs that came of
+that — ranks compared across projects, and a drag that appeared to reshuffle
+everything. The fix there was to *sort* by project inside each column. This is
+the same information drawn as structure instead: `boardLanes` returns a list of
+bands, each a full row of status columns, and the grouped board renders one per
+project in sidebar order.
+
+**One function for both modes, and it is the same one `orderedKeys` calls.**
+Ungrouped is an early return — a single lane, `project: null`, holding the
+columns the board already drew — so the flat board is now a special case of the
+grouped one rather than a second code path. That matters because `App.tsx` calls
+`boardLanes` again to build the keyboard order, and the rule the collapse work
+set still holds: the cursor walks the order the eye sees, and the only way to
+guarantee that is for there to be one answer to what the order is.
+
+**Grouping turns that order from status-major into lane-major**, which is the
+whole point of the flattening being derived rather than written twice. With
+bands on screen, walking every project's To do column before any project's In
+progress column would send the cursor back up the page. There is a test for
+exactly this, because it is invisible until someone presses `j` eleven times.
+
+**`project: null` rather than a sentinel key** for the ungrouped lane. It is the
+one value a project key can never be, so nothing downstream has to know which
+made-up string means "all of them" — and `laneAllows` reads it directly: a null
+lane accepts any card, a named lane accepts only its own project's.
+
+**A project with no cards in the filtered set gets no lane.** "Hide closed" is a
+filter and it is on by default, so the alternative is a screen of empty bands
+with the real cards buried among them. An *unknown* project still gets one, at
+the end, sorted among its fellows — `boardColumns` already refused to drop a
+card whose project the sidebar does not know, and a lane that silently swallowed
+one would break the same promise.
+
+Three things worth remembering:
+
+- **The lane header counts its own cards, not the project's open items.**
+  `ProjectSummary.openItems` is computed over the whole vault *and* counts only
+  open work, so it disagrees with the cards under it in two directions at once —
+  with Hide closed off, a band of twelve headed "7".
+- **`--columns` is set from `BOARD_ORDER.length`, not written as `6` in the
+  CSS.** The status names are drawn once, sticky, above the lanes — and the
+  header row and every lane are *separate* grids, because a sticky element
+  cannot escape its own grid area and one big grid gave it nowhere to travel.
+  Separate grids have to be told the same track count or the names stop sitting
+  above the columns they name, so `BOARD_ORDER.length` feeds both. This is the
+  third place `BOARD_ORDER` has turned out to own something (see `disregard`,
+  and `pieces.tsx`'s note about vanishing cards); the "Scheduled" idea in
+  IDEAS.md prices a seventh status against it.
+  *Found while writing this up:* the comment at that line said a seventh status
+  would wrap the extra header cell onto the lanes' row, which two separate grids
+  cannot do. Corrected in place — the reason is real, the mechanism was not.
+- **The intra-column reorder walk was left exactly as it was.** Grouped, every
+  card in a lane shares a project, so the search for the nearest same-project
+  neighbour finds the drop target on its first step and reduces to "after the
+  card you dropped on". Ungrouped columns still interleave, so the walk is still
+  load-bearing there. One path that is exactly right in both modes beats two,
+  which is the same call Phase 2 recorded making.
+
+**`g` is gated on the board** rather than bound globally. It is the only view
+with lanes, and a key that silently changes something two views away is worse
+than one that does nothing. It appears in the `?` overlay for free, under
+Display — the registry earning its keep for the sixth time.
+
+**Eleven tests**, which is why the desktop suite went from nine to twenty. They
+cover the two claims nothing else could check: that every item appears exactly
+once whether grouped or not, and that grouping is what turns the keyboard order
+lane-major.
+
 ## Starting something date-stamps it ✅ built
 
 Promoted out of IDEAS.md. `startDate` was stored, editable and pushed to Jira,
@@ -749,6 +823,94 @@ mapping `null` to `undefined`, so "no `startDate`" cannot distinguish "never had
 one" from "deliberately emptied". Clear it, cycle through `blocked`, and it comes
 back. The rule reads the *merged* value, so at least clearing it and moving in
 the same call does not immediately refill it.
+
+## Links count as drift, and the check moved down a level ✅ built
+
+Found by auditing IDEAS.md against the code rather than by using the app, which
+is worth saying because it was invisible from the outside: nothing failed, an
+item simply stayed silent when it should have spoken up.
+
+`buildDescription` puts every one of an item's `links` into the Jira description,
+under a `## Links` heading — that is what `PLAN-LINKS.md` gotcha 12 meant by
+"links are pushed". But `pushableFields`, which is the hash deciding whether a
+pushed item has drifted, omitted `links` entirely. So adding a link to a pushed
+item changed what Jira *should* hold and changed nothing the plan could see:
+`buildPushPlan` read it as "Already pushed as ENG-412 and unchanged since" and
+skipped it. Not a wrong answer on screen — no answer at all.
+
+That also made `SCHEMA.md`'s flat claim that "`contentHash` covers only the
+fields that actually get pushed" false in exactly one case, which is the kind of
+sentence that stays trusted precisely because it reads as a definition.
+
+**IDEAS.md had this backwards and now says so.** Its caution paragraph told the
+next reader that `PLAN-LINKS.md` was wrong about links causing drift and to
+"check the field list rather than the prose". The mechanism it describes is
+right and the conclusion was not: the field list was the thing that was wrong,
+and the prose it warned against was describing correct behaviour that had never
+been implemented.
+
+**Links are flattened to strings before hashing, and this is not a style
+choice.** `contentHash` hands `Object.keys(input).sort()` to `JSON.stringify` as
+the *replacer* argument, and an array replacer filters object properties at
+every depth, not just the top. Raw link objects would have hashed as
+`[{"type":"url"}]` — `target` and `label` dropped, `type` surviving only because
+it collides with the top-level field of the same name. The naive version
+typechecks, passes a test that changes a link's type, and detects nothing else.
+Every other value in `pushableFields` is a primitive or an array of strings,
+which is why this never came up before; a comment now says so, because the next
+field added there will face the same trap.
+
+**Not sorted, unlike `labels` and `components`.** The footer renders links in
+array order, so their order is part of what reaches Jira.
+
+**The check moved from `updateItem` into `persist`, and that is most of the
+value.** `addLink` and `removeLink` build the next item themselves and go
+straight to `persist` — they never pass through `updateItem` — so the hash fix
+alone would have left the *label* saying `pushed` while the plan correctly
+re-drafted the item. Two surfaces disagreeing is worse than one being wrong.
+`persist` is the funnel Phase 0.5 built for exactly this reason, and the
+argument is the one the `startDate` rule already made: a rule one level up looks
+complete while missing the writers least likely to be checked by hand.
+
+Moving it is safe in a way worth recording rather than re-deriving. Of
+`persist`'s ten callers, `createItem` carries `state: "never"`, `tickItem`,
+`untickItem`, `addComment` and `moveItem` touch nothing pushable, and
+`markPushed` re-hashes the item it just stamped and finds it equal. The two
+writers that reach `writeAndIndex` directly stay excluded on purpose: respacing
+only rewrites `rank`, and `rekeyItems` is a project rename, where a local key
+changing is not a claim about Jira's copy.
+
+**`addAttachment` is the tenth caller, and it is deliberately left alone.** It
+looks like the same shape as links — `buildPushPlan` carries an `attachments`
+list, so attaching a file to a pushed item does change what a push would do —
+but the resemblance stops at the surface. Links are *content*, rendered into a
+description field that a re-push overwrites; attachments are uploaded by a
+separate call that appends, so an item marked `drifted` for a new attachment
+would be telling the user Jira is stale while offering a remedy that duplicates
+every file already up there. Making that honest needs a push that can upload
+attachments incrementally, which is Phase 5's problem. Recorded here so the
+asymmetry reads as a decision rather than as the same oversight left half-fixed.
+
+Still one-way. Nothing moves `drifted` back to `pushed`, because only a real
+push can say Jira has caught up — and `buildPushPlan` already compares hashes
+rather than trusting the label, so a reverted item is skipped correctly despite
+reading `drifted`. The detail panel's stale pill is unchanged, and is still
+IDEAS.md's to fix.
+
+**Four tests.** A link added after a push drifts the item and reaches the plan's
+warnings; retargeting a link drifts it; relabelling one drifts it while leaving
+the stored baseline hash alone. Those middle two exist because the replacer trap
+is exactly what a careless fix falls into, and it passes a test that only ever
+changes a link's type.
+
+The fourth guards the other direction, and is the one that would fail silently
+years from now. Moving the check into `persist` means it runs *before*
+`writeAndIndex` parses, while `markPushed` stamped a hash of an already-parsed
+item — so the two agree only as long as nothing in `LinkSchema` defaults or
+transforms. Nothing does. If that ever changes, every pushed item carrying a
+link would read `drifted` after any edit at all, and a test asserting that a
+comment and a reorder leave a linked, pushed item alone is what says so out
+loud. The suite is at 84 — 64 in the core, 20 over the app's `ordering.ts`.
 
 ## Phase 5 — Jira push from the UI
 
@@ -1210,7 +1372,7 @@ stdio; no HTTP listener is ever constructed, let alone a static file handler.
 **So it is recorded rather than fixed.** The upgrade was tried and does work —
 SDK 1.30.0 widens the range to `^1.19.9 || ^2.0.5`, and with
 `@hono/node-server` then pulled up to 2.0.12 the audit is clean, typecheck
-passes, the suite is unchanged, and a stdio smoke test still lists all 25 tools
+passes, the suite is unchanged, and a stdio smoke test still lists all 26 tools
 and returns real data. It is left undone because a major bump of an unused
 transport's unused dependency buys nothing but a quieter audit line, and the
 same bump is free to take later on its own merits.
