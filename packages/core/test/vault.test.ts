@@ -851,6 +851,78 @@ test("a drifted item reverted to its pushed content is skipped", async () => {
   assert.equal(plan.drafts.length, 0);
 });
 
+test("a link added after a push counts as drift", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.markPushed(item.key, "ENG-9");
+
+  // Links are pushed inside the description footer, so adding one leaves Jira
+  // holding a description this item no longer matches.
+  const linked = await vault.addLink(item.key, { type: "url", target: "https://example.com/spec" });
+  assert.equal(linked.sync.state, "drifted");
+
+  await vault.load();
+  const plan = buildPushPlan(vault.listItems({ limit: 500 }).items, planMap(), vault);
+  assert.ok(
+    plan.warnings.some((w) => w.includes(item.key)),
+    "an item whose footer has changed must not be skipped as unchanged",
+  );
+});
+
+test("drift sees a link's target and label, not just its type", async () => {
+  // contentHash hands Object.keys() to JSON.stringify as a replacer allowlist,
+  // which filters object properties at every depth. Hashing raw link objects
+  // would keep `type` (a top-level field name) and drop `target` and `label`,
+  // so these two edits are the ones that would silently go unnoticed.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/one", label: "Spec" });
+  await vault.markPushed(item.key, "ENG-9");
+
+  await vault.removeLink(item.key, "https://example.com/one");
+  const retargeted = await vault.addLink(item.key, {
+    type: "url",
+    target: "https://example.com/two",
+    label: "Spec",
+  });
+  assert.equal(retargeted.sync.state, "drifted", "a link pointing somewhere else is a change");
+});
+
+test("an unrelated write does not drift a pushed item that has links", async () => {
+  // The check runs in persist(), which sees the item *before* writeAndIndex
+  // parses it, while markPushed stamped a hash of an already-parsed one. Nothing
+  // in LinkSchema defaults or transforms, so the two agree — this is the test
+  // that says so, because if that ever stopped being true every pushed item
+  // with a link would read `drifted` after any edit at all.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/one", label: "Spec" });
+  await vault.markPushed(item.key, "ENG-9");
+
+  const commented = await vault.addComment(item.key, "Unrelated note");
+  assert.equal(commented.sync.state, "pushed", "a comment is not pushed, so it is not drift");
+
+  const ranked = await vault.moveItem(item.key, {});
+  assert.equal(ranked.sync.state, "pushed", "nor is a manual reorder");
+});
+
+test("a link's label is part of the pushed footer, so it counts too", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/one", label: "Spec" });
+  const pushed = await vault.markPushed(item.key, "ENG-9");
+
+  const before = pushed.sync.contentHash;
+  await vault.removeLink(item.key, "https://example.com/one");
+  const relabelled = await vault.addLink(item.key, {
+    type: "url",
+    target: "https://example.com/one",
+    label: "Design",
+  });
+  assert.equal(relabelled.sync.state, "drifted", "only the label moved, and it is rendered");
+  assert.equal(relabelled.sync.contentHash, before, "the baseline itself must not be rewritten");
+});
+
 test("doctor-style load reports invalid files instead of throwing", async () => {
   const vault = await tmpVault();
   await fs.writeFile(

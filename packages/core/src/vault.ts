@@ -461,7 +461,7 @@ export class Vault {
   }
 
   private async persist(next: Item, message: string): Promise<Item> {
-    const item = await this.writeAndIndex(next);
+    const item = await this.writeAndIndex(markDriftIfChanged(next));
     await this.commit(message);
     return item;
   }
@@ -600,13 +600,8 @@ export class Vault {
     const frontmatter = ItemFrontmatterSchema.parse(stripDescription(merged));
     const next: Item = { ...frontmatter, description };
 
-    // If this item was already pushed, a content change means Jira is now stale.
-    if (next.sync.state === "pushed" && next.sync.contentHash) {
-      if (contentHash(pushableFields(next)) !== next.sync.contentHash) {
-        next.sync = { ...next.sync, state: "drifted" };
-      }
-    }
-
+    // Drift is recomputed in persist(), not here: addLink and removeLink never
+    // come through this method, and a rule at this level silently skipped them.
     return this.persist(next, `Update ${key}`);
   }
 
@@ -1886,5 +1881,44 @@ export function pushableFields(item: Item): Record<string, unknown> {
     startDate: item.startDate ?? null,
     dueDate: item.dueDate ?? null,
     estimate: item.estimate ?? null,
+    // Links reach Jira inside the description, via buildDescription's footer, so
+    // a link added to a pushed item leaves Jira stale exactly as an edited
+    // summary does. Left out of this list, that went unreported: the plan read
+    // the item as "pushed and unchanged" and skipped it.
+    //
+    // Flattened to strings deliberately. contentHash passes Object.keys(...) to
+    // JSON.stringify as a replacer allowlist, which filters object properties at
+    // every depth — so raw link objects would hash as [{"type":"url"}] with
+    // `target` and `label` silently dropped, and only a change of link *type*
+    // would ever register.
+    //
+    // Not sorted, unlike labels and components: the footer renders links in
+    // array order, so their order is part of what gets pushed.
+    links: item.links.map((l) => [l.type, l.target, l.label ?? ""].join(" ")),
   };
+}
+
+/**
+ * Flip a pushed item to `drifted` when its pushable content no longer matches
+ * the baseline `markPushed` stamped.
+ *
+ * Called from `persist`, which every item write funnels through, rather than
+ * from `updateItem`. The write paths do not all go through `updateItem` —
+ * `addLink` and `removeLink` build the next item themselves — so a check there
+ * looked complete while missing the two writers that change the description
+ * footer, which is the one part of a link Jira ever sees.
+ *
+ * The writers that reach `writeAndIndex` directly are deliberately excluded:
+ * respacing only rewrites `rank`, and `rekeyItems` is renaming a project, where
+ * the local key changing is not a claim about Jira's copy.
+ *
+ * One-way, still: nothing here moves `drifted` back to `pushed`, because only a
+ * real push can say Jira has caught up. `buildPushPlan` compares hashes rather
+ * than trusting this label, so an item edited and then reverted is skipped
+ * correctly despite still reading `drifted`.
+ */
+function markDriftIfChanged(next: Item): Item {
+  if (next.sync.state !== "pushed" || !next.sync.contentHash) return next;
+  if (contentHash(pushableFields(next)) === next.sync.contentHash) return next;
+  return { ...next, sync: { ...next.sync, state: "drifted" } };
 }

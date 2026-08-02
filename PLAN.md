@@ -4,7 +4,7 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 80 green tests — 60 in the core, 20 over the app's
+below them. The suite is at 84 green tests — 64 in the core, 20 over the app's
 `ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
 carries `vault jira discover` with it.
 
@@ -749,6 +749,94 @@ mapping `null` to `undefined`, so "no `startDate`" cannot distinguish "never had
 one" from "deliberately emptied". Clear it, cycle through `blocked`, and it comes
 back. The rule reads the *merged* value, so at least clearing it and moving in
 the same call does not immediately refill it.
+
+## Links count as drift, and the check moved down a level ✅ built
+
+Found by auditing IDEAS.md against the code rather than by using the app, which
+is worth saying because it was invisible from the outside: nothing failed, an
+item simply stayed silent when it should have spoken up.
+
+`buildDescription` puts every one of an item's `links` into the Jira description,
+under a `## Links` heading — that is what `PLAN-LINKS.md` gotcha 12 meant by
+"links are pushed". But `pushableFields`, which is the hash deciding whether a
+pushed item has drifted, omitted `links` entirely. So adding a link to a pushed
+item changed what Jira *should* hold and changed nothing the plan could see:
+`buildPushPlan` read it as "Already pushed as ENG-412 and unchanged since" and
+skipped it. Not a wrong answer on screen — no answer at all.
+
+That also made `SCHEMA.md`'s flat claim that "`contentHash` covers only the
+fields that actually get pushed" false in exactly one case, which is the kind of
+sentence that stays trusted precisely because it reads as a definition.
+
+**IDEAS.md had this backwards and now says so.** Its caution paragraph told the
+next reader that `PLAN-LINKS.md` was wrong about links causing drift and to
+"check the field list rather than the prose". The mechanism it describes is
+right and the conclusion was not: the field list was the thing that was wrong,
+and the prose it warned against was describing correct behaviour that had never
+been implemented.
+
+**Links are flattened to strings before hashing, and this is not a style
+choice.** `contentHash` hands `Object.keys(input).sort()` to `JSON.stringify` as
+the *replacer* argument, and an array replacer filters object properties at
+every depth, not just the top. Raw link objects would have hashed as
+`[{"type":"url"}]` — `target` and `label` dropped, `type` surviving only because
+it collides with the top-level field of the same name. The naive version
+typechecks, passes a test that changes a link's type, and detects nothing else.
+Every other value in `pushableFields` is a primitive or an array of strings,
+which is why this never came up before; a comment now says so, because the next
+field added there will face the same trap.
+
+**Not sorted, unlike `labels` and `components`.** The footer renders links in
+array order, so their order is part of what reaches Jira.
+
+**The check moved from `updateItem` into `persist`, and that is most of the
+value.** `addLink` and `removeLink` build the next item themselves and go
+straight to `persist` — they never pass through `updateItem` — so the hash fix
+alone would have left the *label* saying `pushed` while the plan correctly
+re-drafted the item. Two surfaces disagreeing is worse than one being wrong.
+`persist` is the funnel Phase 0.5 built for exactly this reason, and the
+argument is the one the `startDate` rule already made: a rule one level up looks
+complete while missing the writers least likely to be checked by hand.
+
+Moving it is safe in a way worth recording rather than re-deriving. Of
+`persist`'s ten callers, `createItem` carries `state: "never"`, `tickItem`,
+`untickItem`, `addComment` and `moveItem` touch nothing pushable, and
+`markPushed` re-hashes the item it just stamped and finds it equal. The two
+writers that reach `writeAndIndex` directly stay excluded on purpose: respacing
+only rewrites `rank`, and `rekeyItems` is a project rename, where a local key
+changing is not a claim about Jira's copy.
+
+**`addAttachment` is the tenth caller, and it is deliberately left alone.** It
+looks like the same shape as links — `buildPushPlan` carries an `attachments`
+list, so attaching a file to a pushed item does change what a push would do —
+but the resemblance stops at the surface. Links are *content*, rendered into a
+description field that a re-push overwrites; attachments are uploaded by a
+separate call that appends, so an item marked `drifted` for a new attachment
+would be telling the user Jira is stale while offering a remedy that duplicates
+every file already up there. Making that honest needs a push that can upload
+attachments incrementally, which is Phase 5's problem. Recorded here so the
+asymmetry reads as a decision rather than as the same oversight left half-fixed.
+
+Still one-way. Nothing moves `drifted` back to `pushed`, because only a real
+push can say Jira has caught up — and `buildPushPlan` already compares hashes
+rather than trusting the label, so a reverted item is skipped correctly despite
+reading `drifted`. The detail panel's stale pill is unchanged, and is still
+IDEAS.md's to fix.
+
+**Four tests.** A link added after a push drifts the item and reaches the plan's
+warnings; retargeting a link drifts it; relabelling one drifts it while leaving
+the stored baseline hash alone. Those middle two exist because the replacer trap
+is exactly what a careless fix falls into, and it passes a test that only ever
+changes a link's type.
+
+The fourth guards the other direction, and is the one that would fail silently
+years from now. Moving the check into `persist` means it runs *before*
+`writeAndIndex` parses, while `markPushed` stamped a hash of an already-parsed
+item — so the two agree only as long as nothing in `LinkSchema` defaults or
+transforms. Nothing does. If that ever changes, every pushed item carrying a
+link would read `drifted` after any edit at all, and a test asserting that a
+comment and a reorder leave a linked, pushed item alone is what says so out
+loud. The suite is at 84 — 64 in the core, 20 over the app's `ordering.ts`.
 
 ## Phase 5 — Jira push from the UI
 
