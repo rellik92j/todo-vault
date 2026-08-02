@@ -244,6 +244,11 @@ function registerHandlers(): void {
     return service.snapshot();
   });
 
+  handle(CHANNELS.updateItems, async (keys: string[], patch: unknown) => {
+    const { updated, skipped } = await service.updateItems(keys, patch);
+    return { snapshot: await service.snapshot(), updated: updated.length, skipped };
+  });
+
   handle(CHANNELS.transitionItem, async (key: string, status: Status) => {
     await service.transition(key, status);
     return service.snapshot();

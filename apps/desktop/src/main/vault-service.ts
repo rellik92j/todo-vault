@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import chokidar, { type FSWatcher } from "chokidar";
 import {
   Vault,
+  type BulkUpdateResult,
   type DeleteResult,
   type Item,
   type Project,
@@ -224,6 +225,10 @@ export class VaultService extends EventEmitter {
 
   updateItem(key: string, patch: unknown): Promise<Item> {
     return this.write((v) => v.updateItem(key, patch));
+  }
+
+  updateItems(keys: string[], patch: unknown): Promise<BulkUpdateResult> {
+    return this.write((v) => v.updateItems(keys, patch));
   }
 
   transition(key: string, status: Status): Promise<Item> {

@@ -1,5 +1,6 @@
 import type {
   AgendaSection,
+  BulkUpdateInput,
   CreateItemInput,
   DeleteResult,
   GitStatus,
@@ -164,6 +165,22 @@ export interface VaultApi {
 
   createItem(input: CreateItemInput): Promise<Result<{ snapshot: VaultSnapshot; key: string }>>;
   updateItem(key: string, patch: UpdateItemInput): Promise<Result<VaultSnapshot>>;
+  /**
+   * Apply one patch to many items as a single commit — the backlog table's
+   * multi-select. `updated`/`skipped` mirror BulkUpdateResult so the bar can
+   * report "10 updated, 2 skipped" without reconciling item-by-item; the
+   * snapshot is still the whole vault, same as every other mutation here.
+   */
+  updateItems(
+    keys: string[],
+    patch: BulkUpdateInput,
+  ): Promise<
+    Result<{
+      snapshot: VaultSnapshot;
+      updated: number;
+      skipped: Array<{ key: string; reason: string }>;
+    }>
+  >;
   transitionItem(key: string, status: Status): Promise<Result<VaultSnapshot>>;
   /**
    * Log a recurring item as done for one period, leaving its status alone.
@@ -268,6 +285,7 @@ export const CHANNELS = {
 
   createItem: "vault:create-item",
   updateItem: "vault:update-item",
+  updateItems: "vault:update-items",
   transitionItem: "vault:transition-item",
   tickItem: "vault:tick-item",
   moveItem: "vault:move-item",

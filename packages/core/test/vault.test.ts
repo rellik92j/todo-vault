@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { Vault } from "../src/vault.js";
+import type { Item } from "../src/schema.js";
 import {
   isLosslessDescription,
   parseDescription,
@@ -21,6 +24,24 @@ async function tmpVault(): Promise<Vault> {
   const vault = await Vault.init(dir);
   await vault.createProject({ key: "ACME", name: "Acme rollout" });
   return vault;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** A vault backed by a real git repo, for tests that count commits. */
+async function gitVault(): Promise<Vault> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-git-test-"));
+  await execFileAsync("git", ["init"], { cwd: dir });
+  await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
+  await execFileAsync("git", ["config", "user.name", "Test"], { cwd: dir });
+  const vault = await Vault.init(dir, { git: true });
+  await vault.createProject({ key: "ACME", name: "Acme rollout" });
+  return vault;
+}
+
+async function commitCount(dir: string): Promise<number> {
+  const { stdout } = await execFileAsync("git", ["rev-list", "--count", "HEAD"], { cwd: dir });
+  return Number.parseInt(stdout.trim(), 10);
 }
 
 /** The minimum map buildPushPlan needs, for tests that care about eligibility. */
@@ -322,6 +343,118 @@ test("disregard closes an item without claiming the work happened", async () => 
     live.key,
     "work order sinks closed items, disregarded ones included",
   );
+});
+
+// ------------------------------------------------------------- bulk update
+
+test("updateItems writes every item and produces one commit", async () => {
+  const vault = await gitVault();
+
+  const items: Item[] = [];
+  // Sequential: allocateKey reads and writes the shared counters file, which
+  // is not safe for concurrent createItem calls.
+  for (let i = 0; i < 5; i++) {
+    items.push(await vault.createItem({ project: "ACME", summary: `Bulk ${i}` }));
+  }
+  const beforeBulk = await commitCount(vault.root);
+
+  const result = await vault.updateItems(
+    items.map((i) => i.key),
+    { priority: "highest" },
+  );
+
+  assert.equal(result.updated.length, 5);
+  assert.deepEqual(result.skipped, []);
+  assert.ok(result.updated.every((i) => i.priority === "highest"));
+
+  const afterBulk = await commitCount(vault.root);
+  assert.equal(afterBulk, beforeBulk + 1, "one commit for the whole batch, not one per item");
+});
+
+test("an illegal transition in the set is skipped, the rest update, and the reason names what's reachable", async () => {
+  const vault = await tmpVault();
+  const todo = await vault.createItem({ project: "ACME", summary: "Still todo" });
+  const working = await vault.createItem({ project: "ACME", summary: "Already in progress" });
+  await vault.transition(working.key, "in_progress");
+
+  // todo -> in_review is illegal; in_progress -> in_review is legal, so the
+  // set has one bad key riding along with a good one.
+  const result = await vault.updateItems([todo.key, working.key], { status: "in_review" });
+
+  assert.deepEqual(
+    result.updated.map((i) => i.key),
+    [working.key],
+  );
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].key, todo.key);
+  assert.match(result.skipped[0].reason, /From todo you can go to/);
+});
+
+test("nothing is written when validation fails — the rejected item is untouched on disk", async () => {
+  const vault = await tmpVault();
+  const rejected = await vault.createItem({ project: "ACME", summary: "Rejected" });
+  const accepted = await vault.createItem({ project: "ACME", summary: "Accepted" });
+  await vault.transition(accepted.key, "in_progress");
+
+  await vault.updateItems([rejected.key, accepted.key], { status: "in_review" });
+
+  const reopened = await Vault.open(vault.root);
+  assert.equal(
+    reopened.getItem(rejected.key).updated,
+    rejected.updated,
+    "an item that fails validation must be exactly as createItem left it, not partially written",
+  );
+  assert.equal(reopened.getItem(accepted.key).status, "in_review");
+});
+
+test("bulk labels: add unions without duplicating, remove of an absent label is a no-op", async () => {
+  const vault = await tmpVault();
+  const a = await vault.createItem({ project: "ACME", summary: "A", labels: ["urgent"] });
+  const b = await vault.createItem({
+    project: "ACME",
+    summary: "B",
+    labels: ["urgent", "blocked-on-legal"],
+  });
+
+  const added = await vault.updateItems([a.key, b.key], {
+    labels: { mode: "add", values: ["blocked-on-legal", "urgent"] },
+  });
+  assert.deepEqual(added.updated.find((i) => i.key === a.key)?.labels.slice().sort(), [
+    "blocked-on-legal",
+    "urgent",
+  ]);
+  assert.deepEqual(
+    added.updated.find((i) => i.key === b.key)?.labels.slice().sort(),
+    ["blocked-on-legal", "urgent"],
+    "already present, so add must not duplicate it",
+  );
+
+  const removed = await vault.updateItems([a.key, b.key], {
+    labels: { mode: "remove", values: ["nonexistent-label", "urgent"] },
+  });
+  assert.deepEqual(removed.updated.find((i) => i.key === a.key)?.labels, ["blocked-on-legal"]);
+  assert.deepEqual(
+    removed.updated.find((i) => i.key === b.key)?.labels,
+    ["blocked-on-legal"],
+    "removing a label that was never there is a no-op, not an error",
+  );
+});
+
+test("the in_progress start-date stamp fires through the bulk path too", async () => {
+  const vault = await tmpVault();
+  const a = await vault.createItem({ project: "ACME", summary: "Bulk pickup A" });
+  const b = await vault.createItem({ project: "ACME", summary: "Bulk pickup B" });
+
+  const result = await vault.updateItems([a.key, b.key], { status: "in_progress" });
+
+  assert.equal(result.skipped.length, 0);
+  for (const item of result.updated) {
+    assert.equal(
+      item.startDate,
+      todayIso(),
+      "mergeUpdate's stamp must fire for every item in the batch, the same as the single-item path",
+    );
+  }
 });
 
 test("cadencePeriod bounds each cadence, and none has no period", () => {

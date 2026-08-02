@@ -58,6 +58,19 @@ export interface VaultState {
     key: string,
     cascade: boolean,
   ) => Promise<{ error: string | null; files: string[] }>;
+  /**
+   * The backlog's bulk edit. Its own helper rather than a `mutate` call: a
+   * successful write here still needs to report which keys were skipped and
+   * why, which `mutate`'s plain-snapshot contract has nowhere to carry.
+   */
+  updateItems: (
+    keys: string[],
+    patch: Record<string, unknown>,
+  ) => Promise<{
+    error: string | null;
+    updated: number;
+    skipped: Array<{ key: string; reason: string }>;
+  }>;
   restore: (files: string[]) => Promise<void>;
   /** Selects the item created by the last successful createItem, if any. */
   lastCreated: string | null;
@@ -198,6 +211,23 @@ export function useVault(): VaultState {
     }
   }, []);
 
+  const updateItems = useCallback(async (keys: string[], patch: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      const result = await window.vault.updateItems(keys, patch as never);
+      if (!result.ok) return { error: result.message, updated: 0, skipped: [] };
+      generation.current += 1;
+      setError(null);
+      setSnapshot(result.value.snapshot);
+      return { error: null, updated: result.value.updated, skipped: result.value.skipped };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: message, updated: 0, skipped: [] };
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const restore = useCallback(async (files: string[]) => {
     setBusy(true);
     try {
@@ -233,6 +263,7 @@ export function useVault(): VaultState {
       createItem,
       createProject,
       deleteItem,
+      updateItems,
       restore,
       lastCreated,
     }),
@@ -248,6 +279,7 @@ export function useVault(): VaultState {
       createItem,
       createProject,
       deleteItem,
+      updateItems,
       restore,
     ],
   );

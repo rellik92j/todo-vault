@@ -958,6 +958,119 @@ No test file changes. `doctor`'s two existing sibling checks were untested
 CLI-level behaviour before this, and stayed that way — verified by driving the
 command against the fixture vault instead.
 
+## Bulk edit in the backlog ✅ built and driven
+
+Shaped in `BULK-UPDATE-PLAN.md` rather than filed as a phase, because there were
+real decisions in it. Scope, settled up front: status, assignee, reporter,
+priority, due date and labels, in the backlog table only, under one git commit
+per batch.
+
+**The write happens in one place in the main process, not a renderer loop over
+`updateItem`.** The obvious implementation already exists as a pattern — `useVault`'s
+undo path loops `updateItem` over a list — and looks free. Twelve items on that
+path costs twelve of each of: a `vault.load()`, a `git add -A` plus `git commit`
+subprocess pair, another `load()`, a whole snapshot pushed at the renderer, and a
+React re-render, with the chokidar watcher firing throughout. `writeAndIndex` is
+private, so assembling a batch from the app side was never on the table — it has
+to live inside `Vault`, which is the fact that shaped everything else.
+
+**Two passes, because there is no rollback.** `writeFileAtomic` is atomic per
+file only, and a throw partway through a loop would leave the earlier files
+written with nothing to undo them. `Vault.updateItems` builds and validates every
+candidate in memory first — nothing touches disk until the whole set is known to
+be acceptable — then writes every candidate and commits once. A genuine I/O
+failure partway through the write pass still commits whatever reached disk before
+rethrowing, so a crash mid-batch cannot leave written files outside the audit
+trail `--git` exists to provide.
+
+**`updateItem` and `updateItems` now share one `mergeUpdate` step**, pulled out of
+the old `updateItem` body: the patch parse, the transition and parent checks, the
+field merge, and the `in_progress` start-date stamp. A copy would have passed
+review and then silently stopped stamping `startDate` the next time that rule
+changed; sharing it means the bulk path cannot drift from the single-item one on
+any of the four.
+
+**The status control offers only the intersection of what every selected item can
+legally reach, not a raw list of every status.** A selection holding a `todo` and
+a `done` item does not have "the legal moves"; it has an intersection, which can
+be empty. `commonTransitions` builds this on `canTransition` rather than
+intersecting `legalTransitions` arrays directly, so that an item already at the
+target status is never the reason the whole set is refused — "set everything to
+done" must not choke on the one item that already is. Driving it turned up a
+fact worth recording rather than changing: `disregard` is reachable from every
+other status in `TRANSITIONS`, so the intersection can never actually come up
+empty through this UI today — the fully-disabled state is correct and
+unit-tested, just not reachable with the current transition table. Left as is;
+narrowing `TRANSITIONS` to make the disabled state reachable would be solving a
+problem the feature does not have.
+
+**Labels take a `mode` — add, remove, or replace — instead of the whole-array
+replace `UpdateItemInput.labels` uses everywhere else.** For one item at a time,
+replace is fine: the detail panel shows you the current list while you edit it.
+For twelve it is almost never what is meant — "add `blocked-on-legal` to these
+twelve" would otherwise silently drop every label the twelve already had. The
+patch resolves per item, into a plain array, before `mergeUpdate` ever sees it —
+so `UpdateItemInput` is untouched and the CLI and MCP server do not inherit set
+arithmetic nobody asked them for. Duplicates fold on add and replace; removing a
+label an item never had is a no-op, not an error.
+
+**The checked set is a third notion of "which item", beside the keyboard cursor
+and the detail panel, and deliberately so.** Folding it into the cursor would
+mean every `j` throws away a twelve-item selection, which defeats the cursor's
+whole job of moving freely. It is pruned against `visibleItems`, not against the
+filtered view: a bulk edit routinely pushes its own targets out of the filtered
+table — set twelve items to `done` with "Hide closed" on and they all vanish from
+the rows on screen — and the selection has to survive that rather than being
+silently discarded as a side effect of the edit that just ran. Where the two
+diverge, the bar says so: "12 selected — 3 not shown here."
+
+**`Escape` gained a first rung.** It already closed the detail panel, then
+cleared the cursor. A checked selection now clears before either of those, the
+same order Gmail and Finder use — otherwise dropping a twelve-item selection
+costs as many `Escape`s as the panel does.
+
+**`Space` was free to take.** `x` already means delete, so the Gmail/Linear
+convention of `x` for toggle-selection was never available here. `Space` toggles
+the row under the cursor; `Shift+J`/`Shift+K` move the cursor while extending the
+selection from an anchor, arriving as plain `"J"`/`"K"` since the existing
+keyboard gate excludes Ctrl/Meta/Alt but not Shift, so the gate itself needed no
+change.
+
+**No MCP or CLI surface for this, yet.** An agent that wants to update a dozen
+items can already call `vault_update_item` a dozen times, and pays a dozen
+commits for it. Recorded as an asymmetry rather than assumed away — see the list
+in the README.
+
+**Left alone deliberately: board and agenda multi-select, bulk delete, bulk
+move-to-project, and bulk tick.** The board's cards are already dnd-kit
+draggables and droppables; layering checkbox selection over that is a second
+design problem, not a second checkbox, and is worth revisiting once the backlog
+version has been lived with. `moveItemsToProject` re-keys the whole subtree, so
+every key in a bulk selection would go stale the moment the first call in a batch
+returned — the same objection `README.md` already raises against letting a stray
+drag re-key an item, just at bulk scale, and bulk delete is technically easy
+enough that it is excluded for the same reason rather than a separate one.
+Ticking is per-cadence and per-period, so a mixed selection has no single
+meaning for it.
+
+Driven against a freshly seeded vault under an isolated `--user-data-dir`, over
+CDP rather than `playwright-core` (not installed): a shift-click range checks
+exactly the rows between two clicks, in both directions, and a collapsed
+parent's hidden children are never included even when the range spans past them.
+A `todo`/`in_progress` mix narrowed the status control to the two statuses both
+can reach; a fourteen-item batch landed as exactly one commit. `Escape` cleared a
+live selection before it touched an open detail panel, and only closed the panel
+on the second press. Turning on "Hide closed" and bulk-closing two open items
+reported how many were no longer visible rather than letting them vanish with
+nothing on screen explaining why. The keyboard cursor sat on the same row after
+the batch edit that it sat on before. Screenshotted in both colour schemes.
+
+The suite is at 96 — 69 in the core, 27 over the app's renderer logic, the newest
+of them `selection.ts`'s range and status-intersection functions for the same
+reason `ordering.ts` has its own: this is renderer logic where a wrong answer is
+invisible, and the wrong rows would simply be selected with nothing on screen
+looking broken.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user

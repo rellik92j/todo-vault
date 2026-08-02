@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 import {
+  BulkUpdateInput,
   CADENCES,
   CreateItemInput,
   DONE_STATUSES,
@@ -96,6 +97,11 @@ export interface MoveProjectResult {
   rekeyed: Array<{ from: string; to: string }>;
   /** Set when the moved item's parent stayed behind and the link was dropped. */
   parentDropped?: string;
+}
+
+export interface BulkUpdateResult {
+  updated: Item[];
+  skipped: Array<{ key: string; reason: string }>;
 }
 
 export interface TrashEntry {
@@ -568,7 +574,17 @@ export class Vault {
     );
   }
 
-  async updateItem(key: string, rawPatch: unknown): Promise<Item> {
+  /**
+   * Everything a single-item update does short of touching disk: parse the
+   * patch, check the transition and parent are legal, merge, stamp the
+   * in_progress start date and `updated`, and re-validate the whole item.
+   *
+   * Shared by updateItem and updateItems so the bulk path cannot drift from
+   * the single-item one on the start-date stamp, the transition table, or
+   * parent validity — a copy would pass review today and silently stop
+   * stamping startDate the next time that rule changes.
+   */
+  private mergeUpdate(key: string, rawPatch: unknown): Item {
     const existing = this.getItem(key);
     const patch = UpdateItemInput.parse(rawPatch);
 
@@ -598,11 +614,67 @@ export class Vault {
 
     const description = patch.description ?? existing.description;
     const frontmatter = ItemFrontmatterSchema.parse(stripDescription(merged));
-    const next: Item = { ...frontmatter, description };
+    return { ...frontmatter, description };
+  }
 
+  async updateItem(key: string, rawPatch: unknown): Promise<Item> {
     // Drift is recomputed in persist(), not here: addLink and removeLink never
     // come through this method, and a rule at this level silently skipped them.
-    return this.persist(next, `Update ${key}`);
+    return this.persist(this.mergeUpdate(key, rawPatch), `Update ${key}`);
+  }
+
+  /**
+   * Apply one patch to many items as a single unit: validate every candidate
+   * before writing any of them, then write and commit once for the batch.
+   *
+   * Two passes rather than one because there is no rollback — writeFileAtomic
+   * is atomic per file only, and a throw partway through a loop would leave
+   * the earlier files written with no way back. Building every candidate in
+   * memory first means nothing touches disk until the whole set is known to
+   * be acceptable.
+   */
+  async updateItems(keys: string[], rawPatch: unknown): Promise<BulkUpdateResult> {
+    this.assertLoaded();
+    const patch = BulkUpdateInput.parse(rawPatch);
+
+    const candidates: Item[] = [];
+    const skipped: Array<{ key: string; reason: string }> = [];
+
+    for (const key of keys) {
+      try {
+        const resolved: Record<string, unknown> = { ...patch };
+        if (patch.labels) {
+          const existing = this.getItem(key);
+          resolved.labels = resolveLabels(existing.labels, patch.labels);
+        }
+        candidates.push(this.mergeUpdate(key, resolved));
+      } catch (err) {
+        skipped.push({
+          key,
+          reason: err instanceof VaultError ? err.message : formatZodError(err),
+        });
+      }
+    }
+
+    const updated: Item[] = [];
+    try {
+      for (const next of candidates) {
+        updated.push(await this.writeAndIndex(markDriftIfChanged(next)));
+      }
+    } finally {
+      // A genuine I/O failure partway through still commits whatever reached
+      // disk before rethrowing — leaving written-but-uncommitted files would
+      // put a hole in the audit trail --git exists to provide, and the
+      // validation pass above means a failure here is a disk problem rather
+      // than a rejected edit.
+      if (updated.length) {
+        const message =
+          updated.length === 1 ? `Update ${updated[0].key}` : `Update ${updated.length} items`;
+        await this.commit(message);
+      }
+    }
+
+    return { updated, skipped };
   }
 
   async transition(key: string, status: Status): Promise<Item> {
@@ -1921,4 +1993,24 @@ function markDriftIfChanged(next: Item): Item {
   if (next.sync.state !== "pushed" || !next.sync.contentHash) return next;
   if (contentHash(pushableFields(next)) === next.sync.contentHash) return next;
   return { ...next, sync: { ...next.sync, state: "drifted" } };
+}
+
+/**
+ * Resolves a bulk edit's labels patch into the plain array mergeUpdate
+ * expects, so UpdateItemInput never learns about add/remove/replace
+ * semantics. Add and replace fold duplicates; removing a label an item
+ * never had is a no-op rather than an error.
+ */
+function resolveLabels(
+  existing: readonly string[],
+  patch: { mode: "add" | "remove" | "replace"; values: string[] },
+): string[] {
+  switch (patch.mode) {
+    case "add":
+      return [...new Set([...existing, ...patch.values])];
+    case "remove":
+      return existing.filter((label) => !patch.values.includes(label));
+    case "replace":
+      return [...new Set(patch.values)];
+  }
 }
