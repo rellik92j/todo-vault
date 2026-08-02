@@ -532,7 +532,7 @@ server.registerTool(
 Args:
   - key (string, required)
   - type ('url'|'file'|'folder'|'item'|'outlook'|'note', required)
-      url     — a web address
+      url     — a web address; also the right type for a cloud share link (OneDrive, SharePoint, Google Drive, Dropbox) — record the share URL here rather than writing it into the item's description, since only a link reaches the detail panel's link rows and the Jira push's link handling, and only a link can be queried
       file    — an absolute path to a file left where it lives
       folder  — an absolute path to a directory
       item    — another vault item key, creating a two-way relationship
@@ -571,7 +571,7 @@ server.registerTool(
 Args:
   - key (string, required)
   - sourcePath (string, required): absolute path to an existing file
-  - copy (boolean, default true): true copies the file into the vault under attachments/<key>/ so it is versioned alongside the item; false records a pointer to where it already lives, which is what you want for large files or files on a network share
+  - copy (boolean, default true): true copies the file into the vault under attachments/<key>/ so it is versioned alongside the item; false records a pointer to where it already lives, which is what you want for large files, files on a network share, or files inside a synced cloud folder (a path under OneDrive, OneDrive - <Company>, Dropbox, or a Google Drive letter) — copying a synced file makes a second copy that immediately begins diverging from the one other people are editing
   - title (string, optional)
 
 Returns: { key, attachments: [...] }

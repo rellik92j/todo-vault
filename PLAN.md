@@ -912,6 +912,52 @@ link would read `drifted` after any edit at all, and a test asserting that a
 comment and a reorder leave a linked, pushed item alone is what says so out
 loud. The suite is at 84 — 64 in the core, 20 over the app's `ordering.ts`.
 
+## `doctor` checks that attachments resolve, and the tool descriptions name synced storage ✅ built
+
+Two entries from IDEAS.md, picked up together because both are the same failure
+shape — something recorded in a way that cannot be queried, or recorded and then
+silently untrue — and both were small enough to need no external instance, no
+schema change, and no new design decision.
+
+**`doctor` gained a third check.** Beside the existing dangling-parent and
+`link.type === "file"` checks in the `doctor` loop (`cli.ts`), a new loop over
+`item.attachments` calls `vault.resolveAttachment()` and `fs.access()`s the
+result, reporting the item key and the stored POSIX path — not the resolved
+native one — when it fails. What this proves is narrower than it sounds: a
+passing check means the file at that path exists, not that it is the *right*
+file. A `copy: true` attachment silently replaced by a same-named file passes
+just as cleanly as one that was never touched. Content is not verified, only
+presence.
+
+**The loop that check runs in was also capped at 500 items,** silently, since
+`vault.listItems({ limit: 500 })` is bounded by `ItemFilter.limit`'s `.max(500)`
+(`schema.ts:317`) while the `doctor` usage line promises "Validate every file and
+report problems" (`cli.ts:47`). Fixed by paging with the `total` that `listItems`
+already returns, stopping when `offset >= total` or a page comes back empty —
+the latter guard is what keeps this from looping forever if the two ever
+disagree, which they shouldn't but cost nothing to guard against. Only the
+cross-reference checks were capped; parse errors come from `load()` and always
+covered every file. The fixture vault is 15 items, so this is verified at
+fixture scale, not at 500.
+
+**The two MCP tool descriptions (`vault_link_item`'s `url` line,
+`vault_attach_file`'s `copy` line) now name OneDrive, SharePoint, Google Drive,
+and Dropbox explicitly,** and `SCHEMA.md`'s Links section carries matching
+wording plus a one-line note that share URLs with `?e=`, `?d=`, or
+`guestaccess.aspx` are capability URLs a `--git` vault with a remote will
+happily commit. This does not contradict `PLAN-LINKS.md` gotcha 3, which
+concludes the CLI, MCP tool descriptions, and `SCHEMA.md` table "need no
+changes" — that ruling is about the *schema*: storing OneDrive as `type: url`
+requires no format change, and still doesn't. This edit is not a schema change;
+it exists because a model given no instruction writes the URL into the
+description body instead, where it cannot be queried. Guidance, not a guard —
+the guard is `syncedRoots`, and it stays unbuilt (`PLAN-LINKS.md` build steps
+3–4). IDEAS.md's OneDrive entry is trimmed to record only what remains.
+
+No test file changes. `doctor`'s two existing sibling checks were untested
+CLI-level behaviour before this, and stayed that way — verified by driving the
+command against the fixture vault instead.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user

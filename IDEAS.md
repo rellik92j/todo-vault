@@ -125,48 +125,31 @@ The OneDrive design is already written — `PLAN-LINKS.md` ask 2, gotchas 1–3 
 It is the one surface that design deliberately leaves out, and the reason that
 exclusion is worth reopening.
 
-Gotcha 2 rules that sync-root detection is Windows-shaped and machine-local, so
-the roots get passed into the core as `VaultOptions.syncedRoots` and the desktop
-main process is the thing that discovers them. The proposed shape then says the
-option is "empty by default, so CLI/MCP behaviour is unchanged", and calls that
-the honest outcome. It was the right call for a doc scoped to the app. But the
-MCP server is arguably the *likeliest* surface to be handed a OneDrive path —
-nobody drags a file into a chat, they paste
+**Done:** the cheapest first step, the two tool descriptions. `vault_link_item`'s
+`url` line and `vault_attach_file`'s `copy` line now both name synced cloud
+storage (OneDrive, SharePoint, Google Drive, Dropbox), and `SCHEMA.md`'s Links
+section carries matching wording plus the capability-URL note from gotcha 11.
+Text only, inside gotcha 3's ruling not to add a link type. Do not redo this —
+what is left below is guidance, not a guard, and `vault_attach_file` still
+defaults to `copy: true` with no guard behind the new wording.
+
+What remains is the local-path half. Gotcha 2 rules that sync-root detection is
+Windows-shaped and machine-local, so the roots get passed into the core as
+`VaultOptions.syncedRoots` and the desktop main process is the thing that
+discovers them. The proposed shape then says the option is "empty by default,
+so CLI/MCP behaviour is unchanged", and calls that the honest outcome. It was
+the right call for a doc scoped to the app. But the MCP server is arguably the
+*likeliest* surface to be handed a OneDrive path — nobody drags a file into a
+chat, they paste
 `C:\Users\bisch\OneDrive - Contoso\Docs\plan.xlsx` as text — and with
 `syncedRoots` empty, `vault_attach_file` defaults to `copy: true` and makes the
 diverging second copy that ask 2 exists to prevent. The desktop app would refuse.
-The agent won't, silently, on the path the user is most likely to use.
+The agent won't, and now it has been told not to, but nothing stops it either.
 
-The web half fails differently, and this is the part that prompted writing it
-down. `vault_link_item` already accepts `type: 'url'` with any target, so an
-agent *can* record a share URL correctly today — nothing in the tool description
-tells it that it should. So the model does the obvious thing and writes the URL
-into the markdown description body instead, where it is not in `links`, never
-reaches the detail panel's link rows, and never goes through the Jira push's
-`url` handling. Not lost; filed somewhere that cannot be queried — the same shape
-of failure as a reporter buried in prose.
-
-The split worth noticing is that these two halves have very different costs.
-`classifyLinkTarget` is specified as a pure helper, testable without a
-filesystem, so the URL heuristic needs no configuration at all — the MCP server
-could have it the moment it exists. Only the local-path rule needs to be told
-where the sync roots are, and a headless server has no main process to ask. That
-is the open question this entry is really holding: an env var, a config key, or
-accepting that the local half stays app-only.
-
-Cheapest first step is neither: it is the two tool descriptions. `vault_link_item`
-describes `url` as "a web address", and `vault_attach_file` justifies `copy:
-false` only by "large files or files on a network share" — neither mentions
-synced cloud storage at all. Naming that case in both is a text edit, needs no
-schema change, and stays inside gotcha 3's ruling not to add a link type. It is
-guidance rather than a guard, so it does not replace the core rule — but it is
-the difference between a model that has been told and one that never had a
-chance.
-
-One thing to carry over from gotcha 11 rather than rediscover: share URLs are
-capability URLs, and an agent adding them in bulk to a vault that auto-commits to
-a remote is that concern multiplied. Still a note in `SCHEMA.md` rather than a
-mechanism, but decided knowingly.
+Only the local-path rule needs to be told where the sync roots are, and a
+headless server has no main process to ask. That is the open question this
+entry is really holding: an env var, a config key, or accepting that the local
+half stays app-only.
 
 ## "Turn on history" — a button that sets git up for the chosen vault
 
@@ -235,23 +218,3 @@ tokens want semantic names rather than literal ones.
 
 Probably its own `PLAN-STYLE.md` rather than a phase — it is design work with a
 decision in it, not a task list.
-
-## `doctor` should check that attachments resolve
-
-`doctor` validates dangling parents, item links, and absolute `file` links
-(`cli.ts`), but never checks that an item's `attachments` entries exist on disk.
-A missing attachment is silent — the item still lists `attachments/ACME-2/spec.pdf`
-in frontmatter and nothing reports that the file is gone.
-
-Today git makes that mostly theoretical, since `attachments/` is tracked along
-with everything else. It stops being theoretical the moment a vault is copied
-without hidden files, restored from a partial backup, or opened on a machine
-where auto-commit was never healthy — all cases `gitStatus()` already exists to
-warn about. The check is a few lines next to the existing `link.type === "file"`
-branch, using `resolveAttachment()` to get the native path.
-
-Came up while deciding whether to gitignore `attachments/`. Decided not to — the
-whole point of `copy: true` is that the file is versioned with the item, and
-`copy: false` is already the escape hatch for anything large. But that ruling
-leans on git being healthy, and this check is what makes the failure visible
-instead of silent.

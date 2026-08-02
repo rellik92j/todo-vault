@@ -169,22 +169,36 @@ async function main(): Promise<void> {
       const { items, projects, errors } = await vault.load();
       process.stdout.write(`${projects} projects, ${items} items loaded from ${vault.root}\n`);
       const dangling: string[] = [];
-      for (const item of vault.listItems({ limit: 500 }).items) {
-        if (item.parent && !vault.hasItem(item.parent)) {
-          dangling.push(`${item.key} points at missing parent ${item.parent}`);
-        }
-        for (const link of item.links) {
-          if (link.type === "item" && !vault.hasItem(link.target)) {
-            dangling.push(`${item.key} links to missing item ${link.target}`);
+      let offset = 0;
+      for (;;) {
+        const page = vault.listItems({ limit: 500, offset });
+        for (const item of page.items) {
+          if (item.parent && !vault.hasItem(item.parent)) {
+            dangling.push(`${item.key} points at missing parent ${item.parent}`);
           }
-          if (link.type === "file" && path.isAbsolute(link.target)) {
+          for (const link of item.links) {
+            if (link.type === "item" && !vault.hasItem(link.target)) {
+              dangling.push(`${item.key} links to missing item ${link.target}`);
+            }
+            if (link.type === "file" && path.isAbsolute(link.target)) {
+              try {
+                await fs.access(link.target);
+              } catch {
+                dangling.push(`${item.key} links to a file that no longer exists: ${link.target}`);
+              }
+            }
+          }
+          for (const attachment of item.attachments) {
             try {
-              await fs.access(link.target);
+              await fs.access(vault.resolveAttachment(attachment.path));
             } catch {
-              dangling.push(`${item.key} links to a file that no longer exists: ${link.target}`);
+              dangling.push(`${item.key} lists an attachment that is missing: ${attachment.path}`);
             }
           }
         }
+        offset += page.items.length;
+        // Belt-and-suspenders: stops the loop if total and the page ever disagree.
+        if (offset >= page.total || !page.items.length) break;
       }
       const problems = [...errors, ...dangling];
       if (!problems.length) {

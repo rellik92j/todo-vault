@@ -109,7 +109,7 @@ The mechanism for associating arbitrary content with an item.
 
 | `type` | `target` is | Behaviour |
 |---|---|---|
-| `url` | a web address | Passed through to Jira as a real link |
+| `url` | a web address; also the right type for a cloud share link (OneDrive, SharePoint, Google Drive, Dropbox) | Passed through to Jira as a real link |
 | `file` | absolute path | File stays where it is; the vault stores a pointer |
 | `folder` | absolute path | Same, for directories |
 | `item` | another item key | Validated; produces a backlink on the other item |
@@ -119,13 +119,20 @@ The mechanism for associating arbitrary content with an item.
 `file` links versus attachments is a real decision, not a duplicate feature.
 Attaching with `copy: true` brings the file into `attachments/<key>/` so it is
 versioned with the item; `copy: false` records a `file` link instead. Copy small
-documents you want kept alongside the task. Point at anything large or anything
-living on a network share.
+documents you want kept alongside the task. Point at anything large, anything
+living on a network share, or anything inside a synced cloud folder (OneDrive,
+Dropbox, Google Drive) — copying a synced file makes a second copy that
+immediately begins diverging from the one other people are editing.
 
 Attachment paths are stored POSIX-style — `attachments/ACME-2/spec.pdf` — even
 when written on Windows, so a vault stays readable wherever it is opened. Use
 `Vault.resolveAttachment()` to turn one back into a native absolute path; it
 accepts either separator, so vaults written by older builds still resolve.
+
+Share URLs with `?e=`, `?d=`, or `guestaccess.aspx` are capability URLs —
+possession is permission, subject to the share's audience — and a vault with
+`--git` on and a remote commits them. Worth knowing before recording one, not a
+reason to avoid `url` links.
 
 ### Ordering
 
