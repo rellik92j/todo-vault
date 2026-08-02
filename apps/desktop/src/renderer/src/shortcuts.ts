@@ -31,7 +31,11 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["h", "←"], label: "Collapse the subtree (backlog)", group: "Navigation" },
   { keys: ["l", "→"], label: "Expand the subtree (backlog)", group: "Navigation" },
   { keys: ["Enter"], label: "Open the highlighted item", group: "Navigation" },
-  { keys: ["Esc"], label: "Close panel or overlay", group: "Navigation", whileTyping: true },
+  { keys: ["Esc"], label: "Clear the bulk selection, then close panel or overlay", group: "Navigation", whileTyping: true },
+  { keys: ["Space"], label: "Check the highlighted row for bulk edit (backlog)", group: "Navigation" },
+  { keys: ["Shift", "J"], label: "Extend the bulk selection down (backlog)", group: "Navigation" },
+  { keys: ["Shift", "K"], label: "Extend the bulk selection up (backlog)", group: "Navigation" },
+  { keys: ["Ctrl", "A"], label: "Check every row in view (backlog)", group: "Navigation" },
 
   { keys: ["1"], label: "Backlog", group: "Views" },
   { keys: ["2"], label: "Board", group: "Views" },

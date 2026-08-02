@@ -11,6 +11,7 @@ export type {
   DeleteResult,
   DeleteProjectResult,
   MoveProjectResult,
+  BulkUpdateResult,
   TrashEntry,
   GitStatus,
 } from "./vault.js";

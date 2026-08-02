@@ -22,23 +22,48 @@ export function BacklogTable({
   onToggleCollapse,
   selected,
   onSelect,
+  checked,
+  onCheck,
+  onCheckAll,
 }: {
   items: Item[];
   collapsed: ReadonlySet<string>;
   onToggleCollapse: (key: string) => void;
   selected: string | null;
   onSelect: (key: string) => void;
+  /** The bulk-edit multi-select. Absent from every other view — backlog only. */
+  checked: ReadonlySet<string>;
+  onCheck: (key: string, event: { shiftKey: boolean }) => void;
+  /** The header box: select every row on screen, or clear just those rows. */
+  onCheckAll: (keys: string[], next: boolean) => void;
 }): React.JSX.Element {
   if (!items.length) {
     return <div className="empty">Nothing matches these filters.</div>;
   }
 
   const ordered = backlogOrder(items, collapsed);
+  const rowKeys = ordered.map(({ item }) => item.key);
+  const allChecked = rowKeys.length > 0 && rowKeys.every((key) => checked.has(key));
+  const someChecked = rowKeys.some((key) => checked.has(key));
 
   return (
     <table className="table">
       <thead>
         <tr>
+          <th className="cell-check">
+            <input
+              type="checkbox"
+              checked={allChecked}
+              // Controlled by the click handler below, not by the browser's own
+              // toggle — the same reason the row boxes take this shape.
+              onChange={() => {}}
+              onClick={() => onCheckAll(rowKeys, !allChecked)}
+              ref={(el) => {
+                if (el) el.indeterminate = someChecked && !allChecked;
+              }}
+              aria-label={allChecked ? "Clear all checked rows" : "Check every row shown here"}
+            />
+          </th>
           <th>Key</th>
           <th>Type</th>
           <th>Summary</th>
@@ -55,6 +80,23 @@ export function BacklogTable({
             aria-selected={item.key === selected}
             onClick={() => onSelect(item.key)}
           >
+            <td className="cell-check">
+              <input
+                type="checkbox"
+                checked={checked.has(item.key)}
+                onChange={() => {}}
+                // The row is itself a click target, same as the twisty — without
+                // this a checkbox click would also move the cursor and open the
+                // panel. Read here rather than in onChange because a checkbox's
+                // change event does not reliably carry the modifier keys a
+                // keyboard-triggered toggle fires it with.
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCheck(item.key, { shiftKey: event.shiftKey });
+                }}
+                aria-label={`Select ${item.key} for bulk edit`}
+              />
+            </td>
             <td className="cell-key">{item.key}</td>
             <td className="type">{item.type}</td>
             <td className="cell-summary" title={item.summary}>

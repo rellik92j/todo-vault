@@ -140,6 +140,24 @@ filtered out is promoted to a root rather than hidden — which is the behaviour
 backlog has had since Phase 1 for every other filter, and is now covered by a test
 so it reads as a decision rather than as a bug.
 
+**Bulk edit, backlog only.** A checkbox column selects many rows at once — click,
+shift-click for a range, `Ctrl+A` for everything currently in view — and a bar
+appears above the table with status, priority, assignee, reporter, due date, and
+labels (add, remove, or replace). Every control commits the moment it changes,
+same as the detail panel: there is no draft state and no Apply button. The status
+control only offers what *every* selected item can legally reach, narrowing rather
+than attempting an illegal move and reporting the failure — a mixed `todo`/`done`
+selection can disable it entirely, with a title naming why. Applying to a dozen
+items produces exactly one git commit, never twelve, because the write happens in
+one place in the main process: everything is validated first, and nothing touches
+disk until the whole batch is known to be acceptable. The keyboard cursor stays a
+separate thing from the checkboxes — `j`/`k` move it freely without touching the
+selection, `Space` checks the row it is on, and `Shift+J`/`Shift+K` move it while
+extending the selection. `Escape` clears the selection before it goes on to close
+the detail panel. Board and agenda multi-select, bulk delete, bulk move-to-project
+and bulk tick are deliberately left alone — see `PLAN.md` for why each one is a
+harder question than a second checkbox.
+
 **Reporter** — who asked for it — sits beside Assignee in the detail panel, on the
 create form, and as a filter. The suggestion menu is derived from the snapshot
 the renderer already holds, never stored: there is no second list on disk to fall
@@ -211,7 +229,7 @@ draft is worth checking against.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 80 tests: 60 in the core, 20 over the app's board ordering
+npm test               # 96 tests: 69 in the core, 27 over the app's renderer logic
 npm run typecheck      # both workspaces
 ```
 
@@ -345,6 +363,10 @@ worth knowing which rather than assuming symmetry:
   surfaces can add one; neither can take one away.
 - Renaming, deleting and restoring a **project** are CLI and MCP only. The app
   creates, reorders, hides and unhides.
+- **Bulk edit is desktop-app only.** An agent that wants to update a dozen items
+  can already call `vault_update_item` a dozen times — there is no
+  `vault_update_items` — and pays a dozen commits for it. Worth revisiting, not
+  worth blocking the desktop feature on.
 
 ## Pushing to Jira
 
@@ -382,7 +404,7 @@ silently dropping your dates.
 npm test
 ```
 
-Sixty-four tests over the core: key allocation, disk round-trips, frontmatter
+Sixty-nine tests over the core: key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
 the date a pickup stamps, ticking recurring work and the period it counts for,
 backlinks, attachments, agenda sectioning, the description grammar in both
@@ -391,15 +413,21 @@ description in the example vault is one the rich editor may touch — ADF
 conversion, push ordering, drift detection down to a link's target and label,
 manual reordering of both items and projects, trash and restore, hiding and
 unhiding a project, project rename and cross-project moves, path portability,
-git health reporting, atomic writes, and which Windows rename failures are worth
-retrying.
+git health reporting, atomic writes, which Windows rename failures are worth
+retrying, and the backlog's bulk edit — one commit for a whole batch, an illegal
+transition skipped with the rest still applied, nothing written for a rejected
+item, labels folding rather than duplicating, and the shared merge step's
+`in_progress` pickup stamp firing through the bulk path exactly as it does
+through the single-item one.
 
-Twenty more over the desktop app, on `ordering.ts` — the pure functions behind
-the backlog's nesting, collapse and type filtering, and the board's lanes. They
-get tests because this is the one piece of renderer logic where a wrong answer
-is invisible: rows would simply not be where you expected, and the keyboard
-cursor would walk an order the eye never sees. `npm test` from the root runs
-both workspaces.
+Twenty-seven more over the desktop app: `ordering.ts` — the pure functions behind
+the backlog's nesting, collapse and type filtering, and the board's lanes — plus
+`selection.ts`'s multi-select range (including that a collapsed subtree's hidden
+children never count) and the status intersection a mixed checkbox selection
+narrows to. They get tests because this is the renderer logic where a wrong
+answer is invisible: rows would simply not be where you expected, or a row would
+simply be selected when it should not be, with nothing on screen looking broken.
+`npm test` from the root runs both workspaces.
 
 ## What is not here yet
 
@@ -440,7 +468,8 @@ apps/desktop/src/
 └── renderer/       React: backlog, board, agenda, detail
 
 apps/desktop/test/
-└── ordering.test.ts  nesting, collapse, and type filtering
+├── ordering.test.ts   nesting, collapse, and type filtering
+└── selection.test.ts  bulk-edit range and status-intersection logic
 ```
 
 Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.

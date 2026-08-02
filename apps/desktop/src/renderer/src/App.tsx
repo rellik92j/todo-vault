@@ -20,7 +20,9 @@ import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardLanes } from "./ordering";
+import { rangeBetween } from "./selection";
 import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters } from "./pieces";
+import { BulkBar } from "./BulkBar";
 
 type View = "backlog" | "board" | "agenda";
 
@@ -105,6 +107,20 @@ export function App(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
   const [detailKey, setDetailKey] = useState<string | null>(null);
 
+  /**
+   * The backlog's multi-select, for the bulk edit bar. A third notion of "which
+   * item" beside `selected` and `detailKey` — deliberately: folding it into the
+   * cursor would mean every `j` throws away a twelve-item selection, since the
+   * cursor's whole job is to move freely.
+   *
+   * `anchorRef` is the shift-click/shift-J/K pivot. A ref rather than state: it
+   * is read only from inside the same handlers that set it, on the next
+   * keypress or click, and never rendered — nothing on screen depicts "the
+   * anchor" on its own.
+   */
+  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  const anchorRef = useRef<string | null>(null);
+
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [claudeOpen, setClaudeOpen] = useState(false);
@@ -120,6 +136,9 @@ export function App(): React.JSX.Element {
   /** Any overlay that owns the keyboard while it is up. */
   const overlaid =
     creating || creatingProject || showTrash || showHidden || paletteOpen || helpOpen || claudeOpen;
+
+  /** Whether the bulk edit bar is showing — backlog only, and only with a selection. */
+  const bulkBarOpen = view === "backlog" && checked.size > 0;
 
   /**
    * The hiding split, computed once.
@@ -201,6 +220,15 @@ export function App(): React.JSX.Element {
       Boolean(key) && !visibleItems.some((i) => i.key === key);
     if (gone(selected)) setSelected(null);
     if (gone(detailKey)) setDetailKey(null);
+    // Pruned against visibleItems, not filtered: a bulk edit routinely pushes
+    // its own targets out of the filtered view — set twelve items to done with
+    // "Hide closed" on and they all vanish from the table — and the selection
+    // must survive that. Only a truly gone item (deleted, re-keyed, or its
+    // project hidden) drops out here.
+    setChecked((current) => {
+      const next = new Set([...current].filter((key) => !gone(key)));
+      return next.size === current.size ? current : next;
+    });
     // A project filter pointing at something no longer in the sidebar — hidden,
     // deleted, or renamed — leaves every view empty with nothing saying why.
     // Falling back to All is the same recovery in all three cases.
@@ -276,10 +304,76 @@ export function App(): React.JSX.Element {
   const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
   const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
 
+  /**
+   * The checked rows, resolved against visibleItems rather than filtered — the
+   * same reasoning as the pruning effect above. This is what the bulk bar
+   * actually edits.
+   */
+  const checkedItems = useMemo(
+    () => visibleItems.filter((i) => checked.has(i.key)),
+    [visibleItems, checked],
+  );
+
+  /**
+   * How many checked rows the current filter is hiding, so the bar can say so
+   * instead of silently acting on rows nobody can see right now. `filtered`,
+   * unlike `visibleItems`, is what a filter chip or "Hide closed" can shrink.
+   */
+  const checkedHiddenByFilter = useMemo(() => {
+    if (checked.size === 0) return 0;
+    const shown = new Set(filtered.map((i) => i.key));
+    return checkedItems.filter((i) => !shown.has(i.key)).length;
+  }, [checked, checkedItems, filtered]);
+
   /** Open an item in the detail panel, and put the cursor on it. */
   const open = useCallback((key: string) => {
     setSelected(key);
     setDetailKey(key);
+  }, []);
+
+  /**
+   * Toggle one row, or extend from the anchor — Ctrl/Cmd+click and shift-click
+   * respectively. A plain click replaces the anchor with the clicked row, so the
+   * next shift-click ranges from there rather than from wherever the selection
+   * started.
+   */
+  const toggleCheck = useCallback(
+    (key: string, event: { shiftKey: boolean }) => {
+      setChecked((current) => {
+        if (event.shiftKey && anchorRef.current) {
+          const range = rangeBetween(orderedKeys, anchorRef.current, key);
+          const next = new Set(current);
+          for (const k of range) next.add(k);
+          return next;
+        }
+        anchorRef.current = key;
+        const next = new Set(current);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      });
+    },
+    [orderedKeys],
+  );
+
+  const selectAllVisible = useCallback(() => {
+    setChecked(new Set(orderedKeys));
+  }, [orderedKeys]);
+
+  const clearChecked = useCallback(() => {
+    setChecked(new Set());
+    anchorRef.current = null;
+  }, []);
+
+  /** The backlog table's header checkbox: force a set of rows to one state. */
+  const setCheckedMany = useCallback((keys: string[], next: boolean) => {
+    setChecked((current) => {
+      const updated = new Set(current);
+      for (const key of keys) {
+        if (next) updated.add(key);
+        else updated.delete(key);
+      }
+      return updated;
+    });
   }, []);
 
   /** One type chip on or off. A new Set each time — the state is read-only. */
@@ -306,6 +400,36 @@ export function App(): React.JSX.Element {
       // An open panel follows the cursor, the way a mail client's reading pane
       // does. A closed one stays closed — that is the whole point of the split.
       setDetailKey((current) => (current === null ? null : key));
+    },
+    [orderedKeys, selected],
+  );
+
+  /**
+   * Shift+J / Shift+K: move the cursor exactly as `move` does, and grow the
+   * checked set to cover the span just crossed. The anchor seeds from wherever
+   * the cursor already was when it is not already set, so the first Shift+J
+   * from an empty selection checks two rows, not one.
+   */
+  const moveAndExtend = useCallback(
+    (delta: number) => {
+      if (!orderedKeys.length) return;
+      if (!anchorRef.current) anchorRef.current = selected ?? orderedKeys[0];
+      const at = selected ? orderedKeys.indexOf(selected) : -1;
+      const next =
+        at === -1
+          ? delta > 0
+            ? 0
+            : orderedKeys.length - 1
+          : (at + delta + orderedKeys.length) % orderedKeys.length;
+      const key = orderedKeys[next];
+      setSelected(key);
+      setDetailKey((current) => (current === null ? null : key));
+      setChecked((current) => {
+        const range = rangeBetween(orderedKeys, anchorRef.current as string, key);
+        const nextSet = new Set(current);
+        for (const k of range) nextSet.add(k);
+        return nextSet;
+      });
     },
     [orderedKeys, selected],
   );
@@ -410,6 +534,18 @@ export function App(): React.JSX.Element {
         return;
       }
 
+      // Not marked whileTyping in the registry, deliberately: Ctrl-A inside a
+      // text field must still select that field's text, so this only acts
+      // outside one. No preventDefault otherwise, which is what leaves the
+      // native behaviour intact.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        if (!typing && !overlaid && view === "backlog") {
+          event.preventDefault();
+          selectAllVisible();
+        }
+        return;
+      }
+
       if (event.key === "Escape") {
         // Every overlay closes itself; this only handles the layers below them.
         if (overlaid) return;
@@ -418,6 +554,13 @@ export function App(): React.JSX.Element {
         // Escape from closing the whole panel while a field still has focus.
         if (typing) {
           (event.target as HTMLElement).blur();
+          return;
+        }
+        // First rung: drop the bulk selection, the same way a Finder or Gmail
+        // Escape does before it touches anything else. Otherwise clearing a
+        // twelve-item selection takes as many Escapes as the panel does.
+        if (checked.size > 0) {
+          clearChecked();
           return;
         }
         if (detailKey) setDetailKey(null);
@@ -437,6 +580,27 @@ export function App(): React.JSX.Element {
         case "ArrowUp":
           event.preventDefault();
           move(-1);
+          return;
+        // Shift+J / Shift+K. The plain gate above excludes Ctrl/Meta/Alt but not
+        // Shift, so these arrive here as "J"/"K" without any change to it.
+        // Backlog-only: checked rows only mean anything where the bulk bar is.
+        case "J":
+          if (view === "backlog") {
+            event.preventDefault();
+            moveAndExtend(1);
+          }
+          return;
+        case "K":
+          if (view === "backlog") {
+            event.preventDefault();
+            moveAndExtend(-1);
+          }
+          return;
+        case " ":
+          if (view === "backlog" && selected) {
+            event.preventDefault();
+            toggleCheck(selected, { shiftKey: false });
+          }
           return;
         case "h":
         case "ArrowLeft":
@@ -508,7 +672,12 @@ export function App(): React.JSX.Element {
     detailKey,
     selected,
     selectedItem,
+    checked,
     move,
+    moveAndExtend,
+    toggleCheck,
+    selectAllVisible,
+    clearChecked,
     open,
     collapseSelected,
     handleDelete,
@@ -906,7 +1075,7 @@ export function App(): React.JSX.Element {
           </div>
         )}
 
-        <div className="content">
+        <div className={`content${bulkBarOpen ? " content-with-bulk-bar" : ""}`}>
           {view === "backlog" && (
             <BacklogTable
               items={filtered}
@@ -914,6 +1083,9 @@ export function App(): React.JSX.Element {
               onToggleCollapse={toggleCollapse}
               selected={selected}
               onSelect={open}
+              checked={checked}
+              onCheck={toggleCheck}
+              onCheckAll={setCheckedMany}
             />
           )}
           {view === "board" && (
@@ -952,6 +1124,25 @@ export function App(): React.JSX.Element {
             />
           )}
         </div>
+
+        {/*
+          Anchored to the bottom of .main, out of normal flow — see .bulk-bar's
+          CSS. In flow it pushed .content down by its own height the instant a
+          first checkbox was ticked, which read as the whole table jumping.
+          Positioned rather than in the .toast slot for the reason recorded
+          there: the undo toast can appear at the same moment a bulk edit
+          finishes, and the two would collide in one fixed spot.
+        */}
+        {bulkBarOpen && (
+          <BulkBar
+            checkedItems={checkedItems}
+            hiddenByFilter={checkedHiddenByFilter}
+            reporters={allReporters}
+            busy={vault.busy}
+            onClear={clearChecked}
+            onUpdate={(patch) => vault.updateItems([...checked], patch)}
+          />
+        )}
       </main>
 
       {detailItem && (

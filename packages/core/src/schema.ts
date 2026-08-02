@@ -284,6 +284,32 @@ export const UpdateItemInput = z
 
 export type UpdateItemInput = z.infer<typeof UpdateItemInput>;
 
+/**
+ * The bulk-edit patch for the backlog table's multi-select. Deliberately
+ * narrower than UpdateItemInput: summary/description are absent because
+ * overwriting many items with one sentence is never the intent, type/parent
+ * because their legality is per item, and rank because it belongs to
+ * Vault.moveItem. labels carries a mode instead of replacing outright, since
+ * "add this label to twelve items" must not silently drop what they had.
+ */
+export const BulkUpdateInput = z
+  .object({
+    status: z.enum(STATUSES).optional(),
+    priority: z.enum(PRIORITIES).optional(),
+    assignee: z.string().max(120).nullable().optional(),
+    reporter: z.string().max(120).nullable().optional(),
+    dueDate: isoDate.nullable().optional(),
+    labels: z
+      .object({
+        mode: z.enum(["add", "remove", "replace"]),
+        values: z.array(z.string().max(60)),
+      })
+      .optional(),
+  })
+  .strict();
+
+export type BulkUpdateInput = z.infer<typeof BulkUpdateInput>;
+
 export const ItemFilter = z
   .object({
     project: projectKey.optional(),
