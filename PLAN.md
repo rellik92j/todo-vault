@@ -1147,7 +1147,7 @@ action. Also implement `vault jira discover`: both the README and a warning
 string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
 subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
-## `reporter` — who asked for it, surfaced in the app
+## `reporter` — who asked for it, surfaced in the app ✅ built and driven
 
 Promoted out of IDEAS.md. The field already exists everywhere except the place
 you would actually use it: `ItemFrontmatterSchema`, `CreateItemInput` and
