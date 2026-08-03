@@ -1132,13 +1132,21 @@ drive letter as scheme, and is the case most likely to be misread —
 `addAttachment` refusing and still linking, `parseUriList`, and the two
 discovery parsers.
 
-**Not yet driven.** Everything above is covered by tests and a clean build, but
-no one has dropped a real file out of a real OneDrive folder onto the panel. The
-untested seam is discovery itself: whether `reg query` returns what
-`parseUserFolders` expects on this machine, and whether the roots it finds are
-the ones files actually live under. Worth doing before this is trusted, and the
-failure would be quiet — a synced file copied in as though nothing was special
-about it, which is precisely the outcome this exists to prevent.
+**Discovery is proven on this machine; the gesture is not.** `discoverSyncedRoots`
+was run for real and returned `C:\Users\bisch\OneDrive`, with the environment
+variables and the registry agreeing and deduplicating to one root; a path inside
+it resolves to that root and a path outside it resolves to nothing. That was the
+seam most likely to be quietly wrong, because its failure mode is silent — a
+synced file copied in as though nothing were special about it, which is exactly
+what this exists to prevent — and `reg query`'s real output does match what
+`parseUserFolders` expects.
+
+What has *not* been done is dropping an actual file out of that folder onto the
+detail panel and reading the note, or pasting a share link into the link form
+and watching the warning behave. Both are UI paths with tests underneath them
+and no verification above them. Note also that this account is consumer OneDrive
+only — `OneDriveCommercial` is empty here — so the two-account case the registry
+fallback exists for has never actually been exercised.
 
 ## Phase 5 — Jira push from the UI
 
