@@ -1158,6 +1158,7 @@ export function App(): React.JSX.Element {
           onSelect={open}
           onDelete={handleDelete}
           mutate={vault.mutate}
+          attachPaths={vault.attachPaths}
         />
       )}
 

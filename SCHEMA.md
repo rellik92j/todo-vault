@@ -124,6 +124,33 @@ living on a network share, or anything inside a synced cloud folder (OneDrive,
 Dropbox, Google Drive) — copying a synced file makes a second copy that
 immediately begins diverging from the one other people are editing.
 
+For OneDrive and SharePoint that last sentence is now a rule rather than
+advice. `VaultOptions.syncedRoots` lists folders whose contents must never be
+copied, and `addAttachment` refuses `copy: true` from inside one, naming
+`copy: false` as the way through. The option is **empty by default**, so the
+CLI and the MCP server behave exactly as they always have; only the desktop app
+fills it in, discovering the roots from the OneDrive environment variables and
+`HKCU\Software\Microsoft\OneDrive\Accounts\*\UserFolder` at startup. That
+asymmetry is deliberate — the roots are per-machine and Windows-shaped, so the
+core takes them as input rather than going looking, and a vault opened on a
+machine without OneDrive simply has no synced folders.
+
+The desktop app softens the refusal in exactly one place. Dropping a file onto
+the detail panel links it in place instead of failing, and says so, because a
+drag carries no dialog in which to have chosen otherwise. The file picker's
+"Copy in" button *was* an explicit choice, so there the refusal stands.
+
+**There is no `onedrive` link type, on purpose.** `LinkSchema.type` is a zod
+enum, and while unknown *fields* survive a round-trip through an older build,
+unknown *enum values* do not: an older app opening a vault that contains one
+fails to parse the whole item, which then lands in `snapshot.errors` and
+disappears from every view. Running the desktop app and a globally-installed
+MCP server at different versions is the normal state, so that is a live
+data-visibility risk rather than a theoretical one. OneDrive links are stored as
+`type: url` and recognised by their target — the app derives the "onedrive"
+label in the link row from the URL, which is the only thing a separate type
+would have bought.
+
 Attachment paths are stored POSIX-style — `attachments/ACME-2/spec.pdf` — even
 when written on Windows, so a vault stays readable wherever it is opened. Use
 `Vault.resolveAttachment()` to turn one back into a native absolute path; it

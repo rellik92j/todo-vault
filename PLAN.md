@@ -1071,6 +1071,75 @@ reason `ordering.ts` has its own: this is renderer logic where a wrong answer is
 invisible, and the wrong rows would simply be selected with nothing on screen
 looking broken.
 
+## OneDrive documents stay in OneDrive ✅ built, not yet driven
+
+Steps 3–4 of `PLAN-LINKS.md`, landed together because that plan is emphatic
+that step 3 alone ships something which looks finished and prevents nothing.
+The failure being prevented: copying a synced document into `attachments/`
+produces a second version that starts diverging the moment either is edited,
+of a file whose entire point is that there is one of it.
+
+**The rule lives in the core, the knowledge does not.** `VaultOptions.syncedRoots`
+is a list of absolute paths, empty by default, and `addAttachment` refuses
+`copy: true` from inside one. Discovering *where* OneDrive syncs is Windows-shaped
+and per-user, so `apps/desktop/src/main/synced-roots.ts` reads the
+`OneDrive`/`OneDriveCommercial`/`OneDriveConsumer` variables and falls back to
+`HKCU\Software\Microsoft\OneDrive\Accounts\*\UserFolder`, then hands the union
+in at startup. Both sources are read because they fail differently — the
+variables are missing for a process that started before OneDrive did, and the
+registry is the only place a second account reliably appears. Roots that no
+longer exist on disk are dropped, so an unlinked account cannot leave a stale
+key refusing copies from what is now an ordinary directory.
+
+**Refuse in the core, downgrade at one surface.** `addAttachment` throws, naming
+`copy: false` as the way through, so the API never quietly does something other
+than what was asked. The drop handler is the single exception: a drag carries no
+dialog in which the choice could have been made, so main links the file in place
+and the panel says so in a dismissible note. The file picker's "Copy in" *was* an
+explicit choice, so there the refusal stands and reaches the error toast intact.
+
+**No new link type, and the enum is the reason.** Adding `onedrive` to
+`LinkSchema.type` would make every item carrying one unparseable to an older
+build — `snapshot.errors`, gone from every view — and running the app against a
+globally-installed MCP server at a different version is the normal state, not an
+edge case. OneDrive links are stored as `type: url`; the row derives its
+"onedrive" chip from the target, which is the only thing the separate type would
+have bought. The same argument kills the `removeLink` collision gotcha 8 warns
+about, since there is never a second URL-shaped type to collide with.
+
+**A split the plan did not anticipate.** The proposed shape put
+`classifyLinkTarget` beside `isSyncedPath` in one core module. That cannot work:
+the sync-root comparison needs `node:path`, the renderer is sandboxed and bundles
+for Chromium, and the link form is exactly where the classifier is needed. So the
+string-only half is its own leaf entry point, `todo-vault/link-target`, importing
+nothing — the same reason `constants` and `recurrence` are separate — and
+`links.ts` keeps the path logic. Verified by grepping the built renderer bundle:
+the OneDrive hostnames are in it and `node:path` is not.
+
+**Two dead gestures now work.** Dropping a folder used to throw and fail the
+whole drop, because `addAttachment` accepts files only; directories now route to
+`folder` links. Dragging a document out of the OneDrive *web* UI used to do
+nothing at all, because `dataTransfer.files` is empty for it; `text/uri-list` is
+read when there are no files, and non-http schemes are dropped rather than stored
+as links that would be refused on click.
+
+**The suite is at 103** — 73 in the core, 30 over the app. The new ones cover
+`syncedRootFor` against nested, sibling and case-differing roots (the sibling
+case is the one a naive prefix match gets wrong: `…\OneDrive` must not swallow
+`…\OneDrive - Contoso`), `classifyLinkTarget` across all three OneDrive URL
+shapes plus a SharePoint library and a Windows path — which parses as a URL,
+drive letter as scheme, and is the case most likely to be misread —
+`addAttachment` refusing and still linking, `parseUriList`, and the two
+discovery parsers.
+
+**Not yet driven.** Everything above is covered by tests and a clean build, but
+no one has dropped a real file out of a real OneDrive folder onto the panel. The
+untested seam is discovery itself: whether `reg query` returns what
+`parseUserFolders` expects on this machine, and whether the roots it finds are
+the ones files actually live under. Worth doing before this is trusted, and the
+failure would be quiet — a synced file copied in as though nothing was special
+about it, which is precisely the outcome this exists to prevent.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
@@ -1427,10 +1496,11 @@ but left `due` and `overdue` double-listing the same three items.
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
 
-**The OneDrive half of `PLAN-LINKS.md` is designed and not built.** Links and
-attachments open, which was steps 1–2; a synced document can still be copied into
-`attachments/` and fork from the original, which is what steps 3–4 exist to
-prevent.
+**The OneDrive half of `PLAN-LINKS.md` is built** — steps 3–4, landed together.
+A file inside a discovered sync root can no longer be copied into
+`attachments/`. What remains from that plan is step 5's other half: the attach
+dialog is still file-only, so a `folder` link is created by dropping a
+directory or typing the path, not by picking one.
 
 **`reporter` is not pushed to Jira**, and editing it does not even mark an item as
 drifted — see the reporter section above for why that is a decision to make

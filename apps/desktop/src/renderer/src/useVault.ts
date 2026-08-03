@@ -71,6 +71,17 @@ export interface VaultState {
     updated: number;
     skipped: Array<{ key: string; reason: string }>;
   }>;
+  /**
+   * Attach dropped paths. A helper for the same reason `updateItems` is one:
+   * main may have linked a file in place instead of copying it, because the
+   * file lives in a synced folder, and the panel has to be able to say so.
+   * `mutate` carries a snapshot and nothing else.
+   */
+  attachPaths: (
+    key: string,
+    paths: string[],
+    copy: boolean,
+  ) => Promise<{ error: string | null; linkedInstead: string[] }>;
   restore: (files: string[]) => Promise<void>;
   /** Selects the item created by the last successful createItem, if any. */
   lastCreated: string | null;
@@ -228,6 +239,30 @@ export function useVault(): VaultState {
     }
   }, []);
 
+  const attachPaths = useCallback(async (key: string, paths: string[], copy: boolean) => {
+    setBusy(true);
+    try {
+      const result = await window.vault.attachPaths(key, paths, copy);
+      // A failure still goes to the shared banner — a drop that attached
+      // nothing should not be silent just because this call reports its own
+      // errors as well.
+      if (!result.ok) {
+        setError(result.message);
+        return { error: result.message, linkedInstead: [] };
+      }
+      generation.current += 1;
+      setError(null);
+      setSnapshot(result.value.snapshot);
+      return { error: null, linkedInstead: result.value.linkedInstead };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      return { error: message, linkedInstead: [] };
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const restore = useCallback(async (files: string[]) => {
     setBusy(true);
     try {
@@ -264,6 +299,7 @@ export function useVault(): VaultState {
       createProject,
       deleteItem,
       updateItems,
+      attachPaths,
       restore,
       lastCreated,
     }),
@@ -280,6 +316,7 @@ export function useVault(): VaultState {
       createProject,
       deleteItem,
       updateItems,
+      attachPaths,
       restore,
     ],
   );

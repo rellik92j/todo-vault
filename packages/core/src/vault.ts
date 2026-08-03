@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { syncedRootFor } from "./links.js";
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 import {
   BulkUpdateInput,
@@ -55,6 +56,17 @@ export class VaultError extends Error {
 export interface VaultOptions {
   /** Auto-commit every write to git, giving you free undo and an audit trail. */
   git?: boolean;
+  /**
+   * Absolute paths whose contents must never be copied into the vault —
+   * OneDrive and SharePoint sync folders, whose whole point is that the
+   * document has exactly one version.
+   *
+   * Empty by default, so the CLI and MCP server behave exactly as before
+   * unless something configures this. Finding these roots is Windows-shaped
+   * and per-user, so the desktop main process discovers them and passes them
+   * in rather than the core going looking.
+   */
+  syncedRoots?: string[];
 }
 
 interface Counters {
@@ -788,6 +800,10 @@ export class Vault {
    * Attach a file. `copy: true` brings it into the vault (good for small
    * documents you want versioned); `copy: false` records a pointer to where it
    * already lives (good for a 200MB video or a file on a network share).
+   *
+   * Copying out of a synced folder is refused rather than quietly downgraded —
+   * see the check below for why the honest failure lives here and the smooth
+   * gesture lives in the caller.
    */
   async addAttachment(
     key: string,
@@ -806,6 +822,26 @@ export class Vault {
     }
     if (!stat.isFile()) {
       throw new VaultError(`${absSource} is not a file`);
+    }
+
+    // A file in a OneDrive or SharePoint folder already has exactly one
+    // authoritative version, which is the reason it is there. Copying it into
+    // the vault creates a second one that starts diverging the moment either
+    // is edited — the failure this rule exists to prevent.
+    //
+    // Refusing rather than silently downgrading to `copy: false` keeps the API
+    // honest: a caller that asked for a copy and got a link should be told.
+    // Callers that want the gesture to stay smooth — the app's drop handler —
+    // catch this shape by checking first and passing `copy: false` themselves,
+    // so the downgrade is visible at the surface where a person can see it.
+    if (copy) {
+      const syncedRoot = syncedRootFor(absSource, this.options.syncedRoots ?? []);
+      if (syncedRoot) {
+        throw new VaultError(
+          `${path.basename(absSource)} is inside a synced folder (${syncedRoot}), where it already has one authoritative version. ` +
+            `Copying it into the vault would create a second one that diverges — attach it without copying to link it where it lives.`,
+        );
+      }
     }
 
     if (!copy) {

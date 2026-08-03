@@ -16,7 +16,15 @@ import {
 } from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
-import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
+import { classifyLinkTarget } from "../src/link-target.js";
+import { isSyncedPath, syncedRootFor } from "../src/links.js";
+import {
+  isTransientRenameError,
+  pathExists,
+  RANK_GAP,
+  rankBetween,
+  writeFileAtomic,
+} from "../src/util.js";
 import { cadencePeriod, todayIso, addDays } from "../src/recurrence.js";
 
 async function tmpVault(): Promise<Vault> {
@@ -623,6 +631,94 @@ test("copies attachments into the vault, or points at them in place", async () =
   assert.ok(pointed.links.some((l) => l.type === "file" && path.isAbsolute(l.target)));
 
   await assert.rejects(() => vault.addAttachment(item.key, "/no/such/file"), /Cannot read/);
+});
+
+test("syncedRootFor matches a root and its descendants, and nothing beside them", () => {
+  const root = path.resolve("C:/Users/sam/OneDrive - Contoso");
+
+  assert.equal(syncedRootFor(path.join(root, "Docs", "plan.xlsx"), [root]), root);
+  assert.equal(syncedRootFor(root, [root]), root);
+
+  // The separator check earns its keep here: a prefix match alone would let
+  // the root swallow its sibling.
+  assert.equal(syncedRootFor(path.resolve("C:/Users/sam/OneDrive - Contoso Ltd/x.txt"), [root]), undefined);
+  assert.equal(syncedRootFor(path.resolve("C:/Users/sam/Documents/x.txt"), [root]), undefined);
+
+  // Windows hands these back with whatever case the registry stored.
+  assert.equal(syncedRootFor(path.join(root, "Docs", "plan.xlsx").toUpperCase(), [root]), root);
+  assert.equal(syncedRootFor(path.join(root, "a.txt"), [root.toLowerCase()]), root.toLowerCase());
+
+  // A root that survived an unset env var must not match everything.
+  assert.equal(syncedRootFor(path.resolve("C:/anywhere/at/all.txt"), ["", "   "]), undefined);
+  assert.equal(isSyncedPath(path.join(root, "a.txt"), []), false);
+
+  // Nested roots: the outer one still answers for a path under the inner.
+  const inner = path.join(root, "Shared");
+  assert.equal(syncedRootFor(path.join(inner, "deck.pptx"), [root, inner]), root);
+});
+
+test("classifyLinkTarget separates OneDrive from SharePoint, a plain URL, and a path", () => {
+  // The three shapes gotcha 1 names.
+  assert.equal(classifyLinkTarget("https://contoso-my.sharepoint.com/:x:/g/personal/sam/EaBc?e=AbC123"), "onedrive");
+  assert.equal(classifyLinkTarget("https://onedrive.live.com/edit.aspx?resid=1234"), "onedrive");
+  assert.equal(classifyLinkTarget("https://1drv.ms/x/s!AbCdEf"), "onedrive");
+  assert.equal(classifyLinkTarget("odopen://openfile?id=1234"), "onedrive");
+  assert.equal(classifyLinkTarget("ms-onedrive:openfile?id=1234"), "onedrive");
+
+  // A document library — same don't-copy property, but not OneDrive, so the
+  // form should say so rather than claim a match it does not have.
+  assert.equal(classifyLinkTarget("https://contoso.sharepoint.com/sites/Legal/Shared%20Documents/dpa.docx"), "sharepoint");
+
+  assert.equal(classifyLinkTarget("https://example.com/plan.xlsx"), "url");
+  assert.equal(classifyLinkTarget("https://sharepoint.com.evil.test/phish"), "url");
+
+  // A drive letter parses as a URL scheme, so this is the case most likely to
+  // be misread as a link.
+  assert.equal(classifyLinkTarget("C:\\Users\\sam\\OneDrive\\plan.xlsx"), "path");
+  assert.equal(classifyLinkTarget("\\\\server\\share\\plan.xlsx"), "path");
+  assert.equal(classifyLinkTarget("   "), "path");
+});
+
+test("a file in a synced folder is refused for copying, and still links in place", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-synced-"));
+  const synced = path.join(dir, "OneDrive - Contoso");
+  await fs.mkdir(path.join(synced, "Docs"), { recursive: true });
+  const src = path.join(synced, "Docs", "plan.xlsx");
+  await fs.writeFile(src, "one version", "utf8");
+
+  const vault = await Vault.init(path.join(dir, "vault"), { syncedRoots: [synced] });
+  await vault.createProject({ key: "ACME", name: "Acme rollout" });
+  const item = await vault.createItem({ project: "ACME", summary: "Has a synced doc" });
+
+  await assert.rejects(
+    () => vault.addAttachment(item.key, src, { copy: true }),
+    /synced folder .* diverges|synced folder/,
+  );
+  // The refusal has to name the way out, or it is just a wall.
+  await assert.rejects(() => vault.addAttachment(item.key, src, { copy: true }), /without copying/);
+
+  const linked = await vault.addAttachment(item.key, src, { copy: false });
+  assert.equal(linked.attachments.length, 0);
+  assert.ok(linked.links.some((l) => l.type === "file" && l.target === src));
+
+  // Nothing was copied in on the way past.
+  assert.equal(await pathExists(path.join(vault.root, "attachments", item.key)), false);
+});
+
+test("with no syncedRoots configured, copying is exactly as it was", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-unsynced-"));
+  const synced = path.join(dir, "OneDrive - Contoso");
+  await fs.mkdir(synced, { recursive: true });
+  const src = path.join(synced, "plan.xlsx");
+  await fs.writeFile(src, "one version", "utf8");
+
+  // Same layout, no roots handed in — which is the CLI and MCP server's case.
+  const vault = await Vault.init(path.join(dir, "vault"));
+  await vault.createProject({ key: "ACME", name: "Acme rollout" });
+  const item = await vault.createItem({ project: "ACME", summary: "Has a doc" });
+
+  const copied = await vault.addAttachment(item.key, src, { copy: true });
+  assert.equal(copied.attachments.length, 1);
 });
 
 test("agenda surfaces overdue work and honours cadence", async () => {

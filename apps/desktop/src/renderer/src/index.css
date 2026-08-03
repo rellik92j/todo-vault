@@ -1582,6 +1582,19 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   color: var(--overdue);
 }
 
+/* Says a drop did something other than what it looked like it would do, so it
+   needs to be readable rather than faint — but it is not a failure, so it does
+   not borrow the error colour either. Blocks rather than inlines because the
+   sentence explains a rule and does not fit beside a control. */
+.field-note.drop-note {
+  display: block;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
 .add-btn {
   margin-left: 8px;
   font-size: 10.5px;

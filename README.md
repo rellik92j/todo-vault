@@ -431,10 +431,10 @@ simply be selected when it should not be, with nothing on screen looking broken.
 
 ## What is not here yet
 
-- **OneDrive-aware attachments.** `file` and `folder` links and attachments open
-  on click, which was the first half of `PLAN-LINKS.md`; the second half — a
-  OneDrive file linked as OneDrive rather than copied into `attachments/` — is
-  designed and not built.
+- **Picking a folder from the attach dialog.** Folder links can be made by
+  dropping a directory on the detail panel or typing the path into the link
+  form; the dialog itself is still file-only. The last unbuilt piece of
+  `PLAN-LINKS.md`.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
 - **Renaming and deleting projects in the app.** They can be created from the
@@ -481,6 +481,6 @@ Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.
 | `SCHEMA.md` | The data model and the rules that hold it together |
 | `PLAN.md` | What was built, phase by phase, and why each call was made |
 | `IDEAS.md` | Unscheduled ideas, newest first — promoted into `PLAN.md` when built |
-| `PLAN-LINKS.md` | The design for OneDrive-aware links; first half built |
+| `PLAN-LINKS.md` | The design for OneDrive-aware links; built bar the folder picker |
 | `PACKAGING.md` | Moving a working copy, and the plan for a real `.exe` |
 | `GETTING-STARTED.md` | Running it on a machine that has never seen it |
