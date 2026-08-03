@@ -8,6 +8,65 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## Three more agenda scopes, and they are not the same shape of work
+
+The four existing scopes — `today`, `week`, `nextWeek`, `month` — are one
+`Record<AgendaScope, {from, to, cadences}>` in `Vault.agenda()`
+(`packages/core/src/vault.ts`). Adding a scope value there is the only edit
+that carries meaning; everything else it touches is cosmetic repetition, and
+there is a lot of it, because `AgendaScope` is not one type with importers —
+it is written out independently in at least four places with nothing forcing
+them to agree: the union in `shared/api.ts`, the zod enum in
+`vault_get_agenda` (`mcp-server.ts`), and, inside `cli.ts` alone, both an
+inline cast on the parsed argument and a separate `scopePhrase` record. The
+UI adds two more: `SCOPE_PHRASE`/`HEADINGS` in `Agenda.tsx` and the `<select>`
+options in `App.tsx`. Three new scopes at six-plus touch points apiece is the
+tax for this ask regardless of which get built — but the three don't cost the
+same, because they aren't the same *kind* of range.
+
+**Next 30 days** is the cheap one. It is a rolling window, not a calendar
+period: `from: reference, to: addDays(reference, 30)`. That puts `reference`
+(today) at the start of its own window, same as `today`/`week`/`month`
+already do — the boring, already-proven case.
+
+**This week + next week** is almost free but has one real trap. The range
+itself is just the union of two ranges that already exist and are contiguous
+— `from: startOfWeek(reference), to: addDays(startOfWeek(reference), 13)`,
+same `["daily", "weekly"]` cadences its two halves already use. The trap is
+building it by calling `agenda("week")` and `agenda("nextWeek")` separately
+and stacking the results in the UI instead of adding a real third range. Both
+calls compute `overdue` the same way — `open.filter(dueDate < reference)`,
+which does not depend on `to` at all — so a naive two-call union shows every
+overdue item twice. The existing dedup (`alreadyListed`, and overdue winning
+the "which section claims this item" tie) only works inside a single
+`agenda()` call. This one has to be a genuine fourteenth-to-twentieth-day
+entry in the `ranges` record, not a UI-side merge of two calls.
+
+**Next month** is the one worth being careful with, for a reason that will
+not show up in testing until someone ticks a monthly item at the wrong time.
+`reference` in that window is neither inside it (like the two above) nor at
+its start — it falls entirely *before* `from`. `nextWeek` already has this
+property today, and it already works, but for a reason that is easy to
+mistake for having been designed in: `cadencePeriod` (`recurrence.ts`) always
+computes the period *containing `reference`* — this week, this month — never
+the window being displayed. For `nextWeek`, `isSettledForWindow` checks this
+week's `period.to` against next week's `windowEnd`, and this week's end is
+never `>=` next week's end, so a weekly item always reads as unsettled and
+correctly keeps showing up under "Recurring next week" — right answer, but
+because of which direction that inequality happens to point, not because the
+period was shifted forward to match the window. `nextMonth` would inherit
+the identical accident: this month's `period.to` is never `>=` next month's
+end, so a monthly item always shows there too, which is again the right
+answer. Safe to build the same way `nextWeek` was — but it deserves a comment
+saying so where the range is added, since the obvious "fix" — computing
+`cadencePeriod` from the window's own `from` instead of from `reference` — is
+the thing that would actually break it for every scope that isn't this one.
+On the range itself, no new date-math helper is needed even though
+`recurrence.ts` has no month-shift arithmetic today (only `startOfMonth`,
+`endOfMonth`, `startOfQuarter`, all reference-relative): `endOfMonth` already
+composes into it — `addDays(endOfMonth(reference), 1)` is next month's start,
+and `endOfMonth` of that is next month's end.
+
 ## A drifted item still cannot be pushed as an update
 
 Fixing the planner's eligibility check left the harder half standing: nothing in
