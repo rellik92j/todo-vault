@@ -8,9 +8,15 @@
 # path is even reachable on Linux, so a green Linux run would be evidence about
 # a program that no one runs.
 #
-# Node versions: 20 is the floor package.json claims in "engines", and a claim
-# nothing tests is a guess. 24 is what the machine this gets developed on
-# actually runs.
+# Node versions: 22 is the floor package.json claims in "engines", and a claim
+# nothing tests is a guess — this matrix is what makes it a fact. 24 is what the
+# machine this gets developed on actually runs.
+#
+# The floor was >=20 until this workflow first ran and disproved it. `npm test`
+# globs its test files, npm hands scripts to cmd.exe on Windows, cmd.exe does not
+# expand globs, and Node only learned to expand the pattern itself in 22. So the
+# suite could never have run on 20, in any workspace. Node 20 also left LTS on
+# 2026-04-30. Both facts pointed the same way.
 
 name: CI
 
@@ -28,7 +34,7 @@ jobs:
       # finish rather than cancelling it.
       fail-fast: false
       matrix:
-        node: ['20', '24']
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
 
