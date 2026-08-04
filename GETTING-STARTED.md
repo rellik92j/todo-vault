@@ -108,7 +108,7 @@ outside the repo, so pulling never touches them.
 ```bash
 npm run dev            # build core, launch the app
 npm run build           # both workspaces
-npm test                # both workspaces — 78 core tests, 36 desktop
+npm test                # both workspaces — 78 core tests, 41 desktop
 npm run typecheck       # both workspaces
 npm run vault -- agenda week --vault ./vault   # CLI, run from repo root
 ```
