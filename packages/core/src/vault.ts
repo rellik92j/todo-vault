@@ -266,11 +266,22 @@ export class Vault {
     return vault;
   }
 
-  /** Rebuilds the in-memory index from disk. Cheap enough to call on any file change. */
+  /**
+   * Rebuilds the in-memory index from disk. Cheap enough to call on any file change.
+   *
+   * Built into fresh maps and swapped in at the end, rather than clearing the
+   * live ones first. Clearing up front left the vault genuinely empty across
+   * every `await` in the read below, and a `load()` triggered by the file
+   * watcher runs interleaved with whatever else is in flight — so a multi-step
+   * write such as attaching four dropped files at once would hit a `getItem`
+   * that threw "No item with key ...", losing the rest of the batch. Swapping
+   * at the end means there is no window in which the index is wrong: it is the
+   * old contents, then the new ones.
+   */
   async load(): Promise<{ items: number; projects: number; errors: string[] }> {
     const errors: string[] = [];
-    this.items.clear();
-    this.projects.clear();
+    const items = new Map<string, Item>();
+    const projects = new Map<string, Project>();
 
     for (const [dir, isProject] of [
       [this.projectsDir, true],
@@ -290,10 +301,10 @@ export class Vault {
           const { data, body } = parseFrontmatter(raw);
           if (isProject) {
             const parsed = ProjectSchema.parse(data);
-            this.projects.set(parsed.key, { ...parsed, description: body });
+            projects.set(parsed.key, { ...parsed, description: body });
           } else {
             const parsed = ItemFrontmatterSchema.parse(data);
-            this.items.set(parsed.key, { ...parsed, description: body });
+            items.set(parsed.key, { ...parsed, description: body });
           }
         } catch (err) {
           errors.push(`${path.relative(this.root, filePath)}: ${formatZodError(err)}`);
@@ -301,6 +312,8 @@ export class Vault {
       }
     }
 
+    this.items = items;
+    this.projects = projects;
     this.loaded = true;
     return { items: this.items.size, projects: this.projects.size, errors };
   }

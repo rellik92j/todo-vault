@@ -36,6 +36,33 @@ export class VaultService extends EventEmitter {
   private watcher: FSWatcher | undefined;
   private debounce: NodeJS.Timeout | undefined;
 
+  /**
+   * Tail of the serialized work queue. Every write, every reload and every
+   * snapshot joins it, so no two of them are ever in flight at once.
+   *
+   * The vault's in-memory index is shared mutable state, and the watcher fires
+   * on this app's *own* writes: attaching four dropped files runs four writes
+   * and four `git commit`s inside one call, which is long enough for the
+   * debounced reload below to land in the middle of it. That reload re-reads
+   * the item as it was two files ago and puts it back in the index, so the next
+   * file in the batch is written on top of stale state and the ones between are
+   * lost. Serializing is the fix: a reload waits for the batch to finish, by
+   * which point it reads the finished article.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Run `fn` once everything already queued has settled.
+   *
+   * The tail swallows rejections so one failed write does not poison every
+   * operation after it — the caller still gets the rejection, via `run`.
+   */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
   get root(): string | undefined {
     return this.vault?.root;
   }
@@ -132,8 +159,13 @@ export class VaultService extends EventEmitter {
   private async emitSnapshot(): Promise<void> {
     if (!this.vault) return;
     try {
-      await this.vault.load();
-      this.emit("changed", await this.snapshot());
+      // One queue slot for the whole thing, not one per step: `readSnapshot`
+      // reloads for itself, and re-entering `serialize` here would deadlock.
+      const snapshot = await this.serialize(async () => {
+        await this.requireVault().load();
+        return this.readSnapshot();
+      });
+      this.emit("changed", snapshot);
     } catch (err) {
       console.error("[vault-service] reload after a file change failed:", err);
     }
@@ -150,7 +182,16 @@ export class VaultService extends EventEmitter {
 
   // ------------------------------------------------------------ snapshots
 
+  /**
+   * The queued entry point. Callers outside this class use this one, so a
+   * snapshot can never be read out of the middle of a half-finished write.
+   */
   async snapshot(): Promise<VaultSnapshot> {
+    return this.serialize(() => this.readSnapshot());
+  }
+
+  /** The body of `snapshot`, for callers that already hold the queue slot. */
+  private async readSnapshot(): Promise<VaultSnapshot> {
     const vault = this.requireVault();
     const { errors } = await vault.load();
 
@@ -243,9 +284,11 @@ export class VaultService extends EventEmitter {
    * only over state that was fresh a moment ago.
    */
   private async write<T>(fn: (vault: Vault) => Promise<T>): Promise<T> {
-    const vault = this.requireVault();
-    await vault.load();
-    return fn(vault);
+    return this.serialize(async () => {
+      const vault = this.requireVault();
+      await vault.load();
+      return fn(vault);
+    });
   }
 
   createItem(input: unknown): Promise<Item> {
