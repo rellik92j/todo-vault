@@ -920,6 +920,34 @@ button:focus-visible {
   max-width: 60ch;
 }
 
+/*
+ * A band heading inside an agenda section — "This week", "Next week", "Later".
+ *
+ * Deliberately a step down from .section-title rather than a copy of it. The
+ * bands subdivide a single claim, "these have a due date inside this window",
+ * so three of them at section weight would read as three separate claims and
+ * undo the thing the section split exists to say. Smaller, dimmer, and no note
+ * of its own for the same reason.
+ */
+.band-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 0 6px;
+}
+
+/* The first band always follows the section note, which already spaced itself. */
+.section-note + .band-head {
+  margin-top: 0;
+}
+
+.band-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 0;
+}
+
 .rows {
   border: 1px solid var(--border);
   border-radius: 8px;

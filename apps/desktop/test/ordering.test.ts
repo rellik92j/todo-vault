@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Item, Status } from "todo-vault";
-import { backlogOrder, boardColumns, boardLanes } from "../src/renderer/src/ordering.js";
+import {
+  backlogOrder,
+  boardColumns,
+  boardLanes,
+  groupIntoBands,
+} from "../src/renderer/src/ordering.js";
 
 /**
  * Enough of an Item to order. `backlogOrder` reads `key` and `parent` and
@@ -253,4 +258,93 @@ test("a grouped lane column is one project in rank order", () => {
     todo?.items.map((i) => i.key),
     ["A1", "A2"],
   );
+});
+
+// ------------------------------------------------------------- agenda bands
+
+/** A due-dated item and the key/date map the grouping reads. */
+function dated(key: string, dueDate: string): Item {
+  return { ...item(key), dueDate } as unknown as Item;
+}
+
+const BANDS = [
+  { label: "This week", from: "2026-08-03", to: "2026-08-09" },
+  { label: "Next week", from: "2026-08-10", to: "2026-08-16" },
+  { label: "Later", from: "2026-08-17", to: "2026-09-02" },
+];
+
+function byKeyOf(items: Item[]): ReadonlyMap<string, Item> {
+  return new Map(items.map((i) => [i.key, i]));
+}
+
+test("a section with no bands is one unlabelled group", () => {
+  const items = [dated("A1", "2026-08-04"), dated("A2", "2026-08-20")];
+  const groups = groupIntoBands({ keys: ["A1", "A2"] }, byKeyOf(items));
+  assert.deepEqual(groups, [{ label: null, keys: ["A1", "A2"] }]);
+});
+
+test("bands cut an already-sorted list into contiguous runs", () => {
+  const items = [
+    dated("A1", "2026-08-04"),
+    dated("A2", "2026-08-09"),
+    dated("A3", "2026-08-10"),
+    dated("A4", "2026-08-16"),
+    dated("A5", "2026-08-17"),
+  ];
+  const groups = groupIntoBands(
+    { bands: BANDS, keys: items.map((i) => i.key) },
+    byKeyOf(items),
+  );
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.keys]),
+    [
+      ["This week", ["A1", "A2"]],
+      ["Next week", ["A3", "A4"]],
+      ["Later", ["A5"]],
+    ],
+    "both ends of every band are inclusive",
+  );
+});
+
+test("grouping preserves the order the section arrived in", () => {
+  const items = [
+    dated("A1", "2026-08-04"),
+    dated("A2", "2026-08-11"),
+    dated("A3", "2026-08-25"),
+  ];
+  const keys = items.map((i) => i.key);
+  const groups = groupIntoBands({ bands: BANDS, keys }, byKeyOf(items));
+  assert.deepEqual(
+    groups.flatMap((g) => g.keys),
+    keys,
+    "concatenating the bands is the keyboard walk, unchanged",
+  );
+});
+
+test("an empty band is dropped rather than headed", () => {
+  const items = [dated("A1", "2026-08-04"), dated("A2", "2026-08-25")];
+  const groups = groupIntoBands({ bands: BANDS, keys: ["A1", "A2"] }, byKeyOf(items));
+  assert.deepEqual(
+    groups.map((g) => g.label),
+    ["This week", "Later"],
+    "nothing is due next week, so next week is not announced",
+  );
+});
+
+test("a key the bands do not cover still renders, in the last band", () => {
+  // Unreachable while the core's bands span the window. Asserted because the
+  // failure it guards against is an item vanishing off the agenda entirely,
+  // which reads as work that does not exist rather than as a display bug.
+  const items = [dated("A1", "2026-08-04"), dated("A2", "2027-01-01")];
+  const groups = groupIntoBands({ bands: BANDS, keys: ["A1", "A2"] }, byKeyOf(items));
+  assert.deepEqual(groups.flatMap((g) => g.keys), ["A1", "A2"]);
+  assert.equal(groups.at(-1)?.label, "Later");
+});
+
+test("an item missing from the map is still placed rather than dropped", () => {
+  // The agenda narrows to keys it can see before this runs, so a miss means the
+  // item went away mid-render. It must not take a band's other rows with it.
+  const items = [dated("A1", "2026-08-04")];
+  const groups = groupIntoBands({ bands: BANDS, keys: ["GONE", "A1"] }, byKeyOf(items));
+  assert.deepEqual(groups.flatMap((g) => g.keys).sort(), ["A1", "GONE"]);
 });

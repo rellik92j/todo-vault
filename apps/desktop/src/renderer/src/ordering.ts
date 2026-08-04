@@ -152,3 +152,47 @@ export function boardColumns(
       }),
   }));
 }
+
+/** One rendered run of agenda rows: a whole section, or one of its bands. */
+export interface RowGroup {
+  /** Null for an unbanded section, which draws no sub-heading at all. */
+  label: string | null;
+  from?: string;
+  to?: string;
+  keys: string[];
+}
+
+/**
+ * An agenda section's keys split into the bands the core described.
+ *
+ * No sorting happens here and none is needed: `keys` arrives ordered by due
+ * date — `sortByWorkOrder` compares dates first and everything in a `due`
+ * section has one — so each band is a contiguous run and this only decides
+ * where to cut. That is also why the keyboard walk is unaffected: concatenating
+ * these groups reproduces the order the section already had.
+ *
+ * Which dates count as "this week" is not decided here. The core sends the
+ * ranges, for the reason the effect in `Agenda.tsx` gives about the window
+ * itself — it depends on today's date, so it is not the renderer's to derive.
+ */
+export function groupIntoBands(
+  section: { bands?: { label: string; from: string; to: string }[]; keys: string[] },
+  byKey: ReadonlyMap<string, Item>,
+): RowGroup[] {
+  if (!section.bands?.length) return [{ label: null, keys: section.keys }];
+
+  const groups: RowGroup[] = section.bands.map((band) => ({ ...band, keys: [] }));
+  for (const key of section.keys) {
+    const due = byKey.get(key)?.dueDate ?? "";
+    const index = groups.findIndex((g) => g.from && g.to && due >= g.from && due <= g.to);
+    // Unreachable while the core's bands span the window, and deliberately a
+    // fallback rather than a skip: a row in a slightly wrong band is a display
+    // bug, and a row silently dropped off the agenda is a missed deadline.
+    groups[index < 0 ? groups.length - 1 : index].keys.push(key);
+  }
+
+  // An empty band is dropped rather than headed, the same way `populated` in
+  // Agenda.tsx drops an emptied section. The cost is that a clear week says
+  // nothing rather than saying it is clear.
+  return groups.filter((group) => group.keys.length > 0);
+}

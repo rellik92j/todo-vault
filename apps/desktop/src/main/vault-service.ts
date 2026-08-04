@@ -195,6 +195,7 @@ export class VaultService extends EventEmitter {
         scope: section.scope,
         from: section.from,
         to: section.to,
+        bands: section.bands,
         keys: section.items.map((i) => i.key),
       }));
   }

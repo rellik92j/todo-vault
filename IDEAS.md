@@ -8,64 +8,106 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
-## Three more agenda scopes, and they are not the same shape of work
+## Filter the agenda by item type
 
-The four existing scopes — `today`, `week`, `nextWeek`, `month` — are one
-`Record<AgendaScope, {from, to, cadences}>` in `Vault.agenda()`
-(`packages/core/src/vault.ts`). Adding a scope value there is the only edit
-that carries meaning; everything else it touches is cosmetic repetition, and
-there is a lot of it, because `AgendaScope` is not one type with importers —
-it is written out independently in at least four places with nothing forcing
-them to agree: the union in `shared/api.ts`, the zod enum in
-`vault_get_agenda` (`mcp-server.ts`), and, inside `cli.ts` alone, both an
-inline cast on the parsed argument and a separate `scopePhrase` record. The
-UI adds two more: `SCOPE_PHRASE`/`HEADINGS` in `Agenda.tsx` and the `<select>`
-options in `App.tsx`. Three new scopes at six-plus touch points apiece is the
-tax for this ask regardless of which get built — but the three don't cost the
-same, because they aren't the same *kind* of range.
+The backlog and the board can be narrowed to epics, or to everything except
+subtasks; the agenda cannot, and it is the view where the ask bites hardest. Six
+scopes now, and the long ones — `month`, `next30Days` — are where a window fills
+with subtasks and the shape of the month stops being readable. "Epics only over
+the next 30 days" is a roadmap; the same window unfiltered is a list.
 
-**Next 30 days** is the cheap one. It is a rolling window, not a calendar
-period: `from: reference, to: addDays(reference, 30)`. That puts `reference`
-(today) at the start of its own window, same as `today`/`week`/`month`
-already do — the boring, already-proven case.
+The chips already exist and are already right. `ITEM_TYPES.map` renders them in
+`App.tsx`, `types` holds the types to *keep* with empty meaning all, and
+`toggleType` flips one. The comment on that state is worth reading before
+redesigning anything — a set rather than a select, because "epics only" and
+"everything except subtasks" are the two real asks and one dropdown can only
+express the first. None of that needs to change. Two things do.
 
-**This week + next week** is almost free but has one real trap. The range
-itself is just the union of two ranges that already exist and are contiguous
-— `from: startOfWeek(reference), to: addDays(startOfWeek(reference), 13)`,
-same `["daily", "weekly"]` cadences its two halves already use. The trap is
-building it by calling `agenda("week")` and `agenda("nextWeek")` separately
-and stacking the results in the UI instead of adding a real third range. Both
-calls compute `overdue` the same way — `open.filter(dueDate < reference)`,
-which does not depend on `to` at all — so a naive two-call union shows every
-overdue item twice. The existing dedup (`alreadyListed`, and overdue winning
-the "which section claims this item" tie) only works inside a single
-`agenda()` call. This one has to be a genuine fourteenth-to-twentieth-day
-entry in the `ranges` record, not a UI-side merge of two calls.
+**Where the chips render.** The toolbar is a ternary on `view === "agenda"`:
+the agenda branch draws the scope `<select>` and nothing else, and the chips sit
+in the other branch with status, cadence, reporter and text. So they are not
+hidden by CSS on the agenda — they are not mounted, and `types` keeps whatever
+it was last set to. Moving the chips out of the ternary so both branches draw
+them is most of the work.
 
-**Next month** is the one worth being careful with, for a reason that will
-not show up in testing until someone ticks a monthly item at the wrong time.
-`reference` in that window is neither inside it (like the two above) nor at
-its start — it falls entirely *before* `from`. `nextWeek` already has this
-property today, and it already works, but for a reason that is easy to
-mistake for having been designed in: `cadencePeriod` (`recurrence.ts`) always
-computes the period *containing `reference`* — this week, this month — never
-the window being displayed. For `nextWeek`, `isSettledForWindow` checks this
-week's `period.to` against next week's `windowEnd`, and this week's end is
-never `>=` next week's end, so a weekly item always reads as unsettled and
-correctly keeps showing up under "Recurring next week" — right answer, but
-because of which direction that inequality happens to point, not because the
-period was shifted forward to match the window. `nextMonth` would inherit
-the identical accident: this month's `period.to` is never `>=` next month's
-end, so a monthly item always shows there too, which is again the right
-answer. Safe to build the same way `nextWeek` was — but it deserves a comment
-saying so where the range is added, since the obvious "fix" — computing
-`cadencePeriod` from the window's own `from` instead of from `reference` — is
-the thing that would actually break it for every scope that isn't this one.
+**What the agenda is fed.** This is the decision, and the tempting one-liner is
+the wrong answer. `Agenda` takes `items` and narrows the core's sections to the
+keys it can see — the mechanism is already there, `byKey` and `populated`, and
+it already drops emptied sections rather than drawing headed empty boxes, so
+type filtering needs no new render logic at all. But it is passed
+`visibleItems`, not `filtered`, and the comment at that call site says why: it
+is the only thing keeping a hidden project's overdue work off the agenda.
+Switching it to `filtered` would deliver the type filter and drag five others
+along with it. Two of those are actively wrong here — `openOnly` and `status`
+are meaningless on a view built from `DONE_STATUSES` already, and a status
+filter of `todo` would empty the overdue section of everything in progress,
+which is precisely the work someone opening the agenda wants to see. The honest
+shape is a third derivation between the two: `visibleItems` plus the type
+predicate, and deliberately not the rest. Whether `text` belongs in it is a fair
+question — search-within-agenda is defensible — but it should be argued for, not
+inherited.
+
+Worth deciding at the same time, because the answer affects whether the counts
+in the section headers can be trusted: the header count is already computed
+after narrowing, so it will say "2 items" for a section the core built with
+nine. That is right for a filter the user just applied and can see the chips
+for, and it is the same thing project-hiding already does — but it means the
+agenda's totals are a view of a view, and anything that later wants the true
+window total has to ask the core rather than read the heading.
+
+## A `nextMonth` agenda scope — the last of the three, and the only awkward one
+
+**Done:** `twoWeeks` and `next30Days` are built (see PLAN.md, "Two more agenda
+scopes"). Do not redo them. What that build changed for this entry is the price.
+
+This entry used to open by counting the tax: `AgendaScope` was retyped by hand
+in at least six places — the union in `shared/api.ts`, the zod enum in
+`mcp-server.ts`, an inline cast *and* a `scopePhrase` record inside `cli.ts`,
+`SCOPE_PHRASE` in `Agenda.tsx`, the `<select>` in `App.tsx` — with nothing
+forcing them to agree. That is fixed. `AGENDA_SCOPES` in `constants.ts` is the
+list, `AgendaScope` is derived from it, and the type flows everywhere through
+imports; the `ranges` record is now `Record<AgendaScope, …>`, so a scope in the
+array with no range fails the typecheck rather than arriving as `undefined`.
+What is left for a new scope is four real edits — the array, the range, and two
+phrase records — plus prose in `vault_get_agenda`'s description, the `<option>`,
+the CLI help block, and the scope table in SCHEMA.md. One caveat if the
+typecheck seems to disagree with you: the desktop workspace resolves
+`todo-vault` through `packages/core/dist`, so the shared type does not reach it
+until `npm run build -w todo-vault` has run.
+
+So the remaining question is not cost, it is the one thing about `nextMonth`
+that is genuinely different, and it will not show up in testing until someone
+ticks a monthly item at the wrong time. `reference` in that window is neither
+inside it (as it is for `today`, `week`, `month`, `twoWeeks` and `next30Days`)
+nor at its start — it falls entirely *before* `from`. `nextWeek` already has
+this property and already works, but for a reason that is easy to mistake for
+having been designed in: `cadencePeriod` (`recurrence.ts`) always computes the
+period *containing `reference`* — this week, this month — never the window being
+displayed. For `nextWeek`, `isSettledForWindow` checks this week's `period.to`
+against next week's `windowEnd`, and this week's end is never `>=` next week's
+end, so a weekly item always reads as unsettled and correctly keeps showing up
+under "Recurring next week" — right answer, but because of which direction that
+inequality happens to point, not because the period was shifted forward to match
+the window. `nextMonth` would inherit the identical accident: this month's
+`period.to` is never `>=` next month's end, so a monthly item always shows there
+too, which is again the right answer. Safe to build the same way `nextWeek` was
+— but it deserves a comment saying so where the range is added, since the
+obvious "fix" — computing `cadencePeriod` from the window's own `from` instead
+of from `reference` — is the thing that would actually break it for every scope
+that isn't this one.
+
 On the range itself, no new date-math helper is needed even though
 `recurrence.ts` has no month-shift arithmetic today (only `startOfMonth`,
 `endOfMonth`, `startOfQuarter`, all reference-relative): `endOfMonth` already
 composes into it — `addDays(endOfMonth(reference), 1)` is next month's start,
 and `endOfMonth` of that is next month's end.
+
+One thing to settle before building it, which did not apply when this was one
+ask of three: `next30Days` now covers most of what "next month" colloquially
+means, and does it from any day. `nextMonth` is worth adding for the case
+`next30Days` cannot serve — planning a calendar month that has not started, the
+forward twin of `month`'s rollup — and the `<select>` should be ordered and
+labelled so the two do not read as synonyms.
 
 ## A drifted item still cannot be pushed as an update
 

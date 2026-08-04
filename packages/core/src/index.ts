@@ -7,6 +7,7 @@ export {
 } from "./vault.js";
 export type {
   VaultOptions,
+  AgendaBand,
   AgendaSection,
   DeleteResult,
   DeleteProjectResult,

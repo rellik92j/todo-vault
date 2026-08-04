@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { Vault, VaultError } from "./vault.js";
 import { buildPushPlan, loadJiraMap, toJiraCsv } from "./jira.js";
-import { STATUSES, type Item, type Status } from "./schema.js";
+import { AGENDA_SCOPES, STATUSES, type AgendaScope, type Item, type Status } from "./schema.js";
 import { addDays, cadencePeriod, formatZodError, todayIso } from "./util.js";
 
 interface Args {
@@ -65,7 +65,7 @@ Usage: vault <command> [options]
   comment KEY "text"                Append a comment
   link KEY --url|--item|--file X    Attach a link
   attach KEY <path> [--no-copy]     Attach a file
-  agenda [today|week|nextWeek|month] What needs attention
+  agenda [SCOPE]                    What needs attention (see Agenda scopes)
   move KEY --after K --before K     Reorder by hand (rank)
   delete KEY [--cascade]            Move to .trash (recoverable)
   trash [--projects]                List trashed items, or trashed projects
@@ -89,6 +89,11 @@ Item options for new/set:
 
 List options:
   --sort work|rank  work = by urgency (default), rank = manual order
+
+Agenda scopes (default: today). Weeks run Monday to Sunday:
+  today       week        nextWeek    the calendar periods around now
+  twoWeeks    this week and next, as one fourteen-day window
+  month       next30Days  the calendar month, or thirty days from today
 `;
 
 /** [x] done, [-] disregarded, [>] in progress, [ ] still open. */
@@ -528,17 +533,29 @@ async function main(): Promise<void> {
     }
 
     case "agenda": {
-      const scope = (_[1] ?? "today") as "today" | "week" | "nextWeek" | "month";
+      // Checked rather than cast: an unrecognised scope used to reach
+      // `ranges[scope]` as undefined and die destructuring it, which told the
+      // user nothing. Six scope names, two of them camelCase, make the typo
+      // likelier than it was with four.
+      const requested = _[1] ?? "today";
+      if (!(AGENDA_SCOPES as readonly string[]).includes(requested)) {
+        throw new VaultError(
+          `Unknown agenda scope '${requested}'. Try one of: ${AGENDA_SCOPES.join(", ")}`,
+        );
+      }
+      const scope = requested as AgendaScope;
       const sections = vault.agenda(scope);
       if (asJson) {
         process.stdout.write(`${JSON.stringify(sections, null, 2)}\n`);
         return;
       }
-      const scopePhrase: Record<typeof scope, string> = {
+      const scopePhrase: Record<AgendaScope, string> = {
         today: "today",
         week: "this week",
         nextWeek: "next week",
+        twoWeeks: "this week and next",
         month: "this month",
+        next30Days: "in the next 30 days",
       };
       for (const section of sections) {
         const label =
@@ -549,7 +566,22 @@ async function main(): Promise<void> {
               : `Due ${scopePhrase[section.scope]} (${section.from} to ${section.to})`;
         process.stdout.write(`\n${label}\n${"-".repeat(label.length)}\n`);
         if (!section.items.length) process.stdout.write("  nothing\n");
-        for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);
+        if (!section.bands) {
+          for (const item of section.items) process.stdout.write(`  ${itemLine(item)}\n`);
+          continue;
+        }
+        // Bands are contiguous slices of an already date-sorted list, so this
+        // walks each range rather than re-sorting. An empty band is skipped
+        // for the same reason the desktop drops one: a heading over nothing
+        // reads as a section that failed to load.
+        for (const band of section.bands) {
+          const inBand = section.items.filter(
+            (i) => i.dueDate && i.dueDate >= band.from && i.dueDate <= band.to,
+          );
+          if (!inBand.length) continue;
+          process.stdout.write(`  ${band.label} (${band.from} to ${band.to})\n`);
+          for (const item of inBand) process.stdout.write(`    ${itemLine(item)}\n`);
+        }
       }
       process.stdout.write("\n");
       return;

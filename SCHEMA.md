@@ -289,6 +289,69 @@ without double-counting.
 `recurring` leaves out anything already ticked for the period in question, so it
 lists what is still owed rather than everything carrying a cadence. See below.
 
+### The scopes
+
+Six windows, all measured from a reference date that defaults to today. Weeks run
+Monday to Sunday.
+
+| `scope` | Window | Cadences it shows |
+|---|---|---|
+| `today` | The reference date alone | daily |
+| `week` | The Monday-to-Sunday week containing it | daily, weekly |
+| `nextWeek` | The following Monday to Sunday | daily, weekly |
+| `twoWeeks` | This week and next, as one fourteen-day window | daily, weekly |
+| `month` | The calendar month containing it | daily, weekly, monthly |
+| `next30Days` | Rolling: the reference date plus 30 days | daily, weekly, monthly |
+
+The last two are not the same question and the gap widens through the month: on
+the 28th, `month` has three days left in it while `next30Days` reaches most of
+the way through the next one. `month` is the calendar period — the right ask for
+a rollup; `next30Days` is the horizon.
+
+`twoWeeks` is a single range rather than `week` and `nextWeek` merged by the
+caller, and that is load-bearing. `overdue` is computed against the reference
+date and ignores the window's end entirely, so two calls return the same overdue
+items and stacking their results lists each one twice; the "exactly one section"
+guarantee above holds within a call, not across them.
+
+### Bands
+
+The three long scopes also carry `bands` on their `due` section — subdivisions
+for display, so a thirty-day window reads as a shape rather than as a list:
+
+| `scope` | bands |
+|---|---|
+| `twoWeeks` | This week · Next week |
+| `month` | This week · Rest of the month |
+| `next30Days` | This week · Next week · Later |
+
+Each band is `{ label, from, to }` and **carries no items**. `items` stays one
+flat list sorted by due date, and a band is the slice of it falling inside that
+band's range — an exact partition, since everything in a `due` section has a
+date. Carrying the items twice would double the payload to say something the
+caller can already work out. A consumer that ignores `bands` reads exactly the
+agenda it read before they existed.
+
+Two consequences of the ranges being windows rather than groupings. A band can
+be empty, and both the CLI and the desktop app drop an empty one rather than
+printing a heading over nothing — so a clear week says nothing instead of
+saying it is clear. And the first band starts at the current week's Monday, not
+at the window's own `from`, which differ only for `month`: on the 3rd, a band
+running from the 1st would be a nine-day "this week". Nothing is lost, because
+anything due before the reference date is overdue and left the section already.
+
+Bands are absent from `recurring` — those items are listed because a cadence
+comes round inside the window, and most carry no due date to band them by — and
+from `overdue`, which is anchored to "before the reference date" rather than to
+the window.
+
+The rejected alternative was one band per calendar week. It sounds more uniform
+and is not: a thirty-day window opening on a Wednesday touches six calendar
+weeks with a partial one at each end, spending six headings to repeat what the
+date beside each row already said. The shapes above are fixed at two or three
+whatever day it is, and the first is always the current week, because that is
+the horizon that can be acted on.
+
 ## Recurring work
 
 A cadence is a schedule, not a deadline, and completing one turn of it is not the

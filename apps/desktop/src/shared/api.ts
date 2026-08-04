@@ -69,10 +69,23 @@ export interface AgendaView {
   scope: AgendaSection["scope"];
   from?: string;
   to?: string;
+  /**
+   * Display subdivisions of a long `due` window, straight from the core.
+   *
+   * Passed through untouched rather than derived here for the reason stated in
+   * `Agenda.tsx` about the window itself: which dates count as "this week"
+   * depends on today's date, so the core owns it and the renderer draws it.
+   */
+  bands?: AgendaSection["bands"];
   keys: string[];
 }
 
-export type AgendaScope = "today" | "week" | "nextWeek" | "month";
+/**
+ * Re-exported rather than restated. This used to be its own hand-written union
+ * and drifting from the core's was a matter of time — adding a scope there and
+ * forgetting here would have typechecked cleanly right up to the `<select>`.
+ */
+export type AgendaScope = AgendaSection["scope"];
 
 /** Null when no vault has been chosen yet — the renderer shows the picker. */
 export type MaybeSnapshot = VaultSnapshot | null;
