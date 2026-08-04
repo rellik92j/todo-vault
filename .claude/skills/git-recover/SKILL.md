@@ -19,11 +19,14 @@ is recoverable via the reflog (last section).
 **Before running anything destructive**, take a seatbelt. It costs one command:
 
 ```bash
-git branch backup-$(date +%s)
+git branch backup-before-reset
 ```
 
 That pins every commit currently reachable from HEAD to a name, so no matter what
-the next command does, the work is still findable.
+the next command does, the work is still findable. Delete it afterwards with
+`git branch -D backup-before-reset` once you are sure. Use a plain literal name
+rather than a `$(date)` expansion — this box runs PowerShell as often as bash,
+and the substitution syntax differs.
 
 ## Symptom index
 

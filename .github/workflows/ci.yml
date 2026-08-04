@@ -39,6 +39,18 @@ jobs:
 
       - run: npm ci
 
+      # Not optional, and the first CI run proved it. apps/desktop imports the
+      # `todo-vault` workspace package, whose "types" field points at
+      # dist/index.d.ts — build output, and gitignored. A working copy has that
+      # directory left over from earlier builds, so typecheck passes locally
+      # while a clean checkout reports "Cannot find module 'todo-vault'" ten
+      # times over. GETTING-STARTED.md already puts `npm run build` right after
+      # `npm install` for exactly this reason.
+      #
+      # Only core is built here: it is what the type errors were about, and it
+      # needs no Electron. The desktop bundle is the build job's business.
+      - run: npm run build -w todo-vault
+
       - run: npm run typecheck
 
       - run: npm test
