@@ -633,6 +633,60 @@ test("copies attachments into the vault, or points at them in place", async () =
   await assert.rejects(() => vault.addAttachment(item.key, "/no/such/file"), /Cannot read/);
 });
 
+// A reload triggered by the file watcher runs interleaved with whatever the app
+// is already doing, and dropping several files at once is a long multi-step
+// write — one `git commit` per file — with plenty of await points in it. When
+// `load()` emptied the index before its first await, a reload landing in one of
+// those gaps made the vault briefly claim the item did not exist, and the rest
+// of the dropped files were lost with the throw.
+test("an in-flight load never leaves the index empty", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Drop target" });
+
+  // Deliberately not awaited: this is the state of the world for another caller
+  // that runs while the reload is still reading files off disk.
+  const reloading = vault.load();
+
+  assert.equal(
+    vault.getItem(item.key).summary,
+    "Drop target",
+    "an item must stay readable while a reload is in flight",
+  );
+  assert.equal(vault.listItems({}).total, 1, "and so must the item list");
+
+  await reloading;
+  assert.equal(vault.getItem(item.key).summary, "Drop target");
+});
+
+test("attaching several files survives a reload landing mid-batch", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Drop target" });
+
+  const sources: string[] = [];
+  for (const name of ["one.txt", "two.txt", "three.txt", "four.txt"]) {
+    const src = path.join(vault.root, "..", `${Date.now()}-${name}`);
+    await fs.writeFile(src, name, "utf8");
+    sources.push(src);
+  }
+
+  // The watcher's reload, fired into the middle of the batch the way the
+  // desktop app's debounced emitSnapshot does.
+  const reloads: Promise<unknown>[] = [];
+  let attached: Item | undefined;
+  for (const [index, source] of sources.entries()) {
+    if (index === 1 || index === 2) reloads.push(vault.load());
+    attached = await vault.addAttachment(item.key, source, { copy: true });
+  }
+  await Promise.all(reloads);
+
+  assert.equal(attached?.attachments.length, 4, "every dropped file should be attached");
+
+  // And the same must be true of what actually reached disk, not just of the
+  // object the last call handed back.
+  await vault.load();
+  assert.equal(vault.getItem(item.key).attachments.length, 4);
+});
+
 test("syncedRootFor matches a root and its descendants, and nothing beside them", () => {
   const root = path.resolve("C:/Users/sam/OneDrive - Contoso");
 
