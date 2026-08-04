@@ -8,6 +8,79 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## CI, because nothing has ever run the tests except a person who remembered
+
+There are 125 tests — 78 in the core, 41 over the app, 6 over the launcher's
+argument parsing — and five tsconfig projects that typecheck clean, and no
+automation anywhere runs any of it. PR #13 and PR #14 both merged into `main`
+with an empty checks tab and no review; the only thing standing between a red
+suite and `main` today is habit.
+
+What makes this worth an entry rather than a chore is that the drift it would
+catch has already happened twice, in the same file, in the same way. `c43d414`
+caught `GETTING-STARTED.md`'s test count up and missed `README.md`. PR #13
+caught `README.md` — which by then claimed 96 tests in 69/27 against a real
+114 in 78/36 — and the only reason it was noticed is that someone was reading
+the tree looking for things like it. Both were mechanical, and both would have
+failed a check that ran the suite and compared.
+
+**It costs less than an Electron project suggests.** The obvious objection is
+that CI for a desktop app means downloading a ~100MB binary and standing up a
+display server, and neither is true here. `electron@43.2.0` ships no npm
+scripts at all, so `npm ci` installs the package without ever fetching the
+binary; typecheck needs only the `.d.ts` that comes inside it. And the test
+suite boots no Electron — `tsx --test test/*.test.ts` covers pure logic, which
+is why `navigation.ts` and `synced-roots.ts` are deliberately free of electron
+imports, and the launcher's tests at the root are the same shape. So
+`npm ci && npm run typecheck && npm test` runs on a bare Linux runner with no
+xvfb, no binary, and no driver.
+
+**What would make it slow is `npm run build`, and it is worth leaving out at
+first.** `prebuild` runs `ensure-electron` (`node -e "require('electron')"`),
+which exists precisely to force the lazy download that electron-vite otherwise
+fails on — so adding the build buys that download on every run. The question of
+whether the build is worth checking at all is genuine and not obvious: typecheck
+already covers all five projects, and what `build` adds beyond it is bundling.
+Worth adding the first time something bundling-shaped breaks, not before.
+
+**The runner does not have to be Windows, despite how the code reads.** This is
+a Windows-developed project with real Windows-shaped logic in it —
+`synced-roots.ts` parses `reg query` output, `isTransientRenameError` names
+`EPERM`/`EACCES`/`EBUSY`, `classifyLinkTarget` handles `C:\` and UNC paths. But
+every one of those is tested as a pure predicate against canned input; nothing
+in the suite shells out to `reg` or touches a Windows filesystem. The one thing
+that does shell out is git, and it is already self-sufficient: `gitVault()`
+writes `user.email` and `user.name` into each temp repo
+(`vault.test.ts:43-44`) rather than leaning on a global identity, which is the
+usual way a suite like this dies on a fresh runner.
+
+That last paragraph is inspection, not evidence — the suite has only ever been
+run on Windows, and the first green Linux run is what would turn it into a fact.
+If it is not green, `windows-latest` is a one-line fallback, and
+`.gitattributes` (`* text eol=lf`) already means a Windows checkout would not
+break the exact-content assertions that pinning exists to protect.
+
+**The check worth arguing about is the one that is not the test suite.** The
+drift that keeps recurring is prose: both `README.md` and `GETTING-STARTED.md`
+state test counts in sentences. A step that runs the suite, reads the totals out
+of the TAP summary, and fails on a mismatch with those two files would have
+caught both incidents outright. It is also a check on prose, and prose gets
+reworded, so it will need maintaining in a way the test run never does. The
+cheaper and less satisfying alternative is to stop putting counts in prose at
+all — worth pricing against the check before writing either.
+
+One thing CI does not do on its own, and it is the reason to be clear-eyed about
+what this buys: a workflow that runs is not a workflow that gates. Nothing is a
+required check until branch protection says so, and until then a red run is a
+red X somebody can merge straight past — which is the situation today, with one
+extra step.
+
+Cheapest first step is small enough to not need a plan: one workflow, on push
+and pull request, running `npm ci`, `npm run typecheck`, `npm test` against the
+Node version in `engines` (`>=20`; the tree is developed on 24). Everything
+above — the build, the doc check, branch protection, a second runner — is a
+separate decision that gets easier to make once the first one is green.
+
 ## Filter the agenda by item type
 
 The backlog and the board can be narrowed to epics, or to everything except
