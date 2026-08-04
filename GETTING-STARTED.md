@@ -4,6 +4,16 @@ This covers the one path that's actually verified today: getting a working copy
 running from a terminal with `npm run dev`. (There is no packaged `.exe` yet —
 see `PACKAGING.md` for that plan.)
 
+Fastest path on Windows, nothing installed yet:
+
+```powershell
+irm https://raw.githubusercontent.com/rellik92j/todo-vault/main/scripts/bootstrap.ps1 | iex
+```
+
+Installs Node and Git if missing, clones, installs dependencies, and opens the
+menu — lands you at step 5 below. See the README for what it does before
+running it. The rest of this page is the same steps by hand.
+
 ## 1. Install Node
 
 ```bash
@@ -39,44 +49,37 @@ npm install
 
 This is fast — Electron itself isn't downloaded yet, only declared.
 
-## 5. Build the core
+## 5. Open the menu
 
 ```bash
-npm run build
+npm run menu
 ```
 
-The first build triggers Electron's runtime download (~350 MB), since Electron
-43 fetches on first `require()` rather than on `npm install`. The zip is cached
-in `%LOCALAPPDATA%\electron\Cache`, so this only happens once per machine, not
-once per project.
+Everything from here is a keypress. The first launch of **Dev app** or **Prod
+preview** triggers Electron's runtime download (~350 MB) as a side effect of
+building core, since Electron 43 fetches on first `require()` rather than on
+`npm install`. The zip is cached in `%LOCALAPPDATA%\electron\Cache`, so this
+only happens once per machine, not once per project.
 
-## 6. Get a vault
+What you do next depends on why you're here.
 
-The repo's `/vault` folder is gitignored, so a fresh clone has the app but no
-data. Two options:
+### Track A — try it with the example vault
 
-```bash
-npm run seed -- ./vault
-```
+1. Press `S` — seeds a worked example: three projects and fifteen items,
+   covering an epic with children, recurring items with completion history,
+   every link type, a hidden project, and both ways an item can close. It's
+   also what the UI is developed against.
+2. Press `2` (Prod preview) or `1` (Dev app).
+3. In the app, click **Open the example vault**.
 
-builds the worked example vault — three projects and fifteen items, covering an
-epic with children, recurring items with completion history, every link type, a
-hidden project, and both ways an item can close. Good for exploring the app,
-and it's what the UI is developed against.
+### Track B — set up your own vault
 
-Or point the desktop app's first-run picker at a different folder if you're
-bringing your own vault across from another machine (copy it separately; it's
-its own git repo).
+1. Press `2` (Prod preview) or `1` (Dev app) — no need to seed first.
+2. In the app, click **Choose a folder…**. Pick an empty folder and confirm
+   **Create a vault here** to start blank, or point it at a vault copied over
+   from another machine (copy it separately first; it's its own git repo).
 
-## 7. Launch the app
-
-```bash
-npm run dev
-```
-
-This builds the core and opens the desktop app.
-
-## 8. A few things to set up once you're in
+## 6. A few things to set up once you're in
 
 - **Anthropic API key** (only if you want the AI drafting feature): Settings →
   Claude. It's encrypted with Windows DPAPI and bound to this machine, so it
@@ -134,6 +137,7 @@ CLI call.
 ## If you're copying a folder instead of cloning
 
 That works too, as long as you exclude `node_modules/` and
-`apps/desktop/out/` — both get rebuilt by steps 4–5 above. A zip preserves line
-endings exactly; if you use git instead, `.gitattributes` already pins `eol=lf`
-so Windows checkouts don't get corrupted into CRLF.
+`apps/desktop/out/` — `node_modules/` is rebuilt by step 4's `npm install`,
+`apps/desktop/out/` by whichever menu option you launch in step 5. A zip
+preserves line endings exactly; if you use git instead, `.gitattributes`
+already pins `eol=lf` so Windows checkouts don't get corrupted into CRLF.
