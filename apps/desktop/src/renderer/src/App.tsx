@@ -795,7 +795,15 @@ export function App(): React.JSX.Element {
                 onDragStart={() => setDragProject(p.key)}
                 onDragEnd={() => setDragProject(null)}
                 onDragOver={(e) => e.preventDefault()}
-                onDrop={() => onProjectDrop(p)}
+                // Both events have to be cancelled, not just dragover:
+                // cancelling dragover only makes this a valid drop target, and
+                // the drop's own default is to navigate to whatever was
+                // dropped. A OneDrive document dragged onto a project row is
+                // an easy miss for the detail panel.
+                onDrop={(e) => {
+                  e.preventDefault();
+                  onProjectDrop(p);
+                }}
               >
                 <button
                   className="project"

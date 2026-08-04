@@ -17,6 +17,7 @@ import { clearApiKey, secretStatus, setApiKey } from "./secrets.js";
 import { CLAUDE_MODEL, draftItem } from "./claude.js";
 import { attachZoomShortcuts, restoreZoom } from "./zoom.js";
 import { discoverSyncedRoots } from "./synced-roots.js";
+import { isInAppNavigation } from "./navigation.js";
 
 const service = new VaultService();
 let mainWindow: BrowserWindow | undefined;
@@ -136,6 +137,16 @@ function createWindow(): void {
       console.error(`[main] refused to open external link with scheme ${scheme}`);
     }
     return { action: "deny" };
+  });
+
+  // And the window itself never navigates away. The handler above covers new
+  // windows; without this one, a URL dropped on any region the renderer does
+  // not handle replaces the app — taking the preload's whole vault API with it.
+  // See navigation.ts.
+  contents.on("will-navigate", (event, url) => {
+    if (isInAppNavigation(url, contents.getURL())) return;
+    event.preventDefault();
+    console.error(`[main] refused to navigate the app window to ${url}`);
   });
 
   // Show once the load settles either way. Relying on ready-to-show alone means
