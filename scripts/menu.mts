@@ -384,6 +384,20 @@ const ENTRIES: Entry[] = [
     hint: "the worked example; overwriting asks first",
     run: runSeed,
   },
+  {
+    key: "u",
+    group: "Setup",
+    label: "Update",
+    hint: "git pull --ff-only, then reinstall and rebuild core",
+    run: () => runSteps([{ kind: "npm", args: ["run", "update"] }]),
+  },
+  {
+    key: "i",
+    group: "Setup",
+    label: "Install dependencies",
+    hint: "npm install only — no pull, no build",
+    run: () => runSteps([{ kind: "npm", args: ["install"] }]),
+  },
 ];
 
 /**
