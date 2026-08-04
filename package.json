@@ -19,7 +19,9 @@
     "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop",
     "//preview": "Building core first is not optional: `start` alone assembles the desktop bundle around whatever packages/core/dist was left containing, which looks like a clean build while carrying a stale core. The sequence lives here rather than in the menu so it holds for anyone typing the command directly — a rule only the menu enforces is not enforced.",
     "preview": "npm run build -w todo-vault && npm run start -w @todo-vault/desktop",
-    "preview:skip-build": "npm run start -w @todo-vault/desktop -- --skipBuild"
+    "preview:skip-build": "npm run start -w @todo-vault/desktop -- --skipBuild",
+    "//update": "git pull --ff-only refuses rather than building a surprise merge commit if local and remote diverged, same as start-change. npm install runs unconditionally rather than only when package.json/package-lock.json changed: it is already a fast no-op when the lockfile is untouched, and diffing for that condition is one more thing to get subtly wrong. Rebuilding core here is technically redundant with what `dev`/`preview` already do as their own first step, but it means a broken or stale core is caught right after pulling, not partway into launching the app.",
+    "update": "git pull --ff-only && npm install && npm run build -w todo-vault"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

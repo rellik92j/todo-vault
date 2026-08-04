@@ -91,22 +91,28 @@ This builds the core and opens the desktop app.
 
 ## Updating an existing copy
 
-Already cloned and just want the latest changes?
+Already cloned and just want the latest changes? `npm run menu`, then press
+`U` — it pulls (refusing rather than surprising you with a merge if your copy
+has diverged), reinstalls (a no-op if nothing changed), and rebuilds core, in
+that order.
+
+By hand, the same three steps:
 
 ```bash
 git pull
-npm run build     # skip if package.json / package-lock.json didn't change
+npm install       # only needed if that pull touched package.json / package-lock.json
+npm run build     # rebuilds core; needed whenever the pull touched its source, not its deps
 npm run dev
 ```
 
-Only rerun `npm install` if that pull touched `package.json` or
-`package-lock.json`. Your vault and settings (API key, last-open vault) live
-outside the repo, so pulling never touches them.
+Your vault and settings (API key, last-open vault) live outside the repo, so
+pulling never touches them.
 
 ## Everyday commands, once set up
 
 ```bash
 npm run menu            # numbered launcher — pick any of the below by keypress
+npm run update          # pull, install, rebuild core — the [U] menu entry
 npm run dev             # build core, launch the app
 npm run preview         # build core, launch the production build
 npm run build           # both workspaces
