@@ -106,12 +106,19 @@ outside the repo, so pulling never touches them.
 ## Everyday commands, once set up
 
 ```bash
-npm run dev            # build core, launch the app
+npm run menu            # numbered launcher — pick any of the below by keypress
+npm run dev             # build core, launch the app
 npm run build           # both workspaces
-npm test                # both workspaces — 78 core tests, 41 desktop
-npm run typecheck       # both workspaces
+npm test                # 78 core tests, 41 desktop, 6 over the launcher
+npm run typecheck       # both workspaces, plus scripts/
 npm run vault -- agenda week --vault ./vault   # CLI, run from repo root
 ```
+
+`npm run menu` is worth knowing about on a machine you only use the app on.
+It lists these commands, runs the picked one, and returns to the list when it
+finishes. It also gets the two-step ones right — "Prod preview" builds the core
+before launching the production build, which is the step that is easy to forget
+and produces a fresh-looking app wrapped around a stale core.
 
 Set `VAULT_DIR` as an environment variable to skip passing `--vault` on every
 CLI call.

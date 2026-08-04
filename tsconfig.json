@@ -1,0 +1,18 @@
+{
+  "//": "Covers scripts/ only. Each workspace has its own tsconfig and is checked by its own typecheck script; this exists so root-level tooling is not the one untyped corner of the repo.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "//include": "*.ts globs do not match .mts, so both are listed.",
+  "include": ["scripts/**/*.ts", "scripts/**/*.mts"]
+}

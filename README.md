@@ -231,10 +231,12 @@ and returned — as a smoke test only; `PLAN.md` lists the specific behaviours
 draft is worth checking against.
 
 ```bash
+npm run menu           # numbered launcher for everything below
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 119 tests: 78 in the core, 41 over the app's own logic
-npm run typecheck      # both workspaces
+npm test               # 125 tests: 78 in the core, 41 over the app's own logic,
+                       #            6 over the launcher's argument parsing
+npm run typecheck      # both workspaces, plus scripts/
 ```
 
 A worked example vault is included at `./vault` — three projects and fifteen
@@ -451,7 +453,8 @@ be, with nothing on screen looking broken. The band tests carry one of those
 outright — a key no band covers is placed in the last one rather than dropped,
 because an agenda row that silently disappears reads as work that does not
 exist.
-`npm test` from the root runs both workspaces.
+`npm test` from the root runs both workspaces, plus the launcher's own tests in
+`scripts/`.
 
 ## What is not here yet
 
