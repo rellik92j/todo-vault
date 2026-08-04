@@ -66,6 +66,24 @@ New machine, step by step? See [`GETTING-STARTED.md`](GETTING-STARTED.md).
 
 ---
 
+## Fastest path (Windows, nothing installed yet)
+
+```powershell
+irm https://raw.githubusercontent.com/rellik92j/todo-vault/main/scripts/bootstrap.ps1 | iex
+```
+
+Installs Node and Git via `winget` if either is missing, clones the repo,
+runs `npm install`, and opens the menu. This fetches and runs a script from
+this repo over the network — read [`scripts/bootstrap.ps1`](scripts/bootstrap.ps1)
+first if that's a concern; it's short. If Node or Git had to be installed,
+it stops and asks you to reopen your terminal and run the command again,
+since a freshly installed `PATH` entry doesn't reach a shell that's already
+open.
+
+Already have Node and Git? The quick start below skips straight to a clone.
+
+---
+
 ## Quick start - set up a test vault with pre-loaded examples. 
 
 ```bash
