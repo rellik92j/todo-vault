@@ -125,11 +125,12 @@ when the command finishes.
   Choose an option (single keypress, Ctrl+C to quit):
 ```
 
-It exists because two of these are not single commands. **Prod preview** has to
-build the core *before* launching, or you get a freshly built desktop bundle
-wrapped around whatever `packages/core/dist` happened to contain last time — an
-app that looks clean and carries a stale core. The menu encodes the sequence, so
-it is a rule you cannot break rather than a rule you have to remember.
+Every option runs one npm script. Where a command is really a sequence it is the
+script that encodes it, not the menu: **Prod preview** has to build the core
+*before* launching, or you get a freshly built desktop bundle wrapped around
+whatever `packages/core/dist` happened to contain last time — an app that looks
+clean and carries a stale core. `npm run preview` holds that order for everyone,
+including whoever never opens the menu.
 
 Two options take input rather than running straight away. **[8] Vault CLI**
 prompts for arguments and hands them to the CLI, quotes honoured, so
@@ -146,7 +147,8 @@ command and returns you to the menu rather than killing both.
 |---|---|
 | `npm run dev` | Builds the core, launches the app with hot reload. Day-to-day editing. |
 | `npm run build` | Builds both workspaces. |
-| `npm start -w @todo-vault/desktop` | Production preview. Build the core first. |
+| `npm run preview` | Builds the core, then the production preview. Closest to what ships. |
+| `npm run preview:skip-build` | The same preview without rebuilding. Only correct if nothing changed. |
 | `npm test` | Runs both workspaces' tests plus the launcher's own. |
 | `npm run typecheck` | Both workspaces, plus `scripts/`. |
 | `npm run vault -- <args>` | The vault CLI, from the repo root. |

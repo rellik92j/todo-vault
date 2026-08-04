@@ -3,17 +3,16 @@
  *
  *   npm run menu
  *
- * The commands themselves already exist as npm scripts; this exists because
- * two of them are not single commands. Launching a production preview means
- * building the core *first* — `npm run start -w @todo-vault/desktop` on its own
- * rebuilds the desktop bundle around whatever `packages/core/dist` happened to
- * contain last time, and the result looks like a clean build while carrying a
- * stale core. Encoding the sequence in a menu entry is the difference between
- * that being a rule you remember and a rule you cannot break.
+ * Every entry runs a single npm script, deliberately. Where a command is
+ * really a sequence — a production preview has to build the core *first* — the
+ * sequence belongs in package.json, where it also holds for anyone typing the
+ * command directly. So this is a way to find and run those scripts, not a
+ * second place their order is defined.
  *
- * TypeScript rather than a .cmd file so it typechecks with everything else and
- * runs the same on any platform, and so the argument handling below is a real
- * tokenizer rather than a batch-file quoting accident.
+ * What it does own is the entries that take input: the vault CLI and the
+ * seeder. TypeScript rather than a .cmd file so it typechecks with everything
+ * else and runs the same on any platform, and so their argument handling is a
+ * real tokenizer rather than a batch-file quoting accident.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -25,13 +24,38 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * tsx's own entry, invoked as a script through `process.execPath` rather than
- * as `node_modules/.bin/tsx`. On Windows that bin is a `.cmd` shim, and since
- * the CVE-2024-27980 fix Node refuses to spawn `.cmd` without `shell: true` —
- * which is exactly the mode that mangles arguments containing spaces. Going
- * through node directly keeps the vault CLI's `--summary "two words"` intact.
+ * Both commands the menu spawns are resolved to their JavaScript entry and run
+ * through `process.execPath`, never as `node_modules/.bin/tsx` or `npm.cmd`.
+ * On Windows those are batch shims, and since the CVE-2024-27980 fix Node
+ * refuses to spawn one without `shell: true` — which hands the whole command
+ * line to cmd.exe as a single unquoted string, mangling any argument
+ * containing a space and earning a DEP0190 deprecation for the privilege.
+ * Going through node keeps a real argv, so `--summary "two words"` survives.
  */
 const TSX_CLI = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+
+/**
+ * npm sets `npm_execpath` for its children and points it at the .js file, so
+ * `npm run menu` reuses the exact npm that launched it rather than whichever
+ * one PATH finds first — which nvm-windows and friends can disagree about.
+ * The fallback covers being started directly (`tsx scripts/menu.mts`), where
+ * npm sits beside node. Null means neither was found: fine on POSIX, where the
+ * bare name spawns without a shell anyway, and caught in main() on Windows.
+ */
+function resolveNpmCli(): string | null {
+  const fromEnv = process.env.npm_execpath;
+  if (fromEnv?.endsWith(".js") && existsSync(fromEnv)) return fromEnv;
+  const beside = path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  );
+  return existsSync(beside) ? beside : null;
+}
+
+const NPM_CLI = resolveNpmCli();
 
 const CORE_CLI = "packages/core/src/cli.ts";
 const SEED_SCRIPT = "packages/core/scripts/seed-vault.ts";
@@ -68,20 +92,26 @@ function describe(step: Step): string {
 }
 
 function spawnStep(step: Step): Promise<number> {
-  // npm on Windows is `npm.cmd`, which needs a shell (see TSX_CLI above). With
-  // `shell: true` Node joins argv with spaces and does *not* quote, so every
-  // npm step here must keep its arguments space-free — they are all fixed
-  // literals below, and user input goes through the `tsx` branch instead.
-  const onWindows = process.platform === "win32";
-  const command = step.kind === "npm" ? (onWindows ? "npm.cmd" : "npm") : process.execPath;
-  const args =
-    step.kind === "npm" ? step.args : [TSX_CLI, path.join(REPO_ROOT, step.script), ...step.args];
-  const shell = step.kind === "npm" && onWindows;
+  // No branch needs a shell, so arguments reach the child as a real argv with
+  // their quoting intact and no step has to keep them space-free.
+  let command: string;
+  let args: string[];
+
+  if (step.kind === "tsx") {
+    command = process.execPath;
+    args = [TSX_CLI, path.join(REPO_ROOT, step.script), ...step.args];
+  } else if (NPM_CLI) {
+    command = process.execPath;
+    args = [NPM_CLI, ...step.args];
+  } else {
+    command = "npm";
+    args = step.args;
+  }
 
   write(`${dim("$")} ${bold(describe(step))}\n\n`);
 
   return new Promise((settle) => {
-    const child = spawn(command, args, { cwd: REPO_ROOT, stdio: "inherit", shell });
+    const child = spawn(command, args, { cwd: REPO_ROOT, stdio: "inherit" });
 
     // The child owns the terminal now, and a Ctrl+C in a console reaches every
     // process attached to it. Without this the menu would die alongside the dev
@@ -296,21 +326,14 @@ const ENTRIES: Entry[] = [
     group: "Run",
     label: "Prod preview",
     hint: "builds core, then production bundles over file:// — closest to what ships",
-    run: () =>
-      runSteps([
-        { kind: "npm", args: ["run", "build", "-w", "todo-vault"] },
-        { kind: "npm", args: ["run", "start", "-w", "@todo-vault/desktop"] },
-      ]),
+    run: () => runSteps([{ kind: "npm", args: ["run", "preview"] }]),
   },
   {
     key: "3",
     group: "Run",
     label: "Prod preview (reuse last build)",
     hint: "launches without rebuilding — only correct if nothing changed since",
-    run: () =>
-      runSteps([
-        { kind: "npm", args: ["run", "start", "-w", "@todo-vault/desktop", "--", "--skipBuild"] },
-      ]),
+    run: () => runSteps([{ kind: "npm", args: ["run", "preview:skip-build"] }]),
   },
   {
     key: "4",
@@ -413,6 +436,14 @@ function render(): void {
 async function main(): Promise<void> {
   if (!existsSync(TSX_CLI)) {
     write(red(`\ntsx not found at ${TSX_CLI}\nRun \`npm install\` first.\n\n`));
+    process.exitCode = 1;
+    return;
+  }
+
+  // Only Windows: elsewhere a bare `npm` spawns from PATH without a shell.
+  if (NPM_CLI === null && process.platform === "win32") {
+    write(red(`\nnpm's entry point was not found beside ${process.execPath}.\n`));
+    write(red("Start the menu with `npm run menu` so npm can point at itself.\n\n"));
     process.exitCode = 1;
     return;
   }

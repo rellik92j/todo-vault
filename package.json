@@ -15,7 +15,10 @@
     "test": "tsx --test scripts/*.test.mts && npm run test --workspaces --if-present",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
-    "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop"
+    "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop",
+    "//preview": "Building core first is not optional: `start` alone assembles the desktop bundle around whatever packages/core/dist was left containing, which looks like a clean build while carrying a stale core. The sequence lives here rather than in the menu so it holds for anyone typing the command directly — a rule only the menu enforces is not enforced.",
+    "preview": "npm run build -w todo-vault && npm run start -w @todo-vault/desktop",
+    "preview:skip-build": "npm run start -w @todo-vault/desktop -- --skipBuild"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
