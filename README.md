@@ -1,314 +1,229 @@
 # todo-vault
 
-A local, Jira-shaped task tracker that lives in plain markdown files, so the
-desktop app, an in-app assistant, and any Claude on the outside can all read and
-write the same data without a server.
+A local, Jira-shaped task tracker that lives in plain markdown files.
 
-The schema, vault core, CLI, and MCP server are done, and so is the desktop app:
-it reads and writes the vault without holding any state of its own, with global
-search, keyboard shortcuts, and an optional in-app assistant. The Jira push UI
-is what remains; `PLAN.md` has the detail.
+Every task is a markdown file with YAML frontmatter. That one decision is what
+lets a desktop app, a command line, and any Claude — inside the app or outside
+it — all read and write the same data with no server, no database, and no sync
+protocol. Your tasks stay files you own, greppable and diffable, and git gives
+you history and undo for free.
 
-## Layout
+It is shaped like Jira on purpose — epics, stories, tasks, bugs, subtasks, a
+real status workflow, priorities, labels, links — so work can be pushed *up* to
+Jira when it needs to be shared. The vault is always upstream; it is never a
+mirror.
 
-An npm workspace with two packages:
+> **Status:** the vault core, CLI, MCP server and desktop app are built and in
+> daily use. The Jira push builds a reviewable payload but does not POST it.
+> See [`PLAN.md`](PLAN.md) for what was built and why, and
+> [`IDEAS.md`](IDEAS.md) for what is being considered next.
+
+---
+
+## What you get
+
+**A desktop app.** Backlog table with nested subtasks, a drag-and-drop board,
+an agenda over six time scopes, and a detail panel where every edit commits
+straight to the file — there is no save button and no draft state. Illegal
+status moves are prevented rather than attempted and reported. Descriptions are
+rich-text edited but stored as plain markdown. Recurring work is ticked off for
+the current period rather than closed permanently. Press `?` for every keyboard
+shortcut.
+
+**A command line.** Everything the app does, plus diagnostics and exports.
+Scriptable, and the fastest way to add a task without breaking flow.
+
+**An MCP server.** Point Claude Desktop or Claude Code at the vault and ask it
+in plain language: *"what's due this week"*, *"add a task to chase the vendor
+SOW, due Friday, under the migration epic"*. Twenty-six tools, with schema
+validation and hierarchy rules enforced on the way in.
+
+**Optional AI drafting inside the app.** Add an Anthropic API key and the create
+dialog takes a sentence and fills the form out for you to review before anything
+is written.
+
+**Git-backed history.** Pass `--git` and every write is auto-committed, which
+gives you an audit trail and an undo that does not depend on the app being
+running. Deletes go to `.trash/` regardless, so recovery never depends on git
+being set up at all.
+
+---
+
+## Requirements
 
 | | |
 |---|---|
-| `packages/core` | The vault: schema, read/write, CLI, MCP server, Jira planner |
-| `apps/desktop` | The Electron app over it |
+| **Node.js 20+** | Developed against 24. `node --version` to check. |
+| **npm** | Ships with Node. The repo is an npm workspace. |
+| **Git** *(recommended)* | Not required to run, but without it the vault keeps no history. |
+| **~350 MB disk** | Electron's runtime, downloaded on first build and cached per-machine. |
+| **An Anthropic API key** *(optional)* | Only for in-app AI drafting. Everything else works without one. |
 
-The core has no idea the app exists. The app holds no state the vault does not.
+Windows, macOS and Linux are all supported by the toolchain; the app is
+developed and used on Windows.
+
+New machine, step by step? See [`GETTING-STARTED.md`](GETTING-STARTED.md).
+
+---
 
 ## Quick start
 
 ```bash
+git clone https://github.com/rellik92j/todo-vault.git
+cd todo-vault
 npm install
-npm run build
+npm run build          # first run downloads Electron (~350 MB, cached after)
 npm run seed -- ./vault
 npm run dev
 ```
 
-`npm run dev` builds the core and launches the desktop app. The CLI runs from the
-repo root, so paths like `./vault` mean what they look like:
+That builds the core, creates a worked example vault, and launches the app
+against it.
+
+The example vault is three projects and fifteen items — an epic with stories,
+tasks, a subtask and a bug, recurring daily/weekly/monthly items, every link
+type, both ways an item can close, a hidden project, and one item already pushed
+to Jira. It is also the fixture the UI is developed against. Rebuild it any time
+with `npm run seed -- ./vault --force`, which clears the contents but leaves
+`.git` alone, so history survives a reset.
+
+---
+
+## Running it: the menu
+
+```bash
+npm run menu
+```
+
+A numbered launcher for everything below. Pick an option with a **single
+keypress** — no Enter, no remembering script names — and it returns to the menu
+when the command finishes.
+
+```
+  todo-vault — workspace commands
+  ──────────────────────────────────────────────────────────
+
+  Run
+   [1] Dev app                          builds core, then Vite dev server + HMR
+   [2] Prod preview                     builds core, then production bundles
+   [3] Prod preview (reuse last build)  launches without rebuilding
+   [4] MCP server                       stdio server over the vault
+
+  Check
+   [5] Test                             both workspaces
+   [6] Typecheck                        both workspaces, plus these scripts
+   [7] Build                            both workspaces
+
+  Vault
+   [8] Vault CLI…                       asks for arguments, e.g. agenda week
+   [9] Doctor                           validate every file and report problems
+   [S] Seed example vault               the worked example; overwriting asks first
+
+   [0] Exit
+
+  ──────────────────────────────────────────────────────────
+  Choose an option (single keypress, Ctrl+C to quit):
+```
+
+It exists because two of these are not single commands. **Prod preview** has to
+build the core *before* launching, or you get a freshly built desktop bundle
+wrapped around whatever `packages/core/dist` happened to contain last time — an
+app that looks clean and carries a stale core. The menu encodes the sequence, so
+it is a rule you cannot break rather than a rule you have to remember.
+
+Two options take input rather than running straight away. **[8] Vault CLI**
+prompts for arguments and hands them to the CLI, quotes honoured, so
+`new --project ENG --summary "Two words"` arrives intact. **[S] Seed** asks for a
+target directory and requires you to type `FORCE` before it will overwrite an
+existing vault, since that is not a recoverable action.
+
+`Ctrl+C` inside a running command — the dev server, the MCP server — stops that
+command and returns you to the menu rather than killing both.
+
+### Or run the scripts directly
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Builds the core, launches the app with hot reload. Day-to-day editing. |
+| `npm run build` | Builds both workspaces. |
+| `npm start -w @todo-vault/desktop` | Production preview. Build the core first. |
+| `npm test` | Runs both workspaces' tests plus the launcher's own. |
+| `npm run typecheck` | Both workspaces, plus `scripts/`. |
+| `npm run vault -- <args>` | The vault CLI, from the repo root. |
+| `npm run mcp` | The MCP server, over stdio. |
+| `npm run seed -- <dir>` | Build the worked example vault. |
+| `npm run menu` | The launcher above. |
+
+---
+
+## The CLI
+
+The CLI runs from the repo root, so relative paths mean what they look like:
 
 ```bash
 npm run vault -- agenda week --vault ./vault
 ```
 
-Set `VAULT_DIR` to skip `--vault` everywhere. Add `--git` to auto-commit every
-write, which gives you undo and a full audit trail for free. The desktop app
-always passes it.
-
-## The desktop app
-
-Backlog table, board, agenda, and an item detail panel, over a project sidebar in
-manual rank order. **+ new** in the sidebar head creates a project: the key is
-proposed from the name — `ACME` from "Acme rollout" — and stays editable, and one
-that is already in the list is refused before the write rather than after.
-Renaming and deleting stay CLI- and MCP-only, since one re-keys every item in the
-project and the other can take them all to the trash.
-
-Editing is in place, with no save button: every field commits straight to the
-file, because the markdown is the document and there is no draft state worth
-keeping. Status dropdowns and board columns are gated on the core's own
-`TRANSITIONS` table, so an illegal move is *prevented* rather than attempted and
-reported — a card that springs back with an error reads as a bug even when the
-message is right. The parent field is gated the same way: clicking it opens a
-picker holding only what the hierarchy allows — an epic for a story, task, or
-bug; a story, task, or bug for a subtask — which is the list the create form
-offers too, so neither route can propose a pairing the core would refuse.
-Deleting offers an undo backed by `.trash`, and refuses to orphan children until
-you confirm the cascade.
-
-Recurring items get a **✓** rather than a status change. A cadence is a schedule,
-not a deadline, so marking the daily check "done" would retire it permanently —
-right when you drop a habit, wrong when you perform one. The ✓ records the date
-in the item's own `completions` list, leaves the status alone, and drops the item
-off the agenda until its cadence comes round again: tick today's daily task and
-it disappears from **today** but stays on **this week**, because it is due again
-tomorrow. Press it again to undo. The cadence pill shows a ✓ wherever it appears,
-so a board card says whether this week's report is handled even though the acting
-happens in the agenda and the detail panel.
-
-The description renders as markdown rather than as one collapsed line, and edits
-as formatting rather than as syntax: Ctrl+B bolds, the toolbar makes headings,
-bullet and numbered lists, quotes, fenced code and links, and nothing shows its
-markers. The file on disk is still plain markdown — nothing here is stored as
-anything else. The grammar is `packages/core/src/description.ts`, shared with
-the Jira converter and with the editor's schema, so the panel cannot show, and
-the toolbar cannot produce, formatting the push would drop.
-
-Which editor you get is a fact about the text, not a preference.
-`isLosslessDescription` asks whether a description survives a parse and a write
-byte for byte; only then is the rich editor offered. A description using `_em_`,
-`+` bullets or a run of blank lines would come back reformatted, so it opens in
-a plain markdown box instead, saying why. That matters because the CLI, the MCP
-server and Notepad write these files too, and `--git` commits every write: a
-normalising editor would fill the history with commits nobody typed. **source**
-beside the heading switches to the raw markdown by hand at any time.
-
-One deliberate departure from strict markdown: a newline inside a paragraph is a
-break rather than a soft wrap, in the app and in the ADF alike — people type
-descriptions in a box and mean the line breaks they put there. Links in a
-description are opened by the main process against the same scheme allowlist the
-Links section uses, since a description can be written by anything with a text
-editor, and the link form refuses a scheme off that list while you are still
-looking at it rather than writing one that could never be followed.
-
-Board columns are grouped by project and then by manual rank, since ranks are per
-project — comparing two projects' rank numbers directly is meaningless, and doing
-so made a single drag look like it reshuffled everything.
-
-**Group by project** (`g`, or the checkbox beside Hide closed) makes that grouping
-visible: the board splits into one band per project in sidebar order, separated by a
-labelled bar, with the status headers drawn once at the top. Each band and the header
-are separate CSS grids sharing one track definition, which is what keeps them lined
-up — and keeps the header sticky, since a sticky grid item cannot escape its own grid
-area and one big grid gave it nowhere to travel.
-
-Grouping also makes the reorder rule above redundant inside a band, which is the
-strongest reason to reach for it: every card in a band shares a project, so a drop
-attaches to the card you actually dropped on rather than to the nearest same-project
-neighbour. Ungrouped, a drop onto a foreign-project card reorders against a different
-card than the one under the cursor — an honest compromise, but a compromise. Grouped
-is the mode where drag-to-reorder stops lying. It is the same walk either way; inside
-a band it just finds the target on its first step.
-
-Another project's band refuses the drop and dims, the way an illegal status
-transition already does. Moving an item between projects re-keys it — `WEB-4` becomes
-`API-12`, and anything linking to the old key dangles — which is not something a
-stray drag should be able to do. Use the detail panel for that.
-
-The keyboard cursor changes with the grouping, because it walks the order the eye
-sees: ungrouped it crosses every project's To do before reaching any project's In
-progress, and grouped it finishes one band before starting the next.
-
-The backlog nests children under their parents, and a subtree folds shut from the
-twisty or with `h`/`←`. Collapse is view state — it lives in the window, never in
-the file, so nothing on disk learns an item was folded. The keyboard cursor walks
-the order the eye sees rather than the unfiltered array, which is why the
-collapsed set is held once at the top and passed into both, and why the cursor
-comes up to the parent when the subtree it was in closes.
-
-Five type chips filter the backlog and the board together. Empty means every
-type, so the unfiltered state is both the default and where turning the last chip
-off returns to. They are toggles rather than a select because "everything except
-subtasks" is one of the two things worth asking for and a select cannot say it.
-Filtering to a middle type flattens the tree — a matched task whose epic is
-filtered out is promoted to a root rather than hidden — which is the behaviour the
-backlog has had since Phase 1 for every other filter, and is now covered by a test
-so it reads as a decision rather than as a bug.
-
-**Bulk edit, backlog only.** A checkbox column selects many rows at once — click,
-shift-click for a range, `Ctrl+A` for everything currently in view — and a bar
-appears above the table with status, priority, assignee, reporter, due date, and
-labels (add, remove, or replace). Every control commits the moment it changes,
-same as the detail panel: there is no draft state and no Apply button. The status
-control only offers what *every* selected item can legally reach, narrowing rather
-than attempting an illegal move and reporting the failure — a mixed `todo`/`done`
-selection can disable it entirely, with a title naming why. Applying to a dozen
-items produces exactly one git commit, never twelve, because the write happens in
-one place in the main process: everything is validated first, and nothing touches
-disk until the whole batch is known to be acceptable. The keyboard cursor stays a
-separate thing from the checkboxes — `j`/`k` move it freely without touching the
-selection, `Space` checks the row it is on, and `Shift+J`/`Shift+K` move it while
-extending the selection. `Escape` clears the selection before it goes on to close
-the detail panel. Board and agenda multi-select, bulk delete, bulk move-to-project
-and bulk tick are deliberately left alone — see `PLAN.md` for why each one is a
-harder question than a second checkbox.
-
-**Reporter** — who asked for it — sits beside Assignee in the detail panel, on the
-create form, and as a filter. The suggestion menu is derived from the snapshot
-the renderer already holds, never stored: there is no second list on disk to fall
-out of sync with the items that are the actual source of truth. Typing draws on every item, hidden projects included,
-because hiding a project should not make a colleague un-nameable; filtering draws
-only on what this window shows, since a name used only inside a hidden project
-could return nothing but an empty view. Spellings that differ only in case are
-folded together for display and never rewritten on disk.
-
-The same field is set and read through `vault --reporter` and through the MCP
-server, which takes it on create, on update, and as a list filter, and returns it
-on every full record. The fold holds there too: `listItems` matches reporter
-case-insensitively, so the menu's claim that two spellings are one person stays
-true when an agent acts on it. Every tool description names "requested by" as a
-synonym, because a model handed prose has to land that phrase on this field rather
-than bury the name in the description body, where nothing can query it.
-
-The drafting box is the third surface that takes prose instead of form fields, and
-it asks for the same field for the same reason: "Priya asked for this" fills the
-form's Reporter, not the description. A draft that names nobody comes back empty
-and leaves a name typed before pressing Draft exactly where it was — the note said
-nothing about who asked, which is not the same as saying nobody did.
-
-Every relationship on the detail panel carries the status colour every other view
-uses — children, links, and backlinks alike. Statuses for item links are resolved
-in the main process against the whole vault rather than in the renderer, which
-only knows about visible projects; a target the window does not admit exists gets
-a `not shown here` note, and a deleted one reads `missing` rather than leaving a
-pill-shaped hole.
-
-`?` lists every shortcut, generated from the same registry the handler reads, so
-the cheatsheet cannot drift from the keys. Ctrl+`+`/`−`/`0` size the text and are
-claimed in the main process before the key reaches the page, which is what lets
-them work mid-sentence in a text field.
-
-The renderer imports runtime values from `todo-vault/constants`, never from the
-package root: the root pulls in `vault.ts` and with it `node:fs`, which cannot be
-bundled for a browser context. Types are erased, so those come from the root.
-
-The shape that matters: `Vault` imports `node:fs` and `node:child_process`, so it
-lives in the **main** process and the renderer reaches it only through a
-`contextBridge` preload — `contextIsolation: true`, `nodeIntegration: false`,
-`sandbox: true`. The window also refuses to navigate anywhere but itself: the
-preload attaches to the webContents rather than to the document, so a page that
-managed to load in that window — a link dropped on a region nothing handles, say
-— would inherit the whole `window.vault` API. `setWindowOpenHandler` covers new
-windows, `will-navigate` covers this one. Every call returns `{ ok, value }` or
-`{ ok, message }` rather than throwing, because structured clone strips the
-`VaultError` class on the way across and the core's messages are worth showing
-verbatim. Mutations will return a whole fresh snapshot rather than a delta; at a
-few hundred items, reconciling would be a bug farm for no gain.
-
-`items/` and `projects/` are watched, so an edit from anything else — an external
-Claude, or Notepad — shows up in about a second without a refresh. Files that fail
-to parse get a banner naming them; otherwise they would simply vanish from every
-view, which is the one failure mode that looks like data loss.
-
-The create dialog has an optional drafting box: a sentence in, the form filled
-out for you to read before anything is written. The key is entered under
-**Claude** in the sidebar and encrypted at rest with `safeStorage`; it is used in
-the main process and there is deliberately no getter on the IPC surface, so the
-renderer can learn that a key exists but never read it back. The model is named
-in one constant, `CLAUDE_MODEL` — `claude-sonnet-5`, because drafting one task
-from one sentence is structured extraction rather than reasoning. Drafting is off
-until a key is added, and the box says so rather than disappearing. Every draft
-is validated against `CreateItemInput` before it reaches the form, and it fills
-the form rather than writing: the confirmation step is the feature. The path is
-proven against the live API — a real key has been entered and a draft requested
-and returned — as a smoke test only; `PLAN.md` lists the specific behaviours
-(date resolution, project inference, what a vague prompt does) that a surprising
-draft is worth checking against.
-
-```bash
-npm run menu           # numbered launcher for everything below
-npm run dev            # build core, launch the app
-npm run build          # both workspaces
-npm test               # 125 tests: 78 in the core, 41 over the app's own logic,
-                       #            6 over the launcher's argument parsing
-npm run typecheck      # both workspaces, plus scripts/
-```
-
-A worked example vault is included at `./vault` — three projects and fifteen
-items: an epic with stories, tasks, a subtask and a bug, recurring
-daily/weekly/monthly items, examples of every link type, both ways an item can
-close, a hidden project, and one item already pushed to Jira. Rebuild it from
-scratch at any time:
-
-```bash
-npm run seed -- ./vault --force
-```
-
-It is also the fixture the desktop UI is developed against. `--force` clears the
-vault's contents but leaves its `.git` alone, so history survives a reset.
-
-## Commands
+The everyday ones:
 
 ```
-init [dir]                        Create a vault
-doctor                            Validate every file, find dangling links
-projects                          List projects with open counts
-project new KEY "Name"            Create a project
-project set KEY --name "..."      Update project fields
-project rename OLD NEW            Change the key, re-keying every item
-project reorder KEY --before K    Reorder the project list by hand
-project move ITEM TARGET          Move an item + subtree to another project
-project hide KEY                  Drop it from the desktop app's sidebar
-project unhide KEY                Put it back
-project delete KEY [--cascade]    Trash a project
-project restore FILE              Restore a trashed project
-new --project KEY --summary "..." Create an item
-list [--project --status --open]  List items
-show KEY                          Full item, children, backlinks, comments
-set KEY --status done --due DATE  Update fields
-done KEY                          Shorthand
-disregard KEY                     Close it as "not doing this"
-tick KEY [--on DATE] [--undo]     Recurring work: done for this period
-comment KEY "text"                Append to the running log
-link KEY --url|--item|--file X    Link arbitrary content
-attach KEY <path> [--no-copy]     Attach a file
-agenda [SCOPE]                    What needs attention
-move KEY --after K --before K     Reorder by hand
-delete KEY [--cascade]            Move to .trash, recoverable
-trash [--projects]                List what is in .trash
-restore FILE                      Bring one back
-git-status                        Whether writes are being committed
-jira plan [--out plan.json]       Reviewable push payload
-jira csv  [--out issues.csv]      For Jira's CSV importer
+new --project KEY --summary "..."   Create an item
+list [--project --status --open]    List items
+show KEY                            Full item, children, backlinks, comments
+set KEY --status done --due DATE    Update fields
+done KEY                            Shorthand for --status done
+tick KEY [--on DATE] [--undo]       Recurring work: done for this period
+agenda [SCOPE]                      What needs attention
+comment KEY "text"                  Append to the running log
+link KEY --url|--item|--file X      Link arbitrary content
+delete KEY [--cascade]              Move to .trash, recoverable
+doctor                              Validate every file, find dangling links
 ```
 
-`agenda` takes six scopes: `today`, `week`, `nextWeek`, `twoWeeks`, `month` and
-`next30Days`, defaulting to `today`. Weeks run Monday to Sunday, `twoWeeks` is
-this week and next as one fourteen-day window, and `next30Days` rolls forward
-from today rather than snapping to the calendar — which is the difference that
-matters on the 28th, when `month` has three days left in it.
+Plus `init`, `disregard`, `attach`, `move`, `trash`/`restore`, `git-status`, a
+`project` group (create, rename, reorder, hide, move items between, delete) and
+`jira plan`/`jira csv`. **Run `npm run vault` with no arguments for the complete
+list**, including every field flag for `new` and `set`.
 
-The three long scopes subdivide their due work rather than printing one long
-list — "This week" and "Next week" for `twoWeeks`, "This week" and "Rest of the
-month" for `month`, and "This week", "Next week" and "Later" for `next30Days`.
-Two or three headings whatever day it is, nearest first. The desktop app draws
-the same bands.
+### Global options
 
-`list --sort rank` gives the manual order; the default `--sort work` gives the
-derived one (overdue, due date, priority). `link` takes any of six kinds —
-`--url`, `--item`, `--file`, `--folder`, `--outlook`, `--note`. Deletes go to
-`.trash/` rather than being unlinked, so recovery does not depend on git being
-set up — run `git-status` to see whether it actually is.
+| Flag | |
+|---|---|
+| `--vault <dir>` | Vault location. Defaults to `$VAULT_DIR`, then `./vault`. |
+| `--git` | Auto-commit every write. The desktop app always passes this. |
+| `--json` | Machine-readable output, for scripting. |
+
+Set `VAULT_DIR` in your environment to stop passing `--vault` everywhere.
+
+### Agenda scopes
+
+`agenda` takes six, defaulting to `today`. Weeks run Monday to Sunday.
+
+| Scope | |
+|---|---|
+| `today` `week` `nextWeek` | The calendar periods around now |
+| `twoWeeks` | This week and next, as one fourteen-day window |
+| `month` | The calendar month |
+| `next30Days` | Thirty days rolling forward from today |
+
+The last one matters on the 28th, when `month` has three days left in it. The
+three long scopes subdivide their output — nearest first, two or three headings
+whatever day it is — rather than printing one flat list. The app draws the same
+bands.
+
+**A few other flags worth knowing.** `list --sort rank` gives the manual order;
+the default `--sort work` sorts by urgency (overdue, then due date, then
+priority). `link` takes six kinds: `--url`, `--item`, `--file`, `--folder`,
+`--outlook`, `--note`. `attach --no-copy` points at a file in place rather than
+copying it in, which is what you want for anything living in OneDrive or
+SharePoint.
+
+---
 
 ## Wiring up Claude
 
-The MCP server exposes the vault over stdio. Add it to Claude Desktop's config
-(`claude_desktop_config.json`) or your Claude Code MCP settings:
+The MCP server exposes the vault over stdio. Add it to Claude Desktop's
+`claude_desktop_config.json`, or to your Claude Code MCP settings:
 
 ```json
 {
@@ -329,62 +244,30 @@ Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
 note that legal signed off"*.
 
-Twenty-six tools are registered:
+Twenty-six tools are registered, covering:
 
-| Tool | |
-|---|---|
-| `vault_list_items` | Filtered list, compact projection |
-| `vault_get_item` | Full record plus children and backlinks |
-| `vault_get_agenda` | Overdue, due, and recurring, kept separate |
-| `vault_list_projects` | Portfolio view, in manual order |
-| `vault_create_item` | Create, with hierarchy validation |
-| `vault_update_item` | Patch fields |
-| `vault_transition_item` | Move through the workflow |
-| `vault_tick_item` | Log recurring work as done for this period |
-| `vault_move_item` | Reorder by hand within a project |
-| `vault_add_comment` | Append to the log |
-| `vault_link_item` | Link a URL, file, item, or Outlook message |
-| `vault_attach_file` | Copy in, or point at in place |
-| `vault_delete_item` | To `.trash/`, recoverable |
-| `vault_restore_item` | Back out of `.trash/` |
-| `vault_list_trash` | What is recoverable |
-| `vault_create_project` | New project |
-| `vault_update_project` | Patch project fields |
-| `vault_rename_project` | Change the key, re-keying every item |
-| `vault_reorder_project` | Reorder the project list |
-| `vault_hide_project` | Drop it from the desktop sidebar. Deletes nothing. |
-| `vault_unhide_project` | Put it back |
-| `vault_move_item_to_project` | Move an item and its subtree across |
-| `vault_delete_project` | To `.trash/projects/`, recoverable |
-| `vault_restore_project` | Back out of `.trash/projects/` |
-| `vault_plan_jira_push` | Build a reviewable payload. Sends nothing. |
-| `vault_mark_pushed` | Record a completed push |
+- **Reading** — filtered lists, a full record with children and backlinks, the
+  agenda, and the project portfolio.
+- **Writing** — create, update, transition through the workflow, tick recurring
+  work, reorder, comment, link, and attach.
+- **Projects** — create, update, rename (re-keying every item), reorder, hide,
+  unhide, and move an item and its subtree across.
+- **Recovery** — delete to `.trash/`, restore, and list what is recoverable.
+- **Jira** — build a reviewable push payload, and record a completed push.
 
-The destructive ones are marked `destructiveHint` and refuse rather than guess:
-deleting something with children, or a project with items, returns an error
-listing what is in the way instead of taking it along.
+Destructive tools are marked `destructiveHint` and refuse rather than guess:
+deleting something with children returns an error listing what is in the way
+instead of taking it along.
 
 Because the vault is plain markdown, a Claude with only filesystem access can
-already read and edit it. The MCP server adds schema validation, key allocation,
+already read and edit it. The MCP server adds schema validation, key allocation
 and hierarchy rules on top — worth having, but not a hard dependency.
 
-The MCP surface and the CLI cover the same operations on items and projects, so
-neither is a second-class way in. Four things are one-sided today, and it is
-worth knowing which rather than assuming symmetry:
+The CLI and MCP surfaces cover the same ground on items and projects. A handful
+of operations are one-sided — `doctor`, `git-status` and `jira csv` are CLI-only;
+`vault_mark_pushed` is MCP-only; bulk edit and removing a link are desktop-only.
 
-- `doctor`, `git-status` and `jira csv` are **CLI-only**. The first two are
-  diagnostics and the third is an export; none is an edit.
-- `vault_mark_pushed` is **MCP-only**. There is no `vault mark-pushed`, which
-  matters because the section below tells you to call it after a push — from the
-  CLI, that step has to go through `Vault.markPushed`.
-- Removing a link is **`Vault.removeLink` and the desktop app only**. Both
-  surfaces can add one; neither can take one away.
-- Renaming, deleting and restoring a **project** are CLI and MCP only. The app
-  creates, reorders, hides and unhides.
-- **Bulk edit is desktop-app only.** An agent that wants to update a dozen items
-  can already call `vault_update_item` a dozen times — there is no
-  `vault_update_items` — and pays a dozen commits for it. Worth revisiting, not
-  worth blocking the desktop feature on.
+---
 
 ## Pushing to Jira
 
@@ -397,16 +280,16 @@ npm run vault -- jira plan --vault ./vault --out plan.json
 ```
 
 `plan.json` contains ordered issue drafts with descriptions already converted to
-Atlassian Document Format. Parents are sequenced before their children. Items
-already pushed and unchanged are skipped. Review it, POST it, then call
-`vault_mark_pushed` (or `Vault.markPushed`) so drift detection has a baseline.
+Atlassian Document Format. Parents are sequenced before their children, and
+items already pushed and unchanged are skipped. Review it, POST it, then record
+the push so drift detection has a baseline.
 
-Nothing in this repo makes a network call. The actual POST is deliberately left
-to you, so an offline vault stays offline until you decide otherwise.
+**Nothing in this repo makes a network call.** The actual POST is deliberately
+left to you, so an offline vault stays offline until you decide otherwise.
 
 The part that always bites: **every Jira instance names its fields
-differently**. Start date is a custom field with a different id on every site.
-Run this against your instance and search the output before filling in the map:
+differently.** Start date is a custom field with a different id on every site.
+Run these against your instance and search the output before filling in the map:
 
 ```
 GET /rest/api/3/field
@@ -416,98 +299,59 @@ GET /rest/api/3/issue/createmeta?projectKeys=ENG&expand=projects.issuetypes.fiel
 If `fields.startDate` is missing from your map, the plan warns rather than
 silently dropping your dates.
 
-## Tests
+---
+
+## Project layout
+
+An npm workspace with two packages:
+
+| | |
+|---|---|
+| `packages/core` | The vault: schema, read/write, CLI, MCP server, Jira planner |
+| `apps/desktop` | The Electron app over it |
+
+The core has no idea the app exists. The app holds no state the vault does not.
+
+Inside the core, `schema.ts` is the source of truth — a zod schema every write
+is validated against. `Vault` imports `node:fs`, so it lives in Electron's main
+process and the renderer reaches it only through a `contextBridge` preload, with
+`contextIsolation` on and `nodeIntegration` off. The app watches `items/` and
+`projects/`, so an edit from the CLI, an external Claude, or Notepad shows up in
+about a second without a refresh.
+
+Read [`SCHEMA.md`](SCHEMA.md) before changing anything in
+`packages/core/src/schema.ts`.
+
+### Tests
 
 ```bash
 npm test
 ```
 
-Seventy-eight tests over the core: key allocation, disk round-trips, frontmatter
-stability, hierarchy rules, transition validation, both ways an item can close,
-the date a pickup stamps, ticking recurring work and the period it counts for,
-backlinks, attachments, agenda sectioning — including that a fortnight is one
-window rather than two stacked ones, that a rolling thirty days sees work a
-calendar month cannot, and that a long window's display bands stay inside it,
-collapse when only one survives, and claim every due item exactly once — the
-description grammar in both
-directions — including that parsing survives a write unchanged, and that every
-description in the example vault is one the rich editor may touch — ADF
-conversion, push ordering, drift detection down to a link's target and label,
-manual reordering of both items and projects, trash and restore, hiding and
-unhiding a project, project rename and cross-project moves, path portability,
-git health reporting, atomic writes, which Windows rename failures are worth
-retrying, and the backlog's bulk edit — one commit for a whole batch, an illegal
-transition skipped with the rest still applied, nothing written for a rejected
-item, labels folding rather than duplicating, and the shared merge step's
-`in_progress` pickup stamp firing through the bulk path exactly as it does
-through the single-item one.
+Covers the core (key allocation, disk round-trips, frontmatter stability,
+hierarchy and transition rules, recurrence periods, agenda sectioning, the
+description grammar in both directions, ADF conversion, push ordering, drift
+detection, trash and restore, atomic writes, bulk edit), the desktop app's pure
+renderer logic (nesting, collapse, type filtering, board lanes, agenda bands,
+multi-select ranges), and the launcher's argument tokenizer.
 
-Thirty-six more over the desktop app: `ordering.ts` — the pure functions behind
-the backlog's nesting, collapse and type filtering, the board's lanes, and the
-cut of an agenda section into its bands — plus `selection.ts`'s multi-select
-range (including that a collapsed subtree's hidden children never count) and the
-status intersection a mixed checkbox selection narrows to. They get tests because
-this is the renderer logic where a wrong answer is invisible: rows would simply
-not be where you expected, or a row would simply be selected when it should not
-be, with nothing on screen looking broken. The band tests carry one of those
-outright — a key no band covers is placed in the last one rather than dropped,
-because an agenda row that silently disappears reads as work that does not
-exist.
-`npm test` from the root runs both workspaces, plus the launcher's own tests in
-`scripts/`.
+There is no CI yet — the suite is run by hand. See [`IDEAS.md`](IDEAS.md).
 
-## What is not here yet
+---
 
-- **Picking a folder from the attach dialog.** Folder links can be made by
-  dropping a directory on the detail panel or typing the path into the link
-  form; the dialog itself is still file-only. The last unbuilt piece of
-  `PLAN-LINKS.md`.
-- **`vault jira discover`.** Referenced by this file and by a warning inside
-  `jira.ts`, but not implemented.
-- **Renaming and deleting projects in the app.** They can be created from the
-  sidebar, reordered by drag, and hidden and unhidden; the other two are CLI-
-  and MCP-only.
-- **The actual Jira POST.** By design.
-
-## Files
-
-```
-packages/core/src/
-├── schema.ts       zod schema — the source of truth
-├── constants.ts    the pure enums and TRANSITIONS, importable by a browser
-├── markdown.ts     frontmatter with stable key ordering
-├── description.ts  the description grammar, both ways, shared with the app
-├── recurrence.ts   which period a tick covers, and when the next one is due
-├── util.ts         dates, hashing, atomic writes, rank arithmetic
-├── vault.ts        core: load, validate, index, write atomically
-├── jira.ts         field mapping, markdown→ADF, push plans
-├── cli.ts          proves the core without a UI
-├── mcp-server.ts   stdio MCP server
-└── index.ts        public API for the desktop app
-
-packages/core/scripts/
-└── seed-vault.ts   builds the worked example vault
-
-apps/desktop/src/
-├── shared/api.ts   the IPC contract, imported by both sides
-├── main/           Vault instance, chokidar watcher, IPC handlers, key storage
-├── preload/        contextBridge — the renderer's only way in
-└── renderer/       React: backlog, board, agenda, detail
-
-apps/desktop/test/
-├── ordering.test.ts   nesting, collapse, and type filtering
-└── selection.test.ts  bulk-edit range and status-intersection logic
-```
-
-Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.
-
-## The other documents
+## Documentation
 
 | | |
 |---|---|
-| `SCHEMA.md` | The data model and the rules that hold it together |
-| `PLAN.md` | What was built, phase by phase, and why each call was made |
-| `IDEAS.md` | Unscheduled ideas, newest first — promoted into `PLAN.md` when built |
-| `PLAN-LINKS.md` | The design for OneDrive-aware links; built bar the folder picker |
-| `PACKAGING.md` | Moving a working copy, and the plan for a real `.exe` |
-| `GETTING-STARTED.md` | Running it on a machine that has never seen it |
+| [`GETTING-STARTED.md`](GETTING-STARTED.md) | Running it on a machine that has never seen it |
+| [`SCHEMA.md`](SCHEMA.md) | The data model and the rules that hold it together |
+| [`PLAN.md`](PLAN.md) | What was built, phase by phase, and why each call was made |
+| [`IDEAS.md`](IDEAS.md) | Unscheduled ideas, newest first |
+| [`PLAN-LINKS.md`](PLAN-LINKS.md) | The design for OneDrive-aware links |
+| [`PACKAGING.md`](PACKAGING.md) | Moving a working copy, and the plan for a real `.exe` |
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

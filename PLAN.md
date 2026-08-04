@@ -4,9 +4,10 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 84 green tests — 64 in the core, 20 over the app's
-`ordering.ts`. **Phase 5, the Jira push UI, is the only phase left**, and it
-carries `vault jira discover` with it.
+below them. The suite is at 125 green tests — 78 in the core, 41 over the app's
+`ordering.ts` and `selection.ts`, and 6 over the launcher's argument parsing.
+**Phase 5, the Jira push UI, is the only phase left**, and it carries
+`vault jira discover` with it.
 
 Two other documents hold work this one does not: `PLAN-LINKS.md` designs
 OneDrive-aware links, of which the first half has shipped, and `IDEAS.md` holds
