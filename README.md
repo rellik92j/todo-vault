@@ -66,7 +66,7 @@ New machine, step by step? See [`GETTING-STARTED.md`](GETTING-STARTED.md).
 
 ---
 
-## Quick start
+## Quick start - set up a test vault with pre-loaded examples. 
 
 ```bash
 git clone https://github.com/rellik92j/todo-vault.git
@@ -89,7 +89,7 @@ with `npm run seed -- ./vault --force`, which clears the contents but leaves
 
 ---
 
-## Running it: the menu
+## Running it: the menu **Main way to begin**
 
 ```bash
 npm run menu
