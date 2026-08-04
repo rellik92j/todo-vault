@@ -26,8 +26,9 @@ it git checks files out as CRLF on Windows, the app rewrites them as LF, and
 every file reads as wholly modified — which would defeat the stable frontmatter
 ordering the whole design rests on.
 
-The example vault is seeded by `scripts/seed-vault.ts` (12 items, 2 projects,
-every link type, both attachment modes) and `doctor` reports it clean.
+The example vault is seeded by `scripts/seed-vault.ts` (12 items, 2 projects at
+this point, every link type, both attachment modes) and `doctor` reports it
+clean. The seed has grown since, and now emits 3 projects and 15 items.
 
 ## Phase 0.5 — the two schema decisions ✅
 
@@ -960,8 +961,9 @@ command against the fixture vault instead.
 
 ## Bulk edit in the backlog ✅ built and driven
 
-Shaped in `BULK-UPDATE-PLAN.md` rather than filed as a phase, because there were
-real decisions in it. Scope, settled up front: status, assignee, reporter,
+Shaped in its own working document rather than filed as a phase, because there
+were real decisions in it. That draft was never committed, so this section is
+the record of it. Scope, settled up front: status, assignee, reporter,
 priority, due date and labels, in the backlog table only, under one git commit
 per batch.
 

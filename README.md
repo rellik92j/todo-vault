@@ -200,11 +200,15 @@ bundled for a browser context. Types are erased, so those come from the root.
 The shape that matters: `Vault` imports `node:fs` and `node:child_process`, so it
 lives in the **main** process and the renderer reaches it only through a
 `contextBridge` preload — `contextIsolation: true`, `nodeIntegration: false`,
-`sandbox: true`. Every call returns `{ ok, value }` or `{ ok, message }` rather
-than throwing, because structured clone strips the `VaultError` class on the way
-across and the core's messages are worth showing verbatim. Mutations will return
-a whole fresh snapshot rather than a delta; at a few hundred items, reconciling
-would be a bug farm for no gain.
+`sandbox: true`. The window also refuses to navigate anywhere but itself: the
+preload attaches to the webContents rather than to the document, so a page that
+managed to load in that window — a link dropped on a region nothing handles, say
+— would inherit the whole `window.vault` API. `setWindowOpenHandler` covers new
+windows, `will-navigate` covers this one. Every call returns `{ ok, value }` or
+`{ ok, message }` rather than throwing, because structured clone strips the
+`VaultError` class on the way across and the core's messages are worth showing
+verbatim. Mutations will return a whole fresh snapshot rather than a delta; at a
+few hundred items, reconciling would be a bug farm for no gain.
 
 `items/` and `projects/` are watched, so an edit from anything else — an external
 Claude, or Notepad — shows up in about a second without a refresh. Files that fail
@@ -229,7 +233,7 @@ draft is worth checking against.
 ```bash
 npm run dev            # build core, launch the app
 npm run build          # both workspaces
-npm test               # 96 tests: 69 in the core, 27 over the app's renderer logic
+npm test               # 119 tests: 78 in the core, 41 over the app's own logic
 npm run typecheck      # both workspaces
 ```
 
