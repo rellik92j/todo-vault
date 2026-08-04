@@ -8,15 +8,17 @@
     "apps/*"
   ],
   "scripts": {
+    "menu": "tsx scripts/menu.mts",
     "vault": "tsx packages/core/src/cli.ts",
     "mcp": "tsx packages/core/src/mcp-server.ts",
     "seed": "tsx packages/core/scripts/seed-vault.ts",
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "tsx --test scripts/*.test.mts && npm run test --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "dev": "npm run build -w todo-vault && npm run dev -w @todo-vault/desktop"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   },
