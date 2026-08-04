@@ -12,6 +12,7 @@
     "vault": "tsx packages/core/src/cli.ts",
     "mcp": "tsx packages/core/src/mcp-server.ts",
     "seed": "tsx packages/core/scripts/seed-vault.ts",
+    "//test": "The glob is load-bearing and needs Node 22. npm runs scripts through cmd.exe on Windows, which does not expand globs, so the pattern reaches Node's test runner intact — and expanding it there is a feature Node gained in 22. apps/desktop does the same. This is what the engines floor below is really about.",
     "test": "tsx --test scripts/*.test.mts && npm run test --workspaces --if-present",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
@@ -25,8 +26,9 @@
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   },
+  "//engines": "Was >=20, which nothing had ever tested and which was false: `npm test` globs its test files, and Node only expands those patterns from 22 on. Node 20 also left LTS on 2026-04-30, so the floor moved up to the oldest version that actually runs the suite rather than the suite retreating to the oldest version named here.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "//allowScripts": "npm 11.16+ blocks dependency install scripts until they are decided here (RFC npm/rfcs#868). esbuild's postinstall is denied rather than allowed: the binary arrives as the @esbuild/<platform> optional dependency, so esbuild loads, transforms and runs its CLI shim with the script blocked. Bare name rather than a pinned version, so a vite or electron-vite bump does not bring the warning back. Must stay in the ROOT package.json — npm ignores this field in a workspace.",
   "allowScripts": {

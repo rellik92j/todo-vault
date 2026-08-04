@@ -1,0 +1,89 @@
+# The first thing that has ever run this suite other than a person remembering to.
+#
+# Runner: windows-latest, and only windows-latest. Linux would be faster and
+# cheaper, but it would be checking a configuration nobody uses. This codebase
+# has Windows in it on purpose — scripts/menu.mts routes around the npm.cmd
+# shim because Node refuses to spawn a .cmd without a shell, and the vault's
+# atomic write retries its rename for transient Windows file locks. Neither
+# path is even reachable on Linux, so a green Linux run would be evidence about
+# a program that no one runs.
+#
+# Node versions: 22 is the floor package.json claims in "engines", and a claim
+# nothing tests is a guess — this matrix is what makes it a fact. 24 is what the
+# machine this gets developed on actually runs.
+#
+# The floor was >=20 until this workflow first ran and disproved it. `npm test`
+# globs its test files, npm hands scripts to cmd.exe on Windows, cmd.exe does not
+# expand globs, and Node only learned to expand the pattern itself in 22. So the
+# suite could never have run on 20, in any workspace. Node 20 also left LTS on
+# 2026-04-30. Both facts pointed the same way.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    name: typecheck + tests (Node ${{ matrix.node }})
+    runs-on: windows-latest
+    strategy:
+      # One version failing is information about that version, so let the other
+      # finish rather than cancelling it.
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # Not optional, and the first CI run proved it. apps/desktop imports the
+      # `todo-vault` workspace package, whose "types" field points at
+      # dist/index.d.ts — build output, and gitignored. A working copy has that
+      # directory left over from earlier builds, so typecheck passes locally
+      # while a clean checkout reports "Cannot find module 'todo-vault'" ten
+      # times over. GETTING-STARTED.md already puts `npm run build` right after
+      # `npm install` for exactly this reason.
+      #
+      # Only core is built here: it is what the type errors were about, and it
+      # needs no Electron. The desktop bundle is the build job's business.
+      - run: npm run build -w todo-vault
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  build:
+    name: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # Electron 43 has no install script — it downloads lazily on first
+      # require(), which apps/desktop's "ensure-electron" forces before the
+      # build. That download is ~150MB and would otherwise repeat every run.
+      - name: Cache the Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+
+      # Separate from the check job because this is the only step that pays for
+      # Electron. It earns its place anyway: typecheck reads the types and never
+      # runs the bundler, so a change can typecheck clean and fail to build.
+      - run: npm run build
