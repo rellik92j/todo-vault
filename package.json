@@ -24,5 +24,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "//allowScripts": "npm 11.16+ blocks dependency install scripts until they are decided here (RFC npm/rfcs#868). esbuild's postinstall is denied rather than allowed: the binary arrives as the @esbuild/<platform> optional dependency, so esbuild loads, transforms and runs its CLI shim with the script blocked. Bare name rather than a pinned version, so a vite or electron-vite bump does not bring the warning back. Must stay in the ROOT package.json — npm ignores this field in a workspace.",
+  "allowScripts": {
+    "esbuild": false
   }
 }

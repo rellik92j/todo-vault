@@ -109,7 +109,7 @@ outside the repo, so pulling never touches them.
 npm run menu            # numbered launcher — pick any of the below by keypress
 npm run dev             # build core, launch the app
 npm run build           # both workspaces
-npm test                # 78 core tests, 41 desktop, 6 over the launcher
+npm test                # core, desktop, and the launcher's own tests
 npm run typecheck       # both workspaces, plus scripts/
 npm run vault -- agenda week --vault ./vault   # CLI, run from repo root
 ```
