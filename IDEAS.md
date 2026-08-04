@@ -307,15 +307,49 @@ The spacing and type layer is not a system at all. Padding and gap values run
 5px, 6px, 7px, 8px, 9px, 10px, 11px, 12px, 14px with no rule for picking one, so
 every new component is a fresh guess and near-misses accumulate — the kind of
 drift nobody notices in isolation and everybody feels in aggregate. A short
-scale, even four or five steps, would make the choice mechanical. About a dozen
-hex values also sit outside `:root`; each is defensible alone, but they are
-where a future theme change would silently miss.
+scale, even four or five steps, would make the choice mechanical.
 
-Which raises the decision this doc would have to settle: `color-scheme: dark` is
-hardcoded and every token is a literal colour, so there is currently no light
-mode and no seam to add one. Deciding *no* is fine and cheap. Deciding *yes*
-later is much more expensive than deciding it now, because it determines whether
-tokens want semantic names rather than literal ones.
+Thirteen colour values also sit outside the token blocks: three `color: #fff`,
+and ten `rgb(0 0 0 / …)` shadows and scrims at seven distinct alphas. Each is
+defensible alone. Together they are where a theme change silently misses — and
+per the next paragraph, one already has.
+
+Which raises the decision this doc would have to settle, and it is not the one
+this entry used to describe. It claimed `color-scheme: dark` was hardcoded with
+no light mode and no seam to add one. That was wrong on the central fact:
+`index.css` has carried a `@media (prefers-color-scheme: light)` block since
+`004a8f3`, the first Electron commit, two days before this entry was written.
+It flips `color-scheme` and redefines the surfaces, borders, text and accent —
+`--bg` to `#f7f8fa`, `--bg-raised` to white, and so on down.
+
+So the real question is narrower and more awkward: that block is **partial**,
+and nothing says so. It redefines twelve tokens and leaves behind every status
+hue — `--todo`, `--in_progress`, `--in_review`, `--blocked`, `--done`,
+`--disregard` — plus `--highest`, `--high`, `--low` and `--overdue`, all of
+which keep values chosen against a near-black background. Of the five
+priorities only `--medium` and `--lowest` were adjusted.
+
+Worth knowing which kind of gap this is, because it decides the fix. Compare
+the block against its first version and the token list is identical — it has
+gained only the `color-scheme: light` line, no colours. So it was **born**
+covering surfaces and skipping identity colours, rather than drifting out of
+date. But there is one genuine drift on top, and it is the
+worst possible token to have missed. `--disregard` was added to `:root` in
+`e383a5b`, a day *after* light mode already existed, and got no light
+counterpart — the very token whose comment reasons about hue at a 7px dot,
+worked out against `#0f1115` and never checked against white. The warm/cool
+split against `--todo` probably survives, since neither value changed, but
+"probably" is the point: nobody has looked. The ten black scrims are the same
+problem with less excuse, since a shadow tuned for a dark surface is doing
+something else entirely on a light one.
+
+That makes it two fixes, not one. The drift wants a rule — a new colour token
+means a decision about both schemes — and the born-partial half wants the
+semantic split this entry always pointed at: which colours are surface-relative
+and which are identity. Dropping light mode is still the cheap option, and now
+means deleting a block rather than declining to write one. Keeping it means
+finishing a job that has been half-done, undocumented, and shipping since day
+one.
 
 Probably its own `PLAN-STYLE.md` rather than a phase — it is design work with a
 decision in it, not a task list.
