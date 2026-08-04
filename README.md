@@ -271,7 +271,7 @@ tick KEY [--on DATE] [--undo]     Recurring work: done for this period
 comment KEY "text"                Append to the running log
 link KEY --url|--item|--file X    Link arbitrary content
 attach KEY <path> [--no-copy]     Attach a file
-agenda [today|week|nextWeek|month] What needs attention
+agenda [SCOPE]                    What needs attention
 move KEY --after K --before K     Reorder by hand
 delete KEY [--cascade]            Move to .trash, recoverable
 trash [--projects]                List what is in .trash
@@ -280,6 +280,18 @@ git-status                        Whether writes are being committed
 jira plan [--out plan.json]       Reviewable push payload
 jira csv  [--out issues.csv]      For Jira's CSV importer
 ```
+
+`agenda` takes six scopes: `today`, `week`, `nextWeek`, `twoWeeks`, `month` and
+`next30Days`, defaulting to `today`. Weeks run Monday to Sunday, `twoWeeks` is
+this week and next as one fourteen-day window, and `next30Days` rolls forward
+from today rather than snapping to the calendar — which is the difference that
+matters on the 28th, when `month` has three days left in it.
+
+The three long scopes subdivide their due work rather than printing one long
+list — "This week" and "Next week" for `twoWeeks`, "This week" and "Rest of the
+month" for `month`, and "This week", "Next week" and "Later" for `next30Days`.
+Two or three headings whatever day it is, nearest first. The desktop app draws
+the same bands.
 
 `list --sort rank` gives the manual order; the default `--sort work` gives the
 derived one (overdue, due date, priority). `link` takes any of six kinds —
@@ -404,10 +416,14 @@ silently dropping your dates.
 npm test
 ```
 
-Sixty-nine tests over the core: key allocation, disk round-trips, frontmatter
+Seventy-eight tests over the core: key allocation, disk round-trips, frontmatter
 stability, hierarchy rules, transition validation, both ways an item can close,
 the date a pickup stamps, ticking recurring work and the period it counts for,
-backlinks, attachments, agenda sectioning, the description grammar in both
+backlinks, attachments, agenda sectioning — including that a fortnight is one
+window rather than two stacked ones, that a rolling thirty days sees work a
+calendar month cannot, and that a long window's display bands stay inside it,
+collapse when only one survives, and claim every due item exactly once — the
+description grammar in both
 directions — including that parsing survives a write unchanged, and that every
 description in the example vault is one the rich editor may touch — ADF
 conversion, push ordering, drift detection down to a link's target and label,
@@ -420,21 +436,25 @@ item, labels folding rather than duplicating, and the shared merge step's
 `in_progress` pickup stamp firing through the bulk path exactly as it does
 through the single-item one.
 
-Twenty-seven more over the desktop app: `ordering.ts` — the pure functions behind
-the backlog's nesting, collapse and type filtering, and the board's lanes — plus
-`selection.ts`'s multi-select range (including that a collapsed subtree's hidden
-children never count) and the status intersection a mixed checkbox selection
-narrows to. They get tests because this is the renderer logic where a wrong
-answer is invisible: rows would simply not be where you expected, or a row would
-simply be selected when it should not be, with nothing on screen looking broken.
+Thirty-six more over the desktop app: `ordering.ts` — the pure functions behind
+the backlog's nesting, collapse and type filtering, the board's lanes, and the
+cut of an agenda section into its bands — plus `selection.ts`'s multi-select
+range (including that a collapsed subtree's hidden children never count) and the
+status intersection a mixed checkbox selection narrows to. They get tests because
+this is the renderer logic where a wrong answer is invisible: rows would simply
+not be where you expected, or a row would simply be selected when it should not
+be, with nothing on screen looking broken. The band tests carry one of those
+outright — a key no band covers is placed in the last one rather than dropped,
+because an agenda row that silently disappears reads as work that does not
+exist.
 `npm test` from the root runs both workspaces.
 
 ## What is not here yet
 
-- **OneDrive-aware attachments.** `file` and `folder` links and attachments open
-  on click, which was the first half of `PLAN-LINKS.md`; the second half — a
-  OneDrive file linked as OneDrive rather than copied into `attachments/` — is
-  designed and not built.
+- **Picking a folder from the attach dialog.** Folder links can be made by
+  dropping a directory on the detail panel or typing the path into the link
+  form; the dialog itself is still file-only. The last unbuilt piece of
+  `PLAN-LINKS.md`.
 - **`vault jira discover`.** Referenced by this file and by a warning inside
   `jira.ts`, but not implemented.
 - **Renaming and deleting projects in the app.** They can be created from the
@@ -481,6 +501,6 @@ Read `SCHEMA.md` before changing anything in `packages/core/src/schema.ts`.
 | `SCHEMA.md` | The data model and the rules that hold it together |
 | `PLAN.md` | What was built, phase by phase, and why each call was made |
 | `IDEAS.md` | Unscheduled ideas, newest first — promoted into `PLAN.md` when built |
-| `PLAN-LINKS.md` | The design for OneDrive-aware links; first half built |
+| `PLAN-LINKS.md` | The design for OneDrive-aware links; built bar the folder picker |
 | `PACKAGING.md` | Moving a working copy, and the plan for a real `.exe` |
 | `GETTING-STARTED.md` | Running it on a machine that has never seen it |

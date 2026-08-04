@@ -7,6 +7,7 @@ export {
 } from "./vault.js";
 export type {
   VaultOptions,
+  AgendaBand,
   AgendaSection,
   DeleteResult,
   DeleteProjectResult,
@@ -33,6 +34,9 @@ export {
   isLosslessDescription,
 } from "./description.js";
 export type { Block, Inline } from "./description.js";
+export { isSyncedPath, syncedRootFor } from "./links.js";
+export { classifyLinkTarget } from "./link-target.js";
+export type { LinkTargetKind } from "./link-target.js";
 export { cadencePeriod, isTickedFor, isSettledForWindow } from "./recurrence.js";
 export type { Tickable } from "./recurrence.js";
 export { buildPushPlan, loadJiraMap, markdownToAdf, toJiraCsv, JiraMapSchema } from "./jira.js";

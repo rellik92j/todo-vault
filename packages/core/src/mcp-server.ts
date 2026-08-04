@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Vault, VaultError } from "./vault.js";
 import { buildPushPlan, loadJiraMap } from "./jira.js";
 import {
+  AGENDA_SCOPES,
   CADENCES,
   ITEM_TYPES,
   PRIORITIES,
@@ -229,15 +230,34 @@ item ticked today is gone from 'today' but still listed for 'week', because it
 comes round again inside that window.
 
 Args:
-  - scope ('today'|'week'|'nextWeek'|'month', default 'today')
+  - scope (default 'today'), one of:
+      today       just the reference date
+      week        the calendar week containing it, Monday to Sunday
+      nextWeek    the following Monday to Sunday
+      twoWeeks    this week and next as one window, Monday to the Sunday after
+      month       the calendar month containing the reference date
+      next30Days  rolling: the reference date plus thirty days
   - reference (YYYY-MM-DD, optional): treat this as the current date
 
-Returns: { sections: [{ kind, scope, from?, to?, count, items: [...] }] }
-Weeks run Monday to Sunday.
+Returns: { sections: [{ kind, scope, from?, to?, bands?, count, items: [...] }] }
 
-Use when: "what's on for today", "what's due this week", "what's coming up next week", "give me a monthly status rollup".`,
+The 'due' section of a long scope also carries 'bands': [{ label, from, to }] —
+'This week' / 'Next week' / 'Later' for next30Days, 'This week' / 'Rest of the
+month' for month, 'This week' / 'Next week' for twoWeeks. They are ranges, not
+copies of the items: 'items' is one flat list sorted by due date, and a band is
+the slice of it falling inside that band's range. Use them when summarising a
+long window — "three this week, two next week, eight later" is the shape of a
+month; a flat list of thirteen is not.
+
+'month' and 'next30Days' answer different questions and the gap is widest late
+in the month: on the 28th, 'month' has three days left in it, while 'next30Days'
+reaches well into the following month. Ask for 'month' when the user means the
+calendar period ("what's left this month", a monthly rollup) and 'next30Days'
+when they mean the horizon ("what's coming up", "anything in the next month").
+
+Use when: "what's on for today", "what's due this week", "what's coming up next week", "the next couple of weeks", "give me a monthly status rollup", "what's on my plate for the next 30 days".`,
     inputSchema: {
-      scope: z.enum(["today", "week", "nextWeek", "month"]).default("today"),
+      scope: z.enum(AGENDA_SCOPES).default("today"),
       reference: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -253,6 +273,11 @@ Use when: "what's on for today", "what's due this week", "what's coming up next 
           scope: s.scope,
           from: s.from,
           to: s.to,
+          // Ranges, not items. The section's `items` stay one flat list and a
+          // band is the slice of them whose dueDate falls in its range, so
+          // reporting the structure costs three short strings per band rather
+          // than a second copy of the agenda.
+          bands: s.bands,
           count: s.items.length,
           items: s.items.map(summarize),
         })),

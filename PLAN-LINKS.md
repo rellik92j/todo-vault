@@ -12,11 +12,16 @@ Two asks, which are less related than they look:
 Ask 2 is the one with the traps in it. Read the *Problems and gotchas* section
 before writing any code — three of them change what should be built.
 
-> **Status: ask 1 is built, ask 2 is not.** Steps 1–2 of the build order shipped —
-> the scheme allowlist and the `openTarget` channel, so `file` and `folder` links
-> and attachment rows open on click. Everything about OneDrive below (steps 3–5,
-> and gotchas 1–3 and 9–11) is still a design, not a description. The table below
-> is left as it was written, as the record of what the code looked like before.
+> **Status: both asks are built.** Steps 1–2 shipped first — the scheme allowlist
+> and the `openTarget` channel, so `file` and `folder` links and attachment rows
+> open on click. Steps 3–4 have now landed together, as this plan insisted they
+> must: `classifyLinkTarget` and the OneDrive option in the link form, plus
+> `syncedRoots`, the `addAttachment` rule, and the drop-handler routing. Gotchas
+> 1–3 and 9–11 were all taken as written and are recorded as resolved against
+> their own sections. **Step 5 — the folder picker and directory drops via the
+> dialog — is not built**; directory *drops* work, which was the half that
+> mattered, and the picker is still file-only. The table below is left as it was
+> written, as the record of what the code looked like before.
 
 ## Where things stood before ask 1
 
@@ -236,10 +241,21 @@ accepting `copy: false`; the extension refusal list; unchanged behaviour when
    this was written and can be authored by anything with a text editor.
 2. ✅ `openTarget` channel + clickable `file`/`folder`/attachment rows. This is
    ask 1 whole, and it does not depend on anything below.
-3. `classifyLinkTarget` + the OneDrive option in the link form. Ask 2, web half.
-4. `syncedRoots` + the `addAttachment` rule + the drop-handler routing. Ask 2,
+3. ✅ `classifyLinkTarget` + the OneDrive option in the link form. Ask 2, web half.
+4. ✅ `syncedRoots` + the `addAttachment` rule + the drop-handler routing. Ask 2,
    local half — the part that actually prevents the diverging copy.
 5. Folder picker and directory drops (gotcha 9), if still wanted once 2 lands.
+   **Half done**: directory *drops* landed with step 4, since the drop handler
+   had to stop throwing on them either way. The dialog is still file-only.
 
 Steps 1–2 are worth landing on their own; 3–4 should land together, because
 shipping 3 alone produces a feature that looks finished and prevents nothing.
+
+**One thing the build changed about the design.** The proposed shape put
+`classifyLinkTarget` in the core beside `isSyncedPath`, which does not work:
+the sync-root comparison needs `node:path`, the renderer is sandboxed and
+bundles for Chromium, and the link form needs the classifier. So the pure
+string half lives in its own leaf, `todo-vault/link-target`, importing nothing —
+the same reason `constants` and `recurrence` are separate entry points — and
+`links.ts` keeps the path logic. Cheap to do up front, and the renderer build
+fails loudly if the two are ever merged back together.

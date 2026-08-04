@@ -21,6 +21,10 @@
       "types": "./dist/description.d.ts",
       "default": "./dist/description.js"
     },
+    "./link-target": {
+      "types": "./dist/link-target.d.ts",
+      "default": "./dist/link-target.js"
+    },
     "./recurrence": {
       "types": "./dist/recurrence.d.ts",
       "default": "./dist/recurrence.js"

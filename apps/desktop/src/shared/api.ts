@@ -69,10 +69,23 @@ export interface AgendaView {
   scope: AgendaSection["scope"];
   from?: string;
   to?: string;
+  /**
+   * Display subdivisions of a long `due` window, straight from the core.
+   *
+   * Passed through untouched rather than derived here for the reason stated in
+   * `Agenda.tsx` about the window itself: which dates count as "this week"
+   * depends on today's date, so the core owns it and the renderer draws it.
+   */
+  bands?: AgendaSection["bands"];
   keys: string[];
 }
 
-export type AgendaScope = "today" | "week" | "nextWeek" | "month";
+/**
+ * Re-exported rather than restated. This used to be its own hand-written union
+ * and drifting from the core's was a matter of time — adding a scope there and
+ * forgetting here would have typechecked cleanly right up to the `<select>`.
+ */
+export type AgendaScope = AgendaSection["scope"];
 
 /** Null when no vault has been chosen yet — the renderer shows the picker. */
 export type MaybeSnapshot = VaultSnapshot | null;
@@ -200,10 +213,28 @@ export interface VaultApi {
   ): Promise<Result<VaultSnapshot>>;
   removeLink(key: string, target: string): Promise<Result<VaultSnapshot>>;
 
-  /** Opens a native file picker in main, then attaches what was chosen. */
+  /**
+   * Opens a native file picker in main, then attaches what was chosen.
+   *
+   * "Copy in" here is an explicit choice, so a file inside a OneDrive folder
+   * is refused rather than downgraded — the core's message reaches the error
+   * toast and names the "Link" button as the way through.
+   */
   attachViaDialog(key: string, copy: boolean): Promise<Result<MaybeSnapshot>>;
-  /** For files dropped onto the window, whose real paths the renderer resolved. */
-  attachPaths(key: string, paths: string[], copy: boolean): Promise<Result<VaultSnapshot>>;
+  /**
+   * For paths dropped onto the window, whose real values the renderer resolved.
+   *
+   * Unlike the picker, a drop has no dialog behind it, so main routes each path
+   * by what it is: directories become `folder` links, and files inside a synced
+   * folder are linked in place rather than copied. `linkedInstead` names those,
+   * so the panel can say what happened instead of silently doing something
+   * other than what the gesture implied.
+   */
+  attachPaths(
+    key: string,
+    paths: string[],
+    copy: boolean,
+  ): Promise<Result<{ snapshot: VaultSnapshot; linkedInstead: string[] }>>;
 
   /**
    * Trash an item. Without `cascade` this fails when the item has children, and

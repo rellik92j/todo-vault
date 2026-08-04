@@ -24,10 +24,33 @@ export const CADENCES = ["daily", "weekly", "monthly", "quarterly", "none"] as c
 export const LINK_TYPES = ["url", "file", "folder", "item", "outlook", "note"] as const;
 export const SYNC_STATES = ["never", "pending", "pushed", "drifted"] as const;
 
+/**
+ * The windows `Vault.agenda()` can be asked for, in the order a menu should
+ * offer them: shortest first, and each rolling window after the calendar
+ * period it is most easily confused with.
+ *
+ * Here rather than in vault.ts because six places need the list and only one of
+ * them can import vault.ts — the renderer's `<select>` and the zod enum in the
+ * MCP server both reach it through `todo-vault/constants`. That is the point:
+ * the union used to be retyped by hand at each of those sites with nothing
+ * forcing them to agree, so a new scope silently reached some and not others.
+ * `Record<AgendaScope, …>` on the ranges table now makes a missing range a
+ * typecheck failure rather than a runtime `undefined`.
+ */
+export const AGENDA_SCOPES = [
+  "today",
+  "week",
+  "nextWeek",
+  "twoWeeks",
+  "month",
+  "next30Days",
+] as const;
+
 export type ItemType = (typeof ITEM_TYPES)[number];
 export type Status = (typeof STATUSES)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type Cadence = (typeof CADENCES)[number];
+export type AgendaScope = (typeof AGENDA_SCOPES)[number];
 
 /**
  * Statuses that mean "no longer needs attention".

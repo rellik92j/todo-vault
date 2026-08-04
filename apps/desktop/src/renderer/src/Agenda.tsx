@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Item } from "todo-vault";
 import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import type { AgendaScope, AgendaView } from "@shared/api";
+import { groupIntoBands } from "./ordering";
 import { AgendaDueDate, Cadence, PriorityMark, StatusPill, TickButton } from "./pieces";
 
 /** The phrase each scope reads naturally with, e.g. "Due ${phrase}". */
@@ -9,7 +10,9 @@ const SCOPE_PHRASE: Record<AgendaScope, string> = {
   today: "today",
   week: "this week",
   nextWeek: "next week",
+  twoWeeks: "this week and next",
   month: "this month",
+  next30Days: "in the next 30 days",
 };
 
 const HEADINGS: Record<AgendaView["kind"], (scope: AgendaScope) => string> = {
@@ -131,33 +134,52 @@ export function Agenda({
             </span>
           </header>
           <p className="section-note">{NOTES[section.kind]}</p>
-          <div className="rows">
-            {section.keys.map((key) => {
-              const item = byKey.get(key);
-              if (!item) return null;
-              // The ✓ is a sibling of the row, not a child: the row is itself a
-              // button, and nesting one inside another is invalid HTML that
-              // browsers resolve by dropping the inner control.
-              return (
-                <div className="row-wrap" key={key}>
-                  <button
-                    type="button"
-                    className="row"
-                    aria-selected={key === selected}
-                    onClick={() => onSelect(key)}
-                  >
-                    <span className="cell-key">{item.key}</span>
-                    <span className="row-summary">{item.summary}</span>
-                    <Cadence cadence={item.cadence} ticked={isTickedFor(item, todayIso())} />
-                    <AgendaDueDate item={item} section={section} />
-                    <PriorityMark priority={item.priority} />
-                    <StatusPill status={item.status} />
-                  </button>
-                  <TickButton item={item} onTick={(undo) => onTick?.(item.key, undo)} />
-                </div>
-              );
-            })}
-          </div>
+          {groupIntoBands(section, byKey).map((group) => (
+            // A Fragment rather than a wrapper element: an unbanded section
+            // must produce exactly the DOM it produced before bands existed,
+            // or every `.rows` rule starts depending on a div that is only
+            // sometimes meaningful.
+            <Fragment key={group.label ?? "all"}>
+              {group.label && (
+                <header className="band-head">
+                  <h3 className="band-title">{group.label}</h3>
+                  <span className="section-range">
+                    {group.from} → {group.to}
+                  </span>
+                  <span className="section-range">
+                    {group.keys.length} item{group.keys.length === 1 ? "" : "s"}
+                  </span>
+                </header>
+              )}
+              <div className="rows">
+                {group.keys.map((key) => {
+                  const item = byKey.get(key);
+                  if (!item) return null;
+                  // The ✓ is a sibling of the row, not a child: the row is itself a
+                  // button, and nesting one inside another is invalid HTML that
+                  // browsers resolve by dropping the inner control.
+                  return (
+                    <div className="row-wrap" key={key}>
+                      <button
+                        type="button"
+                        className="row"
+                        aria-selected={key === selected}
+                        onClick={() => onSelect(key)}
+                      >
+                        <span className="cell-key">{item.key}</span>
+                        <span className="row-summary">{item.summary}</span>
+                        <Cadence cadence={item.cadence} ticked={isTickedFor(item, todayIso())} />
+                        <AgendaDueDate item={item} section={section} />
+                        <PriorityMark priority={item.priority} />
+                        <StatusPill status={item.status} />
+                      </button>
+                      <TickButton item={item} onTick={(undo) => onTick?.(item.key, undo)} />
+                    </div>
+                  );
+                })}
+              </div>
+            </Fragment>
+          ))}
         </section>
       ))}
     </div>

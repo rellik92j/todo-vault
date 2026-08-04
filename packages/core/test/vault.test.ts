@@ -16,7 +16,15 @@ import {
 } from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
-import { isTransientRenameError, RANK_GAP, rankBetween, writeFileAtomic } from "../src/util.js";
+import { classifyLinkTarget } from "../src/link-target.js";
+import { isSyncedPath, syncedRootFor } from "../src/links.js";
+import {
+  isTransientRenameError,
+  pathExists,
+  RANK_GAP,
+  rankBetween,
+  writeFileAtomic,
+} from "../src/util.js";
 import { cadencePeriod, todayIso, addDays } from "../src/recurrence.js";
 
 async function tmpVault(): Promise<Vault> {
@@ -625,6 +633,94 @@ test("copies attachments into the vault, or points at them in place", async () =
   await assert.rejects(() => vault.addAttachment(item.key, "/no/such/file"), /Cannot read/);
 });
 
+test("syncedRootFor matches a root and its descendants, and nothing beside them", () => {
+  const root = path.resolve("C:/Users/sam/OneDrive - Contoso");
+
+  assert.equal(syncedRootFor(path.join(root, "Docs", "plan.xlsx"), [root]), root);
+  assert.equal(syncedRootFor(root, [root]), root);
+
+  // The separator check earns its keep here: a prefix match alone would let
+  // the root swallow its sibling.
+  assert.equal(syncedRootFor(path.resolve("C:/Users/sam/OneDrive - Contoso Ltd/x.txt"), [root]), undefined);
+  assert.equal(syncedRootFor(path.resolve("C:/Users/sam/Documents/x.txt"), [root]), undefined);
+
+  // Windows hands these back with whatever case the registry stored.
+  assert.equal(syncedRootFor(path.join(root, "Docs", "plan.xlsx").toUpperCase(), [root]), root);
+  assert.equal(syncedRootFor(path.join(root, "a.txt"), [root.toLowerCase()]), root.toLowerCase());
+
+  // A root that survived an unset env var must not match everything.
+  assert.equal(syncedRootFor(path.resolve("C:/anywhere/at/all.txt"), ["", "   "]), undefined);
+  assert.equal(isSyncedPath(path.join(root, "a.txt"), []), false);
+
+  // Nested roots: the outer one still answers for a path under the inner.
+  const inner = path.join(root, "Shared");
+  assert.equal(syncedRootFor(path.join(inner, "deck.pptx"), [root, inner]), root);
+});
+
+test("classifyLinkTarget separates OneDrive from SharePoint, a plain URL, and a path", () => {
+  // The three shapes gotcha 1 names.
+  assert.equal(classifyLinkTarget("https://contoso-my.sharepoint.com/:x:/g/personal/sam/EaBc?e=AbC123"), "onedrive");
+  assert.equal(classifyLinkTarget("https://onedrive.live.com/edit.aspx?resid=1234"), "onedrive");
+  assert.equal(classifyLinkTarget("https://1drv.ms/x/s!AbCdEf"), "onedrive");
+  assert.equal(classifyLinkTarget("odopen://openfile?id=1234"), "onedrive");
+  assert.equal(classifyLinkTarget("ms-onedrive:openfile?id=1234"), "onedrive");
+
+  // A document library — same don't-copy property, but not OneDrive, so the
+  // form should say so rather than claim a match it does not have.
+  assert.equal(classifyLinkTarget("https://contoso.sharepoint.com/sites/Legal/Shared%20Documents/dpa.docx"), "sharepoint");
+
+  assert.equal(classifyLinkTarget("https://example.com/plan.xlsx"), "url");
+  assert.equal(classifyLinkTarget("https://sharepoint.com.evil.test/phish"), "url");
+
+  // A drive letter parses as a URL scheme, so this is the case most likely to
+  // be misread as a link.
+  assert.equal(classifyLinkTarget("C:\\Users\\sam\\OneDrive\\plan.xlsx"), "path");
+  assert.equal(classifyLinkTarget("\\\\server\\share\\plan.xlsx"), "path");
+  assert.equal(classifyLinkTarget("   "), "path");
+});
+
+test("a file in a synced folder is refused for copying, and still links in place", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-synced-"));
+  const synced = path.join(dir, "OneDrive - Contoso");
+  await fs.mkdir(path.join(synced, "Docs"), { recursive: true });
+  const src = path.join(synced, "Docs", "plan.xlsx");
+  await fs.writeFile(src, "one version", "utf8");
+
+  const vault = await Vault.init(path.join(dir, "vault"), { syncedRoots: [synced] });
+  await vault.createProject({ key: "ACME", name: "Acme rollout" });
+  const item = await vault.createItem({ project: "ACME", summary: "Has a synced doc" });
+
+  await assert.rejects(
+    () => vault.addAttachment(item.key, src, { copy: true }),
+    /synced folder .* diverges|synced folder/,
+  );
+  // The refusal has to name the way out, or it is just a wall.
+  await assert.rejects(() => vault.addAttachment(item.key, src, { copy: true }), /without copying/);
+
+  const linked = await vault.addAttachment(item.key, src, { copy: false });
+  assert.equal(linked.attachments.length, 0);
+  assert.ok(linked.links.some((l) => l.type === "file" && l.target === src));
+
+  // Nothing was copied in on the way past.
+  assert.equal(await pathExists(path.join(vault.root, "attachments", item.key)), false);
+});
+
+test("with no syncedRoots configured, copying is exactly as it was", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-unsynced-"));
+  const synced = path.join(dir, "OneDrive - Contoso");
+  await fs.mkdir(synced, { recursive: true });
+  const src = path.join(synced, "plan.xlsx");
+  await fs.writeFile(src, "one version", "utf8");
+
+  // Same layout, no roots handed in — which is the CLI and MCP server's case.
+  const vault = await Vault.init(path.join(dir, "vault"));
+  await vault.createProject({ key: "ACME", name: "Acme rollout" });
+  const item = await vault.createItem({ project: "ACME", summary: "Has a doc" });
+
+  const copied = await vault.addAttachment(item.key, src, { copy: true });
+  assert.equal(copied.attachments.length, 1);
+});
+
 test("agenda surfaces overdue work and honours cadence", async () => {
   const vault = await tmpVault();
   await vault.createItem({ project: "ACME", summary: "Late thing", dueDate: "2026-01-05" });
@@ -716,6 +812,193 @@ test("agenda's nextWeek scope covers the following Monday to Sunday", async () =
     nextWeek.find((s) => s.kind === "overdue"),
     undefined,
     "nothing is overdue relative to today in this fixture",
+  );
+});
+
+test("agenda's twoWeeks scope is one window, not two stacked ones", async () => {
+  const vault = await tmpVault();
+  // 2026-06-17 is a Wednesday, so its week runs 06-15 to 06-21 and the window
+  // to 06-28.
+  await vault.createItem({ project: "ACME", summary: "Long overdue", dueDate: "2026-01-05" });
+  await vault.createItem({ project: "ACME", summary: "Slipped", dueDate: "2026-06-16" });
+  await vault.createItem({ project: "ACME", summary: "This week", dueDate: "2026-06-19" });
+  await vault.createItem({ project: "ACME", summary: "Next week", dueDate: "2026-06-24" });
+  await vault.createItem({ project: "ACME", summary: "The week after", dueDate: "2026-06-30" });
+  await vault.createItem({ project: "ACME", summary: "Standup", cadence: "daily" });
+  await vault.createItem({ project: "ACME", summary: "Weekly report", cadence: "weekly" });
+  await vault.createItem({ project: "ACME", summary: "Month end", cadence: "monthly" });
+
+  const sections = vault.agenda("twoWeeks", "2026-06-17");
+  const due = sections.find((s) => s.kind === "due")!;
+  assert.equal(due.from, "2026-06-15", "starts at this week's Monday");
+  assert.equal(due.to, "2026-06-28", "runs to next week's Sunday, fourteen days");
+  assert.deepEqual(
+    due.items.map((i) => i.summary).sort(),
+    ["Next week", "This week"],
+    "both weeks are in, the one after is not",
+  );
+
+  assert.deepEqual(
+    sections.find((s) => s.kind === "recurring")!.items.map((i) => i.summary).sort(),
+    ["Standup", "Weekly report"],
+    "monthly cadence does not come round inside a fortnight",
+  );
+
+  // The reason this had to be a real range rather than agenda("week") merged
+  // with agenda("nextWeek") in the caller: `overdue` ignores the window's end
+  // entirely, so both of those calls return every overdue item and stacking
+  // them lists each one twice.
+  const overdue = sections.find((s) => s.kind === "overdue")!;
+  assert.deepEqual(overdue.items.map((i) => i.summary).sort(), ["Long overdue", "Slipped"]);
+  const everywhere = sections.flatMap((s) => s.items.map((i) => i.key));
+  assert.equal(
+    new Set(everywhere).size,
+    everywhere.length,
+    "no item may be counted twice across sections",
+  );
+});
+
+test("agenda's next30Days scope rolls forward from the reference date", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "Tomorrow", dueDate: "2026-06-18" });
+  await vault.createItem({ project: "ACME", summary: "Day thirty", dueDate: "2026-07-17" });
+  await vault.createItem({ project: "ACME", summary: "Day thirty-one", dueDate: "2026-07-18" });
+  await vault.createItem({ project: "ACME", summary: "Month end", cadence: "monthly" });
+
+  const sections = vault.agenda("next30Days", "2026-06-17");
+  const due = sections.find((s) => s.kind === "due")!;
+  assert.equal(due.from, "2026-06-17", "today starts its own window");
+  assert.equal(due.to, "2026-07-17");
+  assert.deepEqual(
+    due.items.map((i) => i.summary).sort(),
+    ["Day thirty", "Tomorrow"],
+    "the boundary is inclusive; the day after it is out",
+  );
+  assert.ok(
+    sections.find((s) => s.kind === "recurring")!.items.some((i) => i.summary === "Month end"),
+    "a monthly cadence comes round inside thirty days",
+  );
+
+  // The whole reason this is not 'month': late in the month the calendar
+  // period has almost nothing left, and the rolling window still reaches a
+  // month out.
+  const late = vault.agenda("next30Days", "2026-06-28").find((s) => s.kind === "due")!;
+  assert.equal(late.to, "2026-07-28");
+  assert.deepEqual(
+    late.items.map((i) => i.summary).sort(),
+    ["Day thirty", "Day thirty-one"],
+    "work in the following month is visible from the 28th, which 'month' cannot show",
+  );
+  assert.deepEqual(
+    vault.agenda("month", "2026-06-28").find((s) => s.kind === "due")!.items,
+    [],
+    "the calendar month has nothing left in it on the 28th",
+  );
+});
+
+test("long scopes band the due section, short ones do not", async () => {
+  const vault = await tmpVault();
+  const bandsOf = (scope: Parameters<typeof vault.agenda>[0], ref = "2026-06-17") =>
+    vault.agenda(scope, ref).find((s) => s.kind === "due")!.bands;
+
+  // 2026-06-17 is a Wednesday: this week is 06-15 to 06-21.
+  assert.equal(bandsOf("today"), undefined, "one day cannot be subdivided");
+  assert.equal(bandsOf("week"), undefined);
+  assert.equal(bandsOf("nextWeek"), undefined, "one week is already one band");
+
+  assert.deepEqual(bandsOf("twoWeeks"), [
+    { label: "This week", from: "2026-06-15", to: "2026-06-21" },
+    { label: "Next week", from: "2026-06-22", to: "2026-06-28" },
+  ]);
+  assert.deepEqual(bandsOf("month"), [
+    { label: "This week", from: "2026-06-15", to: "2026-06-21" },
+    { label: "Rest of the month", from: "2026-06-22", to: "2026-06-30" },
+  ]);
+  assert.deepEqual(
+    bandsOf("next30Days"),
+    [
+      { label: "This week", from: "2026-06-17", to: "2026-06-21" },
+      { label: "Next week", from: "2026-06-22", to: "2026-06-28" },
+      { label: "Later", from: "2026-06-29", to: "2026-07-17" },
+    ],
+    "the rolling window's first band starts today, not on Monday",
+  );
+
+  // Bands never carry the recurring section: those items are listed because a
+  // cadence comes round, and most have no date to band them by.
+  await vault.createItem({ project: "ACME", summary: "Standup", cadence: "daily" });
+  assert.equal(
+    vault.agenda("next30Days", "2026-06-17").find((s) => s.kind === "recurring")!.bands,
+    undefined,
+  );
+});
+
+test("bands stay inside their window and collapse when only one survives", async () => {
+  const vault = await tmpVault();
+  const bandsOf = (scope: Parameters<typeof vault.agenda>[0], ref: string) =>
+    vault.agenda(scope, ref).find((s) => s.kind === "due")!.bands;
+
+  // 2026-06-29 is the Monday of June's last week, so "this week" runs past the
+  // end of the month and there is no rest of the month to head.
+  assert.equal(
+    bandsOf("month", "2026-06-29"),
+    undefined,
+    "a single band is the section again with a second heading on it",
+  );
+
+  // July 2026 opens on a Wednesday, which is the case that exercises the
+  // clamp: on the 2nd, this week began on 06-29, in the previous month. The
+  // band starts at the 1st rather than reaching back out of its own window,
+  // and still ends on Sunday the 5th.
+  assert.deepEqual(bandsOf("month", "2026-07-02"), [
+    { label: "This week", from: "2026-07-01", to: "2026-07-05" },
+    { label: "Rest of the month", from: "2026-07-06", to: "2026-07-31" },
+  ]);
+
+  // A Sunday: this week has one day left in it, and the band says so rather
+  // than pretending the week is still ahead.
+  assert.deepEqual(bandsOf("twoWeeks", "2026-06-21"), [
+    { label: "This week", from: "2026-06-15", to: "2026-06-21" },
+    { label: "Next week", from: "2026-06-22", to: "2026-06-28" },
+  ]);
+  assert.deepEqual(
+    bandsOf("next30Days", "2026-06-21"),
+    [
+      { label: "This week", from: "2026-06-21", to: "2026-06-21" },
+      { label: "Next week", from: "2026-06-22", to: "2026-06-28" },
+      { label: "Later", from: "2026-06-29", to: "2026-07-21" },
+    ],
+    "on a Sunday the rolling window's first band is today alone",
+  );
+});
+
+test("every due item falls inside exactly one band", async () => {
+  const vault = await tmpVault();
+  // One item on each boundary the bands cut on, plus the two ends.
+  for (const due of [
+    "2026-06-17",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-28",
+    "2026-06-29",
+    "2026-07-17",
+  ]) {
+    await vault.createItem({ project: "ACME", summary: `Due ${due}`, dueDate: due });
+  }
+
+  const due = vault.agenda("next30Days", "2026-06-17").find((s) => s.kind === "due")!;
+  assert.equal(due.items.length, 6);
+
+  const claims = due.items.map(
+    (item) => due.bands!.filter((b) => item.dueDate! >= b.from && item.dueDate! <= b.to).length,
+  );
+  assert.deepEqual(claims, [1, 1, 1, 1, 1, 1], "no item is in two bands or in none");
+
+  // The bands are contiguous slices of an already date-sorted list, which is
+  // what lets a consumer render them without re-sorting.
+  assert.deepEqual(
+    due.bands!.map((b) => due.items.filter((i) => i.dueDate! >= b.from && i.dueDate! <= b.to).length),
+    [2, 2, 2],
   );
 });
 

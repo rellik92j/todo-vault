@@ -1071,6 +1071,237 @@ reason `ordering.ts` has its own: this is renderer logic where a wrong answer is
 invisible, and the wrong rows would simply be selected with nothing on screen
 looking broken.
 
+## OneDrive documents stay in OneDrive ✅ built, not yet driven
+
+Steps 3–4 of `PLAN-LINKS.md`, landed together because that plan is emphatic
+that step 3 alone ships something which looks finished and prevents nothing.
+The failure being prevented: copying a synced document into `attachments/`
+produces a second version that starts diverging the moment either is edited,
+of a file whose entire point is that there is one of it.
+
+**The rule lives in the core, the knowledge does not.** `VaultOptions.syncedRoots`
+is a list of absolute paths, empty by default, and `addAttachment` refuses
+`copy: true` from inside one. Discovering *where* OneDrive syncs is Windows-shaped
+and per-user, so `apps/desktop/src/main/synced-roots.ts` reads the
+`OneDrive`/`OneDriveCommercial`/`OneDriveConsumer` variables and falls back to
+`HKCU\Software\Microsoft\OneDrive\Accounts\*\UserFolder`, then hands the union
+in at startup. Both sources are read because they fail differently — the
+variables are missing for a process that started before OneDrive did, and the
+registry is the only place a second account reliably appears. Roots that no
+longer exist on disk are dropped, so an unlinked account cannot leave a stale
+key refusing copies from what is now an ordinary directory.
+
+**Refuse in the core, downgrade at one surface.** `addAttachment` throws, naming
+`copy: false` as the way through, so the API never quietly does something other
+than what was asked. The drop handler is the single exception: a drag carries no
+dialog in which the choice could have been made, so main links the file in place
+and the panel says so in a dismissible note. The file picker's "Copy in" *was* an
+explicit choice, so there the refusal stands and reaches the error toast intact.
+
+**No new link type, and the enum is the reason.** Adding `onedrive` to
+`LinkSchema.type` would make every item carrying one unparseable to an older
+build — `snapshot.errors`, gone from every view — and running the app against a
+globally-installed MCP server at a different version is the normal state, not an
+edge case. OneDrive links are stored as `type: url`; the row derives its
+"onedrive" chip from the target, which is the only thing the separate type would
+have bought. The same argument kills the `removeLink` collision gotcha 8 warns
+about, since there is never a second URL-shaped type to collide with.
+
+**A split the plan did not anticipate.** The proposed shape put
+`classifyLinkTarget` beside `isSyncedPath` in one core module. That cannot work:
+the sync-root comparison needs `node:path`, the renderer is sandboxed and bundles
+for Chromium, and the link form is exactly where the classifier is needed. So the
+string-only half is its own leaf entry point, `todo-vault/link-target`, importing
+nothing — the same reason `constants` and `recurrence` are separate — and
+`links.ts` keeps the path logic. Verified by grepping the built renderer bundle:
+the OneDrive hostnames are in it and `node:path` is not.
+
+**Two dead gestures now work.** Dropping a folder used to throw and fail the
+whole drop, because `addAttachment` accepts files only; directories now route to
+`folder` links. Dragging a document out of the OneDrive *web* UI used to do
+nothing at all, because `dataTransfer.files` is empty for it; `text/uri-list` is
+read when there are no files, and non-http schemes are dropped rather than stored
+as links that would be refused on click.
+
+**The suite is at 103** — 73 in the core, 30 over the app. The new ones cover
+`syncedRootFor` against nested, sibling and case-differing roots (the sibling
+case is the one a naive prefix match gets wrong: `…\OneDrive` must not swallow
+`…\OneDrive - Contoso`), `classifyLinkTarget` across all three OneDrive URL
+shapes plus a SharePoint library and a Windows path — which parses as a URL,
+drive letter as scheme, and is the case most likely to be misread —
+`addAttachment` refusing and still linking, `parseUriList`, and the two
+discovery parsers.
+
+**Discovery is proven on this machine; the gesture is not.** `discoverSyncedRoots`
+was run for real and returned `C:\Users\bisch\OneDrive`, with the environment
+variables and the registry agreeing and deduplicating to one root; a path inside
+it resolves to that root and a path outside it resolves to nothing. That was the
+seam most likely to be quietly wrong, because its failure mode is silent — a
+synced file copied in as though nothing were special about it, which is exactly
+what this exists to prevent — and `reg query`'s real output does match what
+`parseUserFolders` expects.
+
+What has *not* been done is dropping an actual file out of that folder onto the
+detail panel and reading the note, or pasting a share link into the link form
+and watching the warning behave. Both are UI paths with tests underneath them
+and no verification above them. Note also that this account is consumer OneDrive
+only — `OneDriveCommercial` is empty here — so the two-account case the registry
+fallback exists for has never actually been exercised.
+
+## Two more agenda scopes ✅ built and driven
+
+Two of the three from `IDEAS.md`: `twoWeeks` (this week and next, as one
+fourteen-day window) and `next30Days` (rolling, today plus thirty). `nextMonth`
+was deliberately left out and stays in `IDEAS.md`, which now holds only it.
+
+**The list became a constant, which is the part worth keeping.** The idea entry
+counted six places where the `AgendaScope` union was retyped by hand with
+nothing forcing them to agree, and it was right — but paying that tax twice more
+was the wrong move when the fix is smaller than the tax. `AGENDA_SCOPES` now
+lives in `constants.ts` beside `ITEM_TYPES` and `STATUSES`, `AgendaScope` is
+`(typeof AGENDA_SCOPES)[number]`, and every other site imports rather than
+restates: `mcp-server.ts` does `z.enum(AGENDA_SCOPES)` exactly as it already did
+for the other enums, `shared/api.ts` aliases `AgendaSection["scope"]`, and
+`cli.ts` uses the type for both the argument and the phrase record. `constants.ts`
+is the right home rather than `vault.ts` because the renderer's `<select>` and
+the zod enum both need the values and neither can import `vault.ts` — that file
+pulls `node:fs` into a browser bundle.
+
+The payoff is not tidiness, it is that `ranges` is now `Record<AgendaScope, …>`:
+a scope in the array without a range fails the typecheck instead of arriving as
+`undefined` and dying in a destructure. That failure mode was reachable from the
+CLI until now — `vault agenda nextmonth` threw a `TypeError` about destructuring
+undefined. It is checked against `AGENDA_SCOPES` and names the six valid scopes
+instead.
+
+**`twoWeeks` is one range, not two stacked.** The trap the idea entry called
+out, restated where it can bite: `overdue` is `open.filter(dueDate < reference)`
+and does not read `to` at all, so `agenda("week")` and `agenda("nextWeek")`
+return identical overdue lists and a caller-side merge shows every overdue item
+twice. The dedup — `alreadyListed`, and overdue winning the tie against an item
+due earlier in the same window — only holds inside one call. So this is a real
+entry in `ranges`, `startOfWeek(reference)` to `+13`, and the test asserts both
+the fourteen-day span and that no key appears in two sections.
+
+**`next30Days` earns its place against `month` at the end of the month.** Both
+carry `["daily", "weekly", "monthly"]` and on the 1st they nearly agree, which
+is why the test uses the 28th: `month` has three days left and returns nothing,
+while the rolling window still reaches a month out and finds the work. The MCP
+description says this in as many words, because "what's coming up in the next
+month" and "what's left this month" are the same sentence to a model otherwise.
+
+Neither scope needed a change to `isSettledForWindow`. Both put `reference`
+inside their own window — `next30Days` at its start, `twoWeeks` in its first
+half — which is the already-proven case, and neither inherits the
+`cadencePeriod` subtlety that makes `nextMonth` the awkward one. That analysis
+survives intact in `IDEAS.md` for whoever builds it.
+
+**The suite is at 105** — 75 in the core, 30 over the app. Two new tests:
+`twoWeeks`'s span, its cadence set (monthly does not come round inside a
+fortnight), and the no-double-count assertion; `next30Days`'s inclusive
+thirty-day boundary, that a monthly cadence recurs inside it, and the
+end-of-month divergence from `month` in both directions.
+
+**Driven at the CLI and in the app.** `vault agenda twoWeeks` and
+`vault agenda next30Days` were run against the example vault and their headers,
+ranges and sections read correctly — "Due this week and next (2026-08-03 to
+2026-08-16)", "Due in the next 30 days (2026-08-03 to 2026-09-02)" — and the
+unknown-scope error was triggered on purpose. Both new `<option>`s were then
+picked from the dropdown in a running window, and their `SCOPE_PHRASE` headings
+render as "Due this week and next" and "Due in the next 30 days" with the
+matching "Recurring …" below. One thing to know if the typecheck ever seems to
+lie: the desktop workspace resolves `todo-vault` through `packages/core/dist`,
+so a change to `constants.ts` does not reach it until
+`npm run build -w todo-vault` has run — the first typecheck of this change
+failed for exactly that reason and not for any fault in the code.
+
+## A long agenda window subdivides ✅ built and driven
+
+The complaint behind it: `next30Days` and `month` return a flat list, and a flat
+list of fifteen dated items is not a month — it is fifteen dates the reader has
+to hold in their head to see the shape of.
+
+**Ranges, not groups.** `AgendaSection.bands?: { label, from, to }[]`, present on
+`due` and only for the scopes long enough to want it. It carries no items:
+`items` stays one flat list and a band is the slice of it inside that range.
+That works because `sortByWorkOrder` compares due dates before anything else and
+everything in a `due` section has one, so the list is already in date order and
+a band is a contiguous run — nothing re-sorts, and appending the bands back
+together reproduces the order the section already had, which is what leaves the
+desktop keyboard walk untouched. The alternative — bands carrying their own
+items — would have doubled an agenda payload the MCP server has to fit in 24k
+characters, to say something every consumer can already derive.
+
+The compatibility property is the point of the shape: a consumer that ignores
+`bands` reads exactly the agenda it read before they existed, so the CLI's
+`--json`, `SCHEMA.md`'s "up to three sections", and the section `kind` all still
+mean what they meant.
+
+**Decaying resolution, not one band per week.** `twoWeeks` gets This week /
+Next week, `month` gets This week / Rest of the month, `next30Days` gets This
+week / Next week / Later. The rejected design was a band per calendar week,
+which sounds more uniform and is not: a thirty-day window opening on a Wednesday
+touches six calendar weeks with a partial one at each end, spending six headings
+to repeat what the date beside each row already said. These are two or three
+whatever day it is, and the first is always the current week because that is the
+horizon that can be acted on. `twoWeeks` is the two-band case of the same rule
+rather than a rule of its own, so "This week" means one thing everywhere.
+
+**Two edges that needed deciding rather than falling out.** The first band
+starts at the current week's Monday, not at the window's own `from` — they
+differ only for `month`, where a band running from the 1st would be a nine-day
+"this week" on the 3rd. Nothing is lost, because anything due before the
+reference date is overdue and left the section already. And when only one band
+survives clipping — the last week of a month, where "this week" has swallowed
+what remains — `bandsForWindow` returns `undefined` rather than one band, since
+a single band is the section again with a second heading on it.
+
+**Where the renderer's half lives.** `groupIntoBands` went into `ordering.ts`
+beside `backlogOrder` and `boardLanes`, not into `Agenda.tsx`, so the desktop
+suite can test it — that file is where the pure "how do rows arrange" functions
+live precisely because their failures are invisible on screen. It renders each
+group as a `Fragment`, so an unbanded section produces exactly the DOM it did
+before, and it places a key no band covers in the last band rather than skipping
+it: a row in a slightly wrong band is a display bug, a row silently dropped off
+the agenda is a missed deadline.
+
+**Empty bands are dropped**, matching what `populated` already does to an
+emptied section. The cost is real and worth writing down: a clear week now says
+nothing rather than saying it is clear. What partly covers it is that the
+surviving heading still narrows the claim — a `next30Days` agenda showing only
+"This week" is telling you the next three weeks are empty.
+
+**The suite is at 114** — 78 core, 36 desktop. Core: which scopes band and which
+do not, the clipping at both a month's end and its ragged start, a Sunday
+reference where "this week" is one day, and that every due item is claimed by
+exactly one band. Desktop: the contiguous cut, order preservation, the empty
+band dropping, and both fallbacks — an uncovered key and an item missing from
+the map — landing rather than vanishing.
+
+**Driven at the CLI and in the app.** A scratch vault with due dates spread
+across all three bands was run through `twoWeeks`, `month` and `next30Days` at
+the CLI, each printing its own shape, and then opened in the desktop app with
+each scope picked from the dropdown. The headings render as designed: band
+titles a step down from the section title, one note per section rather than per
+band, and each band its own rows card. `month` showed six items to
+`next30Days`'s seven — the 1 September item correctly outside the calendar
+month — and its first band read `2026-08-03 → 2026-08-09` under a section
+reading `2026-08-01 → 2026-08-31`, which is the Monday clamp visible on screen.
+The example vault exercised the empty-band path from the other direction:
+everything in it falls in one week, so the two later bands printed nothing at
+all.
+
+Two notes for whoever drives it next, because both cost time here. The desktop
+app's userData is **nested**: the package is `@todo-vault/desktop`, and Electron
+turns that scoped name into `%APPDATA%\@todo-vault\desktop\`, so the
+`settings.json` sitting directly under `%APPDATA%\@todo-vault\` is a leftover
+that is never read — editing it to repoint `vaultRoot` changes nothing and
+looks like it should have. And a PowerShell screenshot driver must be
+`SetProcessDPIAware` and must pick the Electron window by largest area rather
+than by title: while a native `<select>` popup is open the main window reports
+an empty title, and the obvious fallback of "first window handle" grabs a 0x0
+helper and captures nothing.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
@@ -1078,7 +1309,7 @@ action. Also implement `vault jira discover`: both the README and a warning
 string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
 subcommand — the only two `jira` subcommands are `csv` and the default plan.
 
-## `reporter` — who asked for it, surfaced in the app
+## `reporter` — who asked for it, surfaced in the app ✅ built and driven
 
 Promoted out of IDEAS.md. The field already exists everywhere except the place
 you would actually use it: `ItemFrontmatterSchema`, `CreateItemInput` and
@@ -1427,10 +1658,11 @@ but left `due` and `overdue` double-listing the same three items.
 **`vault jira discover` still does not exist.** Both the README and a warning
 string inside `jira.ts` tell you to run it. Phase 5.
 
-**The OneDrive half of `PLAN-LINKS.md` is designed and not built.** Links and
-attachments open, which was steps 1–2; a synced document can still be copied into
-`attachments/` and fork from the original, which is what steps 3–4 exist to
-prevent.
+**The OneDrive half of `PLAN-LINKS.md` is built** — steps 3–4, landed together.
+A file inside a discovered sync root can no longer be copied into
+`attachments/`. What remains from that plan is step 5's other half: the attach
+dialog is still file-only, so a `folder` link is created by dropping a
+directory or typing the path, not by picking one.
 
 **`reporter` is not pushed to Jira**, and editing it does not even mark an item as
 drifted — see the reporter section above for why that is a decision to make

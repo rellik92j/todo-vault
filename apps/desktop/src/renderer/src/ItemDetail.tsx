@@ -9,9 +9,11 @@ import {
   type Status,
 } from "todo-vault/constants";
 import { isTickedFor, todayIso } from "todo-vault/recurrence";
+import { classifyLinkTarget } from "todo-vault/link-target";
 import type { Item } from "todo-vault";
 import type { Result, VaultSnapshot } from "@shared/api";
 
+import { parseUriList } from "./drops";
 import {
   EditableDate,
   EditableList,
@@ -45,6 +47,7 @@ export function ItemDetail({
   onSelect,
   onDelete,
   mutate,
+  attachPaths,
 }: {
   item: Item;
   /** Everything this window admits exists, for the parent picker to choose from. */
@@ -62,6 +65,12 @@ export function ItemDetail({
   onSelect: (key: string) => void;
   onDelete: (item: Item) => void;
   mutate: (call: () => Promise<Result<VaultSnapshot | null>>) => Promise<string | null>;
+  /** Dropped paths, which main may link rather than copy — see `onDrop`. */
+  attachPaths: (
+    key: string,
+    paths: string[],
+    copy: boolean,
+  ) => Promise<{ error: string | null; linkedInstead: string[] }>;
 }): React.JSX.Element {
   const [related, setRelated] = useState<{
     children: Item[];
@@ -76,6 +85,12 @@ export function ItemDetail({
   const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [dropping, setDropping] = useState(false);
+  /**
+   * What a drop did, when that differs from what it looked like it would do.
+   * Not an error, so it does not belong on the error banner; dismissible,
+   * because it is a statement rather than a question.
+   */
+  const [dropNote, setDropNote] = useState<string | null>(null);
   const [editingDescription, setEditingDescription] = useState(false);
   const [sourceDescription, setSourceDescription] = useState(false);
 
@@ -107,6 +122,9 @@ export function ItemDetail({
   useEffect(() => {
     setEditingDescription(false);
     setSourceDescription(false);
+    // The note describes a drop onto *this* item, so it must not follow the
+    // panel to the next one.
+    setDropNote(null);
   }, [item.key]);
 
   const patch = (fields: Record<string, unknown>): void => {
@@ -131,13 +149,86 @@ export function ItemDetail({
   // impossible rather than merely reported.
   const statusOptions = [item.status, ...legalTransitions(item.status)] as Status[];
 
+  /**
+   * What to say about a pasted OneDrive link, if anything.
+   *
+   * A warning and never a refusal. The hostname sniff is a heuristic — a
+   * tenant can sit on a vanity domain, and `contoso.sharepoint.com` without
+   * the `-my` is a document library rather than OneDrive — so a wrong silent
+   * rule would block links that are perfectly good. The link is stored as
+   * `url` either way; this only decides whether to say the guess disagrees.
+   */
+  const oneDriveWarning = useMemo(() => {
+    if (linkDraft.type !== "onedrive") return null;
+    const target = linkDraft.target.trim();
+    if (!target) return null;
+
+    switch (classifyLinkTarget(target)) {
+      case "onedrive":
+        return null;
+      case "sharepoint":
+        return "That is a SharePoint library rather than OneDrive. The same rule applies — it stays where it is — so this is fine to add.";
+      case "path":
+        return "That is a filesystem path, not a link. Paste the web link from OneDrive's Share menu, or use the file type to point at the synced copy.";
+      default:
+        return "That host does not look like OneDrive. Adding it is fine — it is stored as an ordinary url link either way.";
+    }
+  }, [linkDraft.type, linkDraft.target]);
+
+  /**
+   * Three kinds of drag land here, and before this only the first worked.
+   *
+   * Files from Explorer arrive as `dataTransfer.files` and are copied in —
+   * except when they live in a OneDrive or SharePoint folder, where main links
+   * them in place instead. That is a different outcome from the one the
+   * gesture implies, so it is stated rather than assumed: `dropNote` says what
+   * happened and why.
+   *
+   * A folder carries a path that is not a file; main routes it to a `folder`
+   * link, which used to throw and fail the whole drop.
+   *
+   * A document dragged out of the OneDrive web UI carries no file at all —
+   * just a URL — and used to do nothing whatsoever.
+   */
   const onDrop = (event: React.DragEvent): void => {
     event.preventDefault();
     setDropping(false);
+    setDropNote(null);
+
     const files = Array.from(event.dataTransfer.files);
-    if (!files.length) return;
-    const paths = window.vault.pathsForFiles(files);
-    void mutate(() => window.vault.attachPaths(item.key, paths, true));
+    if (files.length) {
+      const paths = window.vault.pathsForFiles(files);
+      void attachPaths(item.key, paths, true).then(({ error, linkedInstead }) => {
+        if (error || !linkedInstead.length) return;
+        const names = linkedInstead.map((p) => p.split(/[\\/]/).pop() ?? p);
+        setDropNote(
+          `${names.join(", ")} ${names.length === 1 ? "is" : "are"} in a synced folder, so ` +
+            `${names.length === 1 ? "it was" : "they were"} linked in place rather than copied — ` +
+            `one version, still owned by OneDrive.`,
+        );
+      });
+      return;
+    }
+
+    const urls = parseUriList(event.dataTransfer.getData("text/uri-list"));
+    if (!urls.length) return;
+    void (async () => {
+      for (const url of urls) {
+        // Stored as `type: url`, whatever the host: a separate link type would
+        // be an enum value older builds cannot parse. See SCHEMA.md.
+        const error = await mutate(() =>
+          window.vault.addLink(item.key, { type: "url", target: url }),
+        );
+        if (error) return;
+      }
+      const fromOneDrive = urls.filter((u) => classifyLinkTarget(u) !== "url");
+      if (fromOneDrive.length) {
+        setDropNote(
+          `Linked ${fromOneDrive.length === 1 ? "the document" : `${fromOneDrive.length} documents`} ` +
+            `where ${fromOneDrive.length === 1 ? "it lives" : "they live"} — nothing was copied into the vault.`,
+        );
+      }
+    })();
   };
 
   return (
@@ -414,7 +505,12 @@ export function ItemDetail({
                 if (!linkDraft.target.trim()) return;
                 void mutate(() =>
                   window.vault.addLink(item.key, {
-                    type: linkDraft.type,
+                    // "onedrive" is a mode of this form, not a link type. It
+                    // stores `url`, because `LinkSchema.type` is a zod enum and
+                    // an older build reading a value it does not know fails to
+                    // parse the whole item — it would vanish from every view
+                    // rather than degrade. See SCHEMA.md.
+                    type: linkDraft.type === "onedrive" ? "url" : linkDraft.type,
                     target: linkDraft.target.trim(),
                     label: linkDraft.label.trim() || undefined,
                   }),
@@ -430,14 +526,20 @@ export function ItemDetail({
                 value={linkDraft.type}
                 onChange={(e) => setLinkDraft({ ...linkDraft, type: e.target.value })}
               >
-                {["url", "item", "file", "folder", "outlook", "note"].map((t) => (
+                {["url", "onedrive", "item", "file", "folder", "outlook", "note"].map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
                 ))}
               </select>
               <input
-                placeholder={linkDraft.type === "item" ? "ACME-42" : "target"}
+                placeholder={
+                  linkDraft.type === "item"
+                    ? "ACME-42"
+                    : linkDraft.type === "onedrive"
+                      ? "paste the OneDrive share link"
+                      : "target"
+                }
                 value={linkDraft.target}
                 onChange={(e) => setLinkDraft({ ...linkDraft, target: e.target.value })}
               />
@@ -449,12 +551,13 @@ export function ItemDetail({
               <button className="btn btn-primary" type="submit">
                 Add
               </button>
+              {oneDriveWarning && <div className="field-note">{oneDriveWarning}</div>}
             </form>
           )}
 
           {item.links.map((link, index) => (
             <div className="link-row" key={`${link.type}-${link.target}-${index}`}>
-              <span className="link-type">{link.type}</span>
+              <span className="link-type">{linkTypeLabel(link)}</span>
               <span className="link-target">
                 {link.type === "item" ? (
                   <button className="link-btn" onClick={() => onSelect(link.target)}>
@@ -517,6 +620,15 @@ export function ItemDetail({
             </button>
           </h3>
 
+          {dropNote && (
+            <div className="field-note drop-note">
+              {dropNote}
+              <button className="add-btn" onClick={() => setDropNote(null)}>
+                dismiss
+              </button>
+            </div>
+          )}
+
           {item.attachments.map((attachment) => (
             <div className="link-row" key={attachment.path}>
               <span className="link-type">file</span>
@@ -540,7 +652,8 @@ export function ItemDetail({
           ))}
           {item.attachments.length === 0 && (
             <div className="field-note">
-              None. Drop files anywhere on this panel to copy them in.
+              None. Drop files anywhere on this panel to copy them in — folders and
+              OneDrive documents are linked where they are instead.
             </div>
           )}
         </div>
@@ -773,6 +886,21 @@ function ParentField({
       )}
     </span>
   );
+}
+
+/**
+ * What to call a link in its type chip.
+ *
+ * OneDrive and SharePoint links are stored as `url` — deliberately, so an
+ * older build can still parse the item — which leaves the row calling a
+ * OneDrive document "url". Deriving the label from the target is the whole
+ * benefit a separate link type would have bought, without the enum value that
+ * makes the item unreadable elsewhere.
+ */
+function linkTypeLabel(link: { type: string; target: string }): string {
+  if (link.type !== "url") return link.type;
+  const kind = classifyLinkTarget(link.target);
+  return kind === "onedrive" || kind === "sharepoint" ? kind : link.type;
 }
 
 function formatBytes(bytes: number): string {

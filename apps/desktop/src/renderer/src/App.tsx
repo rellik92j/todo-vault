@@ -905,7 +905,9 @@ export function App(): React.JSX.Element {
               <option value="today">Today</option>
               <option value="week">This week</option>
               <option value="nextWeek">Next week</option>
+              <option value="twoWeeks">This week and next</option>
               <option value="month">This month</option>
+              <option value="next30Days">Next 30 days</option>
             </select>
           ) : (
             <>
@@ -1158,6 +1160,7 @@ export function App(): React.JSX.Element {
           onSelect={open}
           onDelete={handleDelete}
           mutate={vault.mutate}
+          attachPaths={vault.attachPaths}
         />
       )}
 

@@ -16,6 +16,7 @@ import { readSettings, rememberVault } from "./settings.js";
 import { clearApiKey, secretStatus, setApiKey } from "./secrets.js";
 import { CLAUDE_MODEL, draftItem } from "./claude.js";
 import { attachZoomShortcuts, restoreZoom } from "./zoom.js";
+import { discoverSyncedRoots } from "./synced-roots.js";
 
 const service = new VaultService();
 let mainWindow: BrowserWindow | undefined;
@@ -297,8 +298,10 @@ function registerHandlers(): void {
   });
 
   handle(CHANNELS.attachPaths, async (key: string, paths: string[], copy: boolean) => {
-    await service.attachPaths(key, paths, copy);
-    return service.snapshot();
+    // `downgradeSynced` is on here and off in the dialog handler above: see
+    // VaultService.attachPaths for why a drop and a picker differ.
+    const { linkedInstead } = await service.attachPaths(key, paths, copy, true);
+    return { snapshot: await service.snapshot(), linkedInstead };
   });
 
   handle(CHANNELS.deleteItem, async (key: string, cascade: boolean) => {
@@ -481,6 +484,16 @@ async function claudeStatus(): Promise<ClaudeStatus> {
 
 app.whenReady().then(async () => {
   registerHandlers();
+
+  // Before any vault opens, so the first one already knows which folders it
+  // must not copy out of. Discovery reads the environment and shells out to
+  // `reg` once; failure is silent and simply means no folder is treated as
+  // synced, which is how the app behaved before this existed.
+  try {
+    service.useSyncedRoots(await discoverSyncedRoots());
+  } catch (err) {
+    console.error("[main] could not discover synced folders:", err);
+  }
 
   // Reopen whatever was open last, if it is still a vault.
   const { vaultRoot } = await readSettings();

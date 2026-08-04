@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 
 import chokidar, { type FSWatcher } from "chokidar";
 import {
+  syncedRootFor,
   Vault,
   type BulkUpdateResult,
   type DeleteResult,
@@ -14,6 +15,15 @@ import {
 } from "todo-vault";
 
 import type { AgendaScope, AgendaView, ProjectSummary, VaultSnapshot } from "../shared/api.js";
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.stat(target)).isDirectory();
+  } catch {
+    // A missing path is not a directory; addAttachment reports it properly.
+    return false;
+  }
+}
 
 /**
  * Owns the single Vault instance, the file watcher, and snapshot production.
@@ -34,17 +44,35 @@ export class VaultService extends EventEmitter {
     return this.vault !== undefined;
   }
 
+  /**
+   * OneDrive/SharePoint sync roots, discovered once at startup and handed to
+   * every Vault this service opens. Empty until `useSyncedRoots` is called, so
+   * a vault opened before discovery finishes simply behaves as it did before.
+   */
+  private syncedRoots: string[] = [];
+
   /** Auto-commit is always on. Deletes go to .trash regardless, but history is free. */
-  private static options = { git: true } as const;
+  private get options(): { git: true; syncedRoots: string[] } {
+    return { git: true, syncedRoots: this.syncedRoots };
+  }
+
+  useSyncedRoots(roots: string[]): void {
+    this.syncedRoots = roots;
+  }
+
+  /** Which sync root holds this path, if any — the drop handler asks before copying. */
+  syncedRootFor(target: string): string | undefined {
+    return syncedRootFor(target, this.syncedRoots);
+  }
 
   async open(root: string): Promise<VaultSnapshot> {
-    const vault = await Vault.open(root, VaultService.options);
+    const vault = await Vault.open(root, this.options);
     await this.attach(vault);
     return this.snapshot();
   }
 
   async init(root: string): Promise<VaultSnapshot> {
-    const vault = await Vault.init(root, VaultService.options);
+    const vault = await Vault.init(root, this.options);
     await this.attach(vault);
     return this.snapshot();
   }
@@ -167,6 +195,7 @@ export class VaultService extends EventEmitter {
         scope: section.scope,
         from: section.from,
         to: section.to,
+        bands: section.bands,
         keys: section.items.map((i) => i.key),
       }));
   }
@@ -255,13 +284,43 @@ export class VaultService extends EventEmitter {
     return this.write((v) => v.removeLink(key, target));
   }
 
-  async attachPaths(key: string, paths: string[], copy: boolean): Promise<Item> {
+  /**
+   * Attach several paths at once, routing each one by what it actually is.
+   *
+   * `downgradeSynced` is the difference between a drop and the file picker.
+   * A drop is a gesture with no dialog behind it, so a file living in OneDrive
+   * is linked in place and the renderer says so — failing the whole drop over
+   * something the user could not have known would be hostile. The picker had
+   * an explicit "Copy in" button, so there the core's refusal is the right
+   * answer and travels to the error toast unchanged.
+   *
+   * Directories are routed to `folder` links rather than thrown at
+   * `addAttachment`, which only accepts files — before this, dropping a folder
+   * failed the entire drop (gotcha 9).
+   */
+  async attachPaths(
+    key: string,
+    paths: string[],
+    copy: boolean,
+    downgradeSynced = false,
+  ): Promise<{ item: Item; linkedInstead: string[] }> {
     return this.write(async (v) => {
       let item = v.getItem(key);
+      const linkedInstead: string[] = [];
+
       for (const source of paths) {
-        item = await v.addAttachment(key, source, { copy });
+        const abs = path.resolve(source);
+        if (await isDirectory(abs)) {
+          item = await v.addLink(key, { type: "folder", target: abs, label: path.basename(abs) });
+          continue;
+        }
+
+        const synced = copy && downgradeSynced && this.syncedRootFor(abs) !== undefined;
+        if (synced) linkedInstead.push(abs);
+        item = await v.addAttachment(key, abs, { copy: copy && !synced });
       }
-      return item;
+
+      return { item, linkedInstead };
     });
   }
 

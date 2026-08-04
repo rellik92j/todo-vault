@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { syncedRootFor } from "./links.js";
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 import {
   BulkUpdateInput,
@@ -19,6 +20,7 @@ import {
   TRANSITIONS,
   UpdateItemInput,
   UpdateProjectInput,
+  type AgendaScope,
   type Cadence,
   type Item,
   type Project,
@@ -55,10 +57,37 @@ export class VaultError extends Error {
 export interface VaultOptions {
   /** Auto-commit every write to git, giving you free undo and an audit trail. */
   git?: boolean;
+  /**
+   * Absolute paths whose contents must never be copied into the vault —
+   * OneDrive and SharePoint sync folders, whose whole point is that the
+   * document has exactly one version.
+   *
+   * Empty by default, so the CLI and MCP server behave exactly as before
+   * unless something configures this. Finding these roots is Windows-shaped
+   * and per-user, so the desktop main process discovers them and passes them
+   * in rather than the core going looking.
+   */
+  syncedRoots?: string[];
 }
 
 interface Counters {
   [projectKey: string]: number;
+}
+
+/**
+ * A subdivision of a section's window, for display only.
+ *
+ * Ranges rather than items on purpose. `items` below is already sorted by due
+ * date — `sortByWorkOrder` compares dates before anything else, and everything
+ * in a `due` section has one — so a band is a contiguous slice a consumer finds
+ * by filtering on `dueDate`. Carrying the items again instead would duplicate
+ * the whole section in a payload the MCP server has to fit inside 24k
+ * characters, to say something the caller can already work out.
+ */
+export interface AgendaBand {
+  label: string;
+  from: string;
+  to: string;
 }
 
 export interface AgendaSection {
@@ -69,9 +98,21 @@ export interface AgendaSection {
    * the recurring items were also due, which they are not.
    */
   kind: "overdue" | "due" | "recurring";
-  scope: "today" | "week" | "nextWeek" | "month";
+  scope: AgendaScope;
   from?: string;
   to?: string;
+  /**
+   * Present on `due` only, and only for the scopes long enough to need it.
+   * Absent everywhere else, so a consumer that ignores this reads exactly the
+   * agenda it read before bands existed.
+   *
+   * Not on `recurring`: those items are listed because a cadence comes round
+   * inside the window, and most carry no due date at all, so there is nothing
+   * to band them by. Not on `overdue` either — it is anchored to "before the
+   * reference date" rather than to the window, and subdividing "late" by how
+   * late buries the oldest item at the bottom.
+   */
+  bands?: AgendaBand[];
   items: Item[];
 }
 
@@ -380,10 +421,7 @@ export class Vault {
     );
   }
 
-  agenda(
-    scope: "today" | "week" | "nextWeek" | "month",
-    reference = todayIso(),
-  ): AgendaSection[] {
+  agenda(scope: AgendaScope, reference = todayIso()): AgendaSection[] {
     this.assertLoaded();
     const open = [...this.items.values()].filter((i) => !DONE_STATUSES.includes(i.status));
 
@@ -391,7 +429,9 @@ export class Vault {
       .filter((i) => i.dueDate && i.dueDate < reference)
       .sort(sortByWorkOrder);
 
-    const ranges: Record<typeof scope, { from: string; to: string; cadences: Cadence[] }> = {
+    // Every scope in AGENDA_SCOPES must appear here or this stops compiling,
+    // which is the whole reason the list is a shared constant.
+    const ranges: Record<AgendaScope, { from: string; to: string; cadences: Cadence[] }> = {
       today: { from: reference, to: reference, cadences: ["daily"] },
       week: {
         from: startOfWeek(reference),
@@ -403,9 +443,30 @@ export class Vault {
         to: addDays(startOfWeek(reference), 13),
         cadences: ["daily", "weekly"],
       },
+      // One fourteen-day range, not two seven-day ones stacked. Building this
+      // in the UI from agenda("week") + agenda("nextWeek") is the tempting
+      // shortcut and it is wrong: `overdue` is computed against `reference` and
+      // ignores `to` entirely, so both calls return the same overdue items and
+      // the union lists each of them twice. The dedup below — and overdue
+      // winning the tie for an item due earlier this week — only holds inside
+      // a single call.
+      twoWeeks: {
+        from: startOfWeek(reference),
+        to: addDays(startOfWeek(reference), 13),
+        cadences: ["daily", "weekly"],
+      },
       month: {
         from: startOfMonth(reference),
         to: endOfMonth(reference),
+        cadences: ["daily", "weekly", "monthly"],
+      },
+      // Rolling, not calendar: today sits at the start of its own window rather
+      // than somewhere in the middle of one, so a due date three weeks out is
+      // visible here on any day of the month, which is what "next 30 days"
+      // means and what `month` cannot say on the 28th.
+      next30Days: {
+        from: reference,
+        to: addDays(reference, 30),
         cadences: ["daily", "weekly", "monthly"],
       },
     };
@@ -441,7 +502,14 @@ export class Vault {
     if (overdue.length) {
       sections.push({ kind: "overdue", scope, to: reference, items: overdue });
     }
-    sections.push({ kind: "due", scope, from, to, items: due });
+    sections.push({
+      kind: "due",
+      scope,
+      from,
+      to,
+      bands: bandsForWindow(scope, reference, from, to),
+      items: due,
+    });
     if (recurring.length) {
       sections.push({ kind: "recurring", scope, from, to, items: recurring });
     }
@@ -788,6 +856,10 @@ export class Vault {
    * Attach a file. `copy: true` brings it into the vault (good for small
    * documents you want versioned); `copy: false` records a pointer to where it
    * already lives (good for a 200MB video or a file on a network share).
+   *
+   * Copying out of a synced folder is refused rather than quietly downgraded —
+   * see the check below for why the honest failure lives here and the smooth
+   * gesture lives in the caller.
    */
   async addAttachment(
     key: string,
@@ -806,6 +878,26 @@ export class Vault {
     }
     if (!stat.isFile()) {
       throw new VaultError(`${absSource} is not a file`);
+    }
+
+    // A file in a OneDrive or SharePoint folder already has exactly one
+    // authoritative version, which is the reason it is there. Copying it into
+    // the vault creates a second one that starts diverging the moment either
+    // is edited — the failure this rule exists to prevent.
+    //
+    // Refusing rather than silently downgrading to `copy: false` keeps the API
+    // honest: a caller that asked for a copy and got a link should be told.
+    // Callers that want the gesture to stay smooth — the app's drop handler —
+    // catch this shape by checking first and passing `copy: false` themselves,
+    // so the downgrade is visible at the surface where a person can see it.
+    if (copy) {
+      const syncedRoot = syncedRootFor(absSource, this.options.syncedRoots ?? []);
+      if (syncedRoot) {
+        throw new VaultError(
+          `${path.basename(absSource)} is inside a synced folder (${syncedRoot}), where it already has one authoritative version. ` +
+            `Copying it into the vault would create a second one that diverges — attach it without copying to link it where it lives.`,
+        );
+      }
     }
 
     if (!copy) {
@@ -1852,6 +1944,71 @@ const PRIORITY_RANK: Record<string, number> = {
 };
 
 /** Overdue and high priority first, then by due date, then by key. */
+/**
+ * How a long window subdivides for display: fine-grained near, coarse far.
+ *
+ * The rejected alternative was one band per calendar week, which sounds
+ * uniform and is not: a thirty-day window opening on a Wednesday touches six
+ * calendar weeks with a partial one at each end, so it spends six headings to
+ * tell the reader what the date already beside each row said. These shapes are
+ * fixed at two or three bands whatever day it is, and the first is always the
+ * current week, because that is the horizon someone can actually act on.
+ *
+ * `twoWeeks` gets the two-band case rather than a rule of its own, so "This
+ * week" and "Next week" mean the same thing in every scope carrying them.
+ */
+function bandsForWindow(
+  scope: AgendaScope,
+  reference: string,
+  from: string,
+  to: string,
+): AgendaBand[] | undefined {
+  const thisWeekEnd = addDays(startOfWeek(reference), 6);
+  const nextWeekEnd = addDays(thisWeekEnd, 7);
+
+  // Label and unclipped end. Ascending, and the last one is the window itself.
+  const shape: Partial<Record<AgendaScope, [string, string][]>> = {
+    twoWeeks: [
+      ["This week", thisWeekEnd],
+      ["Next week", to],
+    ],
+    month: [
+      ["This week", thisWeekEnd],
+      ["Rest of the month", to],
+    ],
+    next30Days: [
+      ["This week", thisWeekEnd],
+      ["Next week", nextWeekEnd],
+      ["Later", to],
+    ],
+  };
+  const shapeForScope = shape[scope];
+  if (!shapeForScope) return undefined;
+
+  // Start at the current week, not at the window's own `from`. They differ only
+  // for `month`, where `from` is the 1st: labelling the 1st-to-9th "This week"
+  // on the 3rd would be a nine-day week. Nothing is lost by skipping those
+  // days, because an item due before the reference date is overdue and was
+  // partitioned out of this section already.
+  const weekStart = startOfWeek(reference);
+  let cursor = from > weekStart ? from : weekStart;
+
+  const bands: AgendaBand[] = [];
+  for (const [label, rawEnd] of shapeForScope) {
+    const end = rawEnd > to ? to : rawEnd;
+    // Skipped rather than emitted empty: in the last week of a month, "This
+    // week" has already swallowed the remaining window and there is no rest of
+    // the month left to head.
+    if (cursor > end) continue;
+    bands.push({ label, from: cursor, to: end });
+    cursor = addDays(end, 1);
+  }
+
+  // One band is not a subdivision, it is the section it sits in with a second
+  // heading on it.
+  return bands.length > 1 ? bands : undefined;
+}
+
 function sortByWorkOrder(a: Item, b: Item): number {
   const aDone = DONE_STATUSES.includes(a.status) ? 1 : 0;
   const bDone = DONE_STATUSES.includes(b.status) ? 1 : 0;
