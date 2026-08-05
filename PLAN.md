@@ -1747,31 +1747,65 @@ apart. `isTransientRenameError` is exported and tested; a real lock is not
 simulated, because doing so on Windows is flaky, and that is the honest coverage
 boundary.
 
-## The `npm audit` finding that is not reachable
+## The `npm audit` findings, and why the unreachable ones got fixed anyway
 
-`npm audit --omit=dev` reports GHSA-frvp-7c67-39w9 — path traversal in
-`@hono/node-server`'s `serve-static` on Windows via an encoded backslash
-(`%5C`), fixed in 2.0.5. It arrives transitively: `@modelcontextprotocol/sdk`
-1.29.0 depends on `@hono/node-server` `^1.19.9`, which resolves to 1.19.15.
+`npm audit --omit=dev` grew to four findings, every one of them arriving through
+`@modelcontextprotocol/sdk` — the only runtime dependency `packages/core` has:
 
-**It is not reachable from this codebase, on two independent counts.** The SDK
-never imports `serve-static` at all — that is a separate subpath export
-(`@hono/node-server/serve-static`), and the SDK's only use of the package is
-`getRequestListener` from the package root. And that single import lives in
-`server/streamableHttp.js`, which is not in the transitive import closure of
-`server/mcp.js` plus `server/stdio.js` — the 16-file closure `mcp-server.ts`
-actually pulls in reaches nothing outside `ajv` and `zod`. The server speaks
-stdio; no HTTP listener is ever constructed, let alone a static file handler.
+| Package | Sev | Advisory | What it is |
+|---|---|---|---|
+| `@hono/node-server` | moderate | GHSA-frvp-7c67-39w9 | Path traversal in `serve-static` on Windows via an encoded backslash (`%5C`) |
+| `hono` | moderate | GHSA-8j4g-w8fx-2239 | ReDoS in the CORS middleware via `Access-Control-Request-Headers` |
+| `fast-uri` | high | GHSA-7p8r-x3mc-p8w7 | Host confusion — a backslash authority introducer parses to a different host than it reads as |
+| `@modelcontextprotocol/sdk` | moderate | — | Flagged only for depending on the first |
 
-**So it is recorded rather than fixed.** The upgrade was tried and does work —
-SDK 1.30.0 widens the range to `^1.19.9 || ^2.0.5`, and with
-`@hono/node-server` then pulled up to 2.0.12 the audit is clean, typecheck
-passes, the suite is unchanged, and a stdio smoke test still lists all 26 tools
-and returns real data. It is left undone because a major bump of an unused
-transport's unused dependency buys nothing but a quieter audit line, and the
-same bump is free to take later on its own merits.
+**Three of the four are not reachable from this codebase, on two independent
+counts.** The SDK never imports `serve-static` at all — that is a separate
+subpath export (`@hono/node-server/serve-static`), and the SDK's only use of the
+package is `getRequestListener` from the package root. And that single import
+lives in `server/streamableHttp.js`, which is not in the transitive import
+closure of `server/mcp.js` plus `server/stdio.js` — the 16-file closure
+`mcp-server.ts` actually pulls in reaches nothing outside `ajv` and `zod`. The
+server speaks stdio; no HTTP listener is ever constructed, let alone a static
+file handler or a CORS middleware.
 
-**What would invalidate this.** The reachability argument is contingent on the
+**`fast-uri` is the one that argument does not cover, and saying so is the
+point.** It sits under `ajv`, which the closure above explicitly does reach, so
+that code loads on every server start. What it parses is the `$id`/`$ref` URIs
+in the tool schemas this repo writes itself — never anything a caller supplies —
+so a host-confusion bug in it has no untrusted input to confuse. That is a
+narrower and more fragile claim than the other three, resting on where the data
+comes from rather than on the code being unloadable, which is exactly why it is
+written down separately instead of being waved through with them.
+
+**They are fixed rather than merely recorded, which reverses what this section
+used to say.** The earlier verdict was that the upgrade — SDK 1.30.0 widening
+the range to `^1.19.9 || ^2.0.5`, pulling `@hono/node-server` up across a major
+— bought nothing but a quieter audit line. Two things changed that. The audit
+line stopped being private: `scripts/bootstrap.ps1` runs `npm install` in front
+of someone installing todo-vault for the first time, so "4 vulnerabilities (3
+moderate, 1 high)" is now part of the first thing a new user ever sees, and the
+reassurance sits in a file they have no reason to open. And the findings
+accumulated — one advisory against an unreachable transport is a footnote, four
+including a high is a thing people reasonably refuse to ignore. Neither is a
+security argument. Both are reasons the quieter audit line is worth more than it
+was.
+
+The bump is lockfile-only. `^1.29.0` already admits SDK 1.30.0, so no manifest
+changed; `@hono/node-server` 1.19.15 → 2.1.0, `hono` 4.12.32 → 4.13.0,
+`fast-uri` 3.1.4 → 3.1.5, and `ajv-formats` 3.0.1 arrives as a new SDK
+dependency. Crossing a major with no source edits is safe here for the same
+reason the advisory was harmless: it is a major version of code that is
+installed but never loaded. Verified after the bump — audit clean, typecheck
+passes, all 127 tests pass, and a stdio smoke test handshakes, lists all 26
+tools, and returns real vault data from `vault_list_projects` and
+`vault_get_agenda`.
+
+**What would invalidate the reachability argument.** It is contingent on the
 transport staying stdio. If `mcp-server.ts` ever imports
-`StreamableHTTPServerTransport`, `@hono/node-server` enters the running code and
-this section stops being true — see the note at that file's imports.
+`StreamableHTTPServerTransport`, `@hono/node-server` and `hono` enter the
+running code and the first three rows above stop being unreachable — see the
+note at that file's imports. Keeping the argument written down after fixing the
+findings is deliberate: the next advisory against this dependency will land the
+same way, and the reasoning is what makes it a five-minute triage instead of a
+fresh investigation.
