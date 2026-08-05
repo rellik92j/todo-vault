@@ -1062,6 +1062,137 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* --------------------------------------------------------------- history */
+/*
+ * Sat directly under the agenda block because it borrows from it: .section-head,
+ * .section-title, .section-range and .row are all defined above and reused as
+ * they stand, so a day heading in History and a section heading in the agenda
+ * cannot end up looking like different kinds of thing.
+ *
+ * No new tokens. The light-mode block at the top of this file overrides about
+ * ten of them, so an --added/--removed pair added here would simply be invisible
+ * in light mode. --highest (red) and --done (green) are already handled there,
+ * and they already mean "was" and "is" everywhere else in the app.
+ */
+.history {
+  padding: 14px 16px 8px;
+  max-width: 980px;
+}
+
+.history-entry {
+  margin: 0 0 10px;
+}
+
+.history-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 3px 0;
+}
+
+.history-time {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-subject {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-hash {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.history-file {
+  padding-left: 14px;
+}
+
+/* The row is only a button when its key still resolves; both draw the same. */
+.history-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+  border-bottom: none;
+}
+
+.history-row-dead {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.history-row-dead:hover {
+  background: none;
+}
+
+.history-key {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.history-title {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-fields {
+  padding: 0 0 4px 20px;
+}
+
+.history-field {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+
+.history-field-name {
+  color: var(--text-faint);
+  min-width: 88px;
+}
+
+.history-before {
+  color: var(--highest);
+}
+
+.history-arrow {
+  color: var(--text-faint);
+}
+
+.history-after {
+  color: var(--done);
+}
+
+.history-note,
+.history-more {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.history-more {
+  padding-left: 20px;
+  line-height: 1.7;
+}
+
+.history-load {
+  padding: 4px 16px 28px;
+  max-width: 980px;
+}
+
 /* ---------------------------------------------------------------- detail */
 .detail {
   position: fixed;

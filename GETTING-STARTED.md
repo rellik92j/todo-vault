@@ -105,7 +105,9 @@ What you do next depends on why you're here.
   by design.
 - **Git history**: the sidebar shows a "history on / history off" dot for the
   open vault. Run `npm run vault -- git-status --vault ./vault` for detail if
-  it's off and you expected it on.
+  it's off and you expected it on. When it's on, press `4` for the History view,
+  which reads the commits back as field changes rather than as patches; an item's
+  own history is at the bottom of its detail panel, behind **Show history**.
 - **Press `?`** for every keyboard shortcut. Ctrl+`+`/`−`/`0` size the text, and
   the level is remembered across launches — worth setting once on a new display
   rather than squinting at the default.

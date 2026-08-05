@@ -10,10 +10,11 @@ import {
 } from "todo-vault/constants";
 import { isTickedFor, todayIso } from "todo-vault/recurrence";
 import { classifyLinkTarget } from "todo-vault/link-target";
-import type { Item } from "todo-vault";
+import type { HistoryEntry, Item } from "todo-vault";
 import type { Result, VaultSnapshot } from "@shared/api";
 
 import { parseUriList } from "./drops";
+import { HistoryList } from "./History";
 import {
   EditableDate,
   EditableList,
@@ -81,6 +82,16 @@ export function ItemDetail({
     backlinks: [],
     linked: {},
   });
+  /*
+    `showHistory` survives switching items on purpose. App.tsx mounts
+    <ItemDetail> without a `key` prop, so React reuses the instance and this
+    stays set — which makes "show" a one-time opt-in rather than something to
+    click again on every item. If a `key` prop is ever added here, lift this
+    flag up to App or it silently becomes per-item.
+  */
+  const [showHistory, setShowHistory] = useState(false);
+  /** null while a page is in flight — distinct from an item with no history. */
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [comment, setComment] = useState("");
   const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
   const [showLinkForm, setShowLinkForm] = useState(false);
@@ -115,6 +126,28 @@ export function ItemDetail({
       live = false;
     };
   }, [item.key, item.updated]);
+
+  /*
+    `item.updated`, never `item`.
+
+    This component re-renders on every keystroke — it holds the comment box and
+    the inline editors — and `git log` is the most expensive call in the app.
+    `updated` is the ISO stamp the core rewrites on every save, so it means
+    exactly "this item has been committed since we last looked"; typing in the
+    comment box does not touch it. Same trick as the global view's dependency on
+    lastCommit.hash, for the same reason.
+  */
+  useEffect(() => {
+    if (!showHistory) return;
+    let live = true;
+    setHistory(null);
+    void window.vault.getHistory({ key: item.key, limit: 10 }).then((result) => {
+      if (live && result.ok) setHistory(result.value.entries);
+    });
+    return () => {
+      live = false;
+    };
+  }, [item.key, item.updated, showHistory]);
 
   // Keyed on the item alone, not on `updated`: another item's description is a
   // different document, so the field closes, but a write landing while you type
@@ -703,6 +736,45 @@ export function ItemDetail({
               Comment
             </button>
           </form>
+        </div>
+
+        {/*
+          Last, after Comments, and deliberately so. It is the only section on
+          this panel you cannot edit and the only one whose height has no bound,
+          so a read-only log sitting between two write surfaces would break the
+          rhythm of the whole panel.
+        */}
+        <div className="detail-section">
+          <h3>History</h3>
+          {!showHistory ? (
+            /*
+              Behind a toggle, and lazy. The panel already fires getRelated on
+              open, and `git log` is the most expensive call in the app —
+              opening a detail panel has to stay instant.
+            */
+            <button type="button" className="btn" onClick={() => setShowHistory(true)}>
+              Show history
+            </button>
+          ) : history === null ? (
+            <div className="field-note">Reading the git log…</div>
+          ) : history.length === 0 ? (
+            <div className="field-note">
+              Nothing recorded for this item. Either this vault is not a git repository, or
+              nothing has been committed yet.
+            </div>
+          ) : (
+            <>
+              <HistoryList entries={history} liveKeys={inWindow} showDays={false} />
+              {/*
+                --follow is a heuristic: a project rename rewrites the key inside
+                the file as well as the filename, which scores as low as 57%
+                similarity, so git can lose the thread exactly where it matters.
+              */}
+              <div className="field-note">
+                History from before a key change may be listed under the old key.
+              </div>
+            </>
+          )}
         </div>
       </div>
     </aside>

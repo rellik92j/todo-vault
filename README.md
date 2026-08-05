@@ -23,8 +23,9 @@ mirror.
 ## What you get
 
 **A desktop app.** Backlog table with nested subtasks, a drag-and-drop board,
-an agenda over six time scopes, and a detail panel where every edit commits
-straight to the file — there is no save button and no draft state. Illegal
+an agenda over six time scopes, a History view reading the git log back in vault
+terms (`dueDate 2026-08-06 → 2026-08-19`, not a patch), and a detail panel where
+every edit commits straight to the file — there is no save button and no draft state. Illegal
 status moves are prevented rather than attempted and reported. Descriptions are
 rich-text edited but stored as plain markdown. Recurring work is ticked off for
 the current period rather than closed permanently. Press `?` for every keyboard
@@ -200,6 +201,7 @@ set KEY --status done --due DATE    Update fields
 done KEY                            Shorthand for --status done
 tick KEY [--on DATE] [--undo]       Recurring work: done for this period
 agenda [SCOPE]                      What needs attention
+history [KEY|PROJ]                  What changed, newest first, from the git log
 comment KEY "text"                  Append to the running log
 link KEY --url|--item|--file X      Link arbitrary content
 delete KEY [--cascade]              Move to .trash, recoverable
@@ -290,7 +292,8 @@ already read and edit it. The MCP server adds schema validation, key allocation
 and hierarchy rules on top — worth having, but not a hard dependency.
 
 The CLI and MCP surfaces cover the same ground on items and projects. A handful
-of operations are one-sided — `doctor`, `git-status` and `jira csv` are CLI-only;
+of operations are one-sided — `doctor`, `git-status`, `history` and `jira csv`
+are CLI-only (`history` is also a desktop view);
 `vault_mark_pushed` is MCP-only; bulk edit and removing a link are desktop-only.
 
 ---

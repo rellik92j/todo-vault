@@ -21,6 +21,10 @@
       "types": "./dist/description.d.ts",
       "default": "./dist/description.js"
     },
+    "./history": {
+      "types": "./dist/history.d.ts",
+      "default": "./dist/history.js"
+    },
     "./link-target": {
       "types": "./dist/link-target.d.ts",
       "default": "./dist/link-target.js"

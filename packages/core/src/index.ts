@@ -15,7 +15,16 @@ export type {
   BulkUpdateResult,
   TrashEntry,
   GitStatus,
+  HistoryQuery,
 } from "./vault.js";
+export { parseGitLog, diffFrontmatter, keyFromPath } from "./history.js";
+export type {
+  FieldChange,
+  FileChange,
+  FileChangeKind,
+  HistoryEntry,
+  HistoryPage,
+} from "./history.js";
 export * from "./schema.js";
 export { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 export {

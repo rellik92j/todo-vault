@@ -4,7 +4,15 @@ import path from "node:path";
 
 import { Vault, VaultError } from "./vault.js";
 import { buildPushPlan, loadJiraMap, toJiraCsv } from "./jira.js";
-import { AGENDA_SCOPES, STATUSES, type AgendaScope, type Item, type Status } from "./schema.js";
+import {
+  AGENDA_SCOPES,
+  ITEM_KEY_RE,
+  PROJECT_KEY_RE,
+  STATUSES,
+  type AgendaScope,
+  type Item,
+  type Status,
+} from "./schema.js";
 import { addDays, cadencePeriod, formatZodError, todayIso } from "./util.js";
 
 interface Args {
@@ -71,6 +79,7 @@ Usage: vault <command> [options]
   trash [--projects]                List trashed items, or trashed projects
   restore FILE                      Bring one back from .trash
   git-status                        Whether writes are being committed
+  history [KEY|PROJ]                What changed, newest first, from the git log
   jira plan [--out plan.json]       Build a reviewable Jira push payload
   jira csv  [--out issues.csv]      Export for Jira's CSV importer
 
@@ -676,6 +685,45 @@ async function main(): Promise<void> {
         }\n`,
       );
       if (!status.healthy) process.exitCode = 1;
+      return;
+    }
+
+    case "history": {
+      const target = _[1];
+      const page = await vault.history({
+        key: target && ITEM_KEY_RE.test(target) ? target : undefined,
+        project: target && PROJECT_KEY_RE.test(target) ? target : undefined,
+        offset: Number(str(flags, "offset") ?? 0) || 0,
+        limit: Number(str(flags, "limit") ?? 25) || 25,
+      });
+      if (asJson) {
+        process.stdout.write(`${JSON.stringify(page, null, 2)}\n`);
+        return;
+      }
+      if (!page.entries.length) {
+        process.stdout.write(
+          "No history. Either this vault is not a git repo, or nothing has been committed yet.\n",
+        );
+        return;
+      }
+      for (const entry of page.entries) {
+        process.stdout.write(
+          `${entry.shortHash}  ${entry.at.slice(0, 16).replace("T", " ")}  ${entry.subject}\n`,
+        );
+        for (const file of entry.files) {
+          const badge = file.kind === "modified" ? "" : ` (${file.kind})`;
+          const name = file.key ?? file.path;
+          process.stdout.write(`  ${name}${badge}${file.title ? `  ${file.title}` : ""}\n`);
+          for (const change of file.fields) {
+            process.stdout.write(
+              `      ${change.field}  ${change.before ?? "—"} → ${change.after ?? "—"}\n`,
+            );
+          }
+          if (file.bodyChanged) process.stdout.write("      description changed\n");
+          if (file.unparsed) process.stdout.write(`      (${file.unparsed})\n`);
+        }
+      }
+      if (page.hasMore) process.stdout.write("\n… more (use --offset)\n");
       return;
     }
 

@@ -8,6 +8,8 @@ import {
   Vault,
   type BulkUpdateResult,
   type DeleteResult,
+  type HistoryPage,
+  type HistoryQuery,
   type Item,
   type Project,
   type Status,
@@ -271,6 +273,20 @@ export class VaultService extends EventEmitter {
         : null;
     }
     return { children: vault.children(key), backlinks: vault.backlinks(key), linked };
+  }
+
+  /**
+   * A page of commits. The one read here that deliberately skips `serialize`.
+   *
+   * `git log` reads the object database, which auto-commit only ever appends
+   * to, and touches neither the working tree nor the in-memory index — the two
+   * things the queue exists to protect. Queuing it would make History wait
+   * behind a batch of attachment writes for an answer none of them can change.
+   * `listTrash` is queued for the opposite reason: it reads the working tree,
+   * which a write is part-way through rewriting.
+   */
+  getHistory(query: HistoryQuery): Promise<HistoryPage> {
+    return this.requireVault().history(query);
   }
 
   // ----------------------------------------------------------- mutations

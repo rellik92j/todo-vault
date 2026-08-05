@@ -40,6 +40,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["1"], label: "Backlog", group: "Views" },
   { keys: ["2"], label: "Board", group: "Views" },
   { keys: ["3"], label: "Agenda", group: "Views" },
+  { keys: ["4"], label: "History", group: "Views" },
 
   { keys: ["g"], label: "Group the board by project", group: "Display" },
 

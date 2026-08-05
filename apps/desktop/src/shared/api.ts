@@ -4,6 +4,8 @@ import type {
   CreateItemInput,
   DeleteResult,
   GitStatus,
+  HistoryPage,
+  HistoryQuery,
   Item,
   ItemFilter,
   Project,
@@ -156,6 +158,14 @@ export interface VaultApi {
       linked: Record<string, Status | null>;
     }>
   >;
+
+  /**
+   * A page of vault commits with their changes read back into vault terms.
+   *
+   * Pass `key` for one item's history, `project` to scope the global view, or
+   * neither for the whole vault. `hasMore` on the result drives "Load more".
+   */
+  getHistory(query: HistoryQuery): Promise<Result<HistoryPage>>;
 
   /** Reveal an item's markdown, or an attachment, in the OS file manager. */
   revealPath(target: { kind: "item" | "attachment" | "vault"; value?: string }): Promise<Result<null>>;
@@ -310,6 +320,7 @@ export const CHANNELS = {
   listItems: "vault:list-items",
   getAgenda: "vault:get-agenda",
   getRelated: "vault:get-related",
+  getHistory: "vault:get-history",
   revealPath: "vault:reveal-path",
   openTarget: "vault:open-target",
   getSuggestedVault: "vault:suggested",
