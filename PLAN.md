@@ -1426,22 +1426,45 @@ appeared with a new day heading and no manual refresh, which is the
 section was confirmed present, last, after Comments, behind its **Show history**
 button.
 
-The gap, stated plainly: **the detail panel's list was never expanded on
-screen.** Synthetic mouse input does not reach Electron in this environment —
-`mouse_event` and `SendInput` both return success and do nothing, while
-`SendKeys` works because App.tsx's shortcuts are a `window` keydown handler
-rather than focus-driven. So the toggle could not be clicked, and the lazy
-fetch, the `limit: 10`, and the `--follow` footer note are covered by types and
-by the shared `HistoryList` being the same component the global view proves —
-not by a screenshot. Worth driving by hand next time the app is open.
+The detail panel's list went unverified on the first pass and was driven
+immediately afterwards, alongside the fix below. It renders `status todo →
+in_progress`, `cadence monthly → daily` and the reseed commit's `id` change,
+scoped to the one item and with no day headings, which is what `showDays={false}`
+is for.
 
 A third note for whoever writes the next screenshot driver, beside the two
-already recorded above: **`SetCursorPos` and `GetWindowRect` speak logical
-pixels to a non-DPI-aware caller while `CopyFromScreen` captures physical
-ones.** On a 1.41× display that silently puts every click about 40% off target
-and makes a `MoveWindow` to "the screen size" push the window a third of the way
-off the right edge — which is what hid the detail panel and the commit hash
-through several confusing screenshots.
+already recorded above, because it cost most of an afternoon here:
+**`SetCursorPos`, `MoveWindow` and `GetWindowRect` all speak *logical* pixels to
+a non-DPI-aware caller, while `CopyFromScreen` captures *physical* ones.** On
+this 1.5× display that puts every click a third of the way off target and makes
+a `MoveWindow` to "the screen size" push the window 120 px off the right edge —
+which is what hid the detail panel and the commit hash through a dozen confusing
+screenshots. The failure is silent and reads exactly like input being blocked: I
+concluded from it that Electron was ignoring `mouse_event` and `SendInput`, which
+was wrong, and shipped a commit saying so. `SetProcessDPIAware()` as the first
+line of the driver makes every one of those APIs agree, and then clicks land.
+
+## The item panel's history can be hidden again ✅ built and driven
+
+Shipped broken and reported straight back: opening the history on one item
+turned the section on for every item, with nothing on screen to turn it off.
+
+The cause was a one-way door. `setShowHistory(true)` — never a toggle — and the
+button lived inside the `!showHistory` branch, so the act of using it removed the
+only control that referred to it. Sticky-across-items was deliberate and is
+still right; sticky with no way out is just a section you cannot dismiss, and the
+two are easy to conflate when the "off" state is the one you develop in.
+
+The fix takes the shape the panel already had an answer for: a toggle in the
+`<h3>`, labelled with the action, exactly like `Links`' `+ add`/`cancel`. That
+also puts it in the one place guaranteed to stay on screen — the heading is
+rendered in both states, which is precisely what the first cut got wrong.
+
+The lesson worth keeping is not about React. Both the plan and the commit said
+"behind a show/hide toggle" and what got built was show-only, because the branch
+that was exercised while writing it was the one where the button exists. A
+control whose *only* affordance sits inside one branch of the state it controls
+deserves a second look before it ships.
 
 ## Phase 5 — Jira push from the UI
 

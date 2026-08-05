@@ -85,9 +85,13 @@ export function ItemDetail({
   /*
     `showHistory` survives switching items on purpose. App.tsx mounts
     <ItemDetail> without a `key` prop, so React reuses the instance and this
-    stays set — which makes "show" a one-time opt-in rather than something to
-    click again on every item. If a `key` prop is ever added here, lift this
-    flag up to App or it silently becomes per-item.
+    stays set — so it reads as a preference ("I want to see history") rather
+    than something to re-click on every item. That is only defensible because
+    the toggle beside the heading can turn it back off; sticky state with no
+    way out is just a section you cannot dismiss.
+
+    If a `key` prop is ever added here, lift this flag up to App or it silently
+    becomes per-item.
   */
   const [showHistory, setShowHistory] = useState(false);
   /** null while a page is in flight — distinct from an item with no history. */
@@ -745,17 +749,28 @@ export function ItemDetail({
           rhythm of the whole panel.
         */}
         <div className="detail-section">
-          <h3>History</h3>
-          {!showHistory ? (
-            /*
-              Behind a toggle, and lazy. The panel already fires getRelated on
-              open, and `git log` is the most expensive call in the app —
-              opening a detail panel has to stay instant.
-            */
-            <button type="button" className="btn" onClick={() => setShowHistory(true)}>
-              Show history
+          <h3>
+            History
+            {/*
+              In the heading, the way Links and Attachments carry theirs, and
+              labelled with the action rather than the state — the same shape as
+              the `+ add` / `cancel` toggle above.
+
+              It has to stay visible while the log is open. The first cut put a
+              "Show history" button inside the hidden branch only, which made it
+              a one-way door: opening it once turned the section on for every
+              item with nothing on screen to turn it off again.
+            */}
+            <button className="add-btn" onClick={() => setShowHistory((v) => !v)}>
+              {showHistory ? "hide" : "show"}
             </button>
-          ) : history === null ? (
+          </h3>
+          {/*
+            Lazy, and only fetched while open. The panel already fires
+            getRelated on open and `git log` is the most expensive call in the
+            app, so opening a detail panel has to stay instant.
+          */}
+          {!showHistory ? null : history === null ? (
             <div className="field-note">Reading the git log…</div>
           ) : history.length === 0 ? (
             <div className="field-note">
