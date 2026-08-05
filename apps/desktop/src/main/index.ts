@@ -2,7 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
-import { formatZodError, type Status } from "todo-vault";
+import { formatZodError, type HistoryQuery, type Status } from "todo-vault";
 import {
   CHANNELS,
   type AgendaScope,
@@ -241,6 +241,7 @@ function registerHandlers(): void {
   handle(CHANNELS.listItems, (filter: Record<string, unknown>) => service.listItems(filter ?? {}));
   handle(CHANNELS.getAgenda, (scope: AgendaScope) => service.getAgenda(scope));
   handle(CHANNELS.getRelated, (key: string) => service.getRelated(key));
+  handle(CHANNELS.getHistory, (query: HistoryQuery) => service.getHistory(query ?? {}));
   handle(CHANNELS.getSuggestedVault, () => suggestedVault());
 
   // --------------------------------------------------------------- mutations

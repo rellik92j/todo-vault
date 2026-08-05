@@ -1305,6 +1305,144 @@ than by title: while a native `<select>` popup is open the main window reports
 an empty title, and the obvious fallback of "first window handle" grabs a 0x0
 helper and captures nothing.
 
+## A History view over the vault's git log ✅ built, driven for the global view
+
+The app auto-commits every write and calls that its undo story, and none of it
+was visible from inside the app. The only git surface was diagnostic — a
+sidebar dot and a three-case warning banner. The app could tell you history was
+being kept; it could not show you any of it.
+
+**The diff is the whole feature.** Real subjects in this vault are `Update
+OPS-5` and `Update 2 items`; a view listing them would say nothing. The value is
+entirely in turning `-dueDate: 2026-08-06` / `+dueDate: 2026-08-19` into
+`due 2026-08-06 → 2026-08-19`, which is only tractable because
+`FRONTMATTER_ORDER` fixes field order so a diff shows what changed and nothing
+else. That constant's comment says git diffs should show only what actually
+changed; this feature is the payoff for a decision made for other reasons.
+
+**`--unified=1000`, and why that is not the bug it looks like.** With that much
+context the single hunk spans the whole item file, so `context + minus`
+reconstructs the *before* file byte-for-byte and `context + plus` the *after*.
+Both then go through the real `parseFrontmatter` and the field diff becomes an
+object comparison — exact for multi-line YAML, arrays, and the nested `sync:`
+block, where no hunk heuristic can be: a `sync.state` change arrives as
+`-  state: never` / `+  state: pushed` with only indentation to say what owns
+it. It works because `updated:` changes on every app write and sits in the first
+~25 lines, so the hunk always reaches line 1. That is a property of how the app
+writes files, not a guarantee, and the code says so — an external tool editing
+only the tail of a very long description falls through to "description
+changed", which is the right answer anyway. The measured worst case in a real
+110-commit vault is an 18 KB patch, so reading whole files costs nothing today.
+
+**Measured before designed.** Several calls rest on facts about the real vault
+rather than caution. `git log` emits no NUL bytes even for a committed 2.6 MB
+PDF, so a `%x00`-delimited `--format` is safe. That PDF's own patch is 426
+bytes, not megabytes — so `attachments/` is excluded for *readability*, not
+safety, and nothing is lost because attaching a file also rewrites the item's
+`attachments` array in the same commit. Trash and restore already appear as
+`R100` renames between `items/` and `.trash/items/`, which is what makes them
+render as `trashed`/`restored` rather than as a raw path into `.trash`. And a
+project rename scores only 57–75% similarity, because the key is rewritten
+inside the file as well as in the filename — so rename detection stays at git's
+default 50%. Tightening to 90% would have broken exactly the case `--follow`
+most needs to survive.
+
+**A pathspec is always passed, never omitted.** `gitStatus()` already models
+`repoRoot !== root` because a vault can live inside a larger notes repo; with no
+pathspec, History would list that repo's unrelated commits. There is a test that
+puts a vault in a subdirectory of a repo with its own commit and asserts it does
+not appear.
+
+**Everything degrades rather than throws.** Binary blocks, multi-hunk patches
+and unclosed frontmatter each produce a coarser answer with an `unparsed`
+reason, never an exception. A history view that dies on one odd commit is worse
+than one that says "changed — too large to summarise".
+
+**`updated` is hidden entirely** — it changes on every write and is implied by
+the commit timestamp — as is `sync.contentHash`, a digest nobody reads. **`id`
+is deliberately not hidden**: the schema calls it "stable identity, survives
+renames and key changes", so an `id` that moved means something went wrong, and
+that is precisely what an audit log must not swallow. It showed up immediately
+in the real log, on the reseed commits. A file whose only change was `updated`
+renders as "touched, no visible change" rather than vanishing.
+
+**Parsing lives in core, not in desktop main.** It needs `parseFrontmatter`, the
+two frontmatter orders and the nested `sync` shape; main would have had to
+import core anyway, at which point it is core code in the wrong workspace. Core
+also owns the only test harness that does a real `git init`, and the CLI gets a
+`vault history [KEY|PROJ]` verb for free — which is what made every later step
+debuggable without launching Electron, and is where the field rendering was
+first judged against 110 real commits.
+
+**The one read that skips the write queue.** `git log` reads the object
+database, which auto-commit only appends to, and touches neither the working
+tree nor the in-memory index — the two things `serialize` exists to protect.
+Queuing it would make History wait behind a batch of attachment writes for an
+answer none of them can change. `listTrash` stays queued for the opposite
+reason: it reads the working tree, which a write is part-way through rewriting.
+The reason sits in a comment next to the method, because it is the first
+exception to a rule the file otherwise keeps.
+
+**`git.lastCommit.hash` as the refresh key.** `Agenda.tsx` keys its fetch on
+`items`; copying that would have re-read the whole log every time the snapshot
+changed for a reason git had nothing to do with. `GitStatus` rides on every
+snapshot and `lastCommit.hash` changes if and only if a commit landed, so the
+view refreshes through the existing `onChanged` subscription with no second
+channel, and never otherwise. `ItemDetail` uses the same trick with
+`item.updated` — that component re-renders on every keystroke, and `git log` is
+the most expensive call in the app, so keying on `item` would have refetched
+while you typed a comment.
+
+**`pageCount` is explicit state, not `pages.length`.** They are the same number
+one render later, and deriving it makes the effect that *fills* page N the
+effect that *asks for* page N+1 — the view walks the whole log on its own. This
+was caught before it shipped but it is the kind of bug that reads as correct.
+
+**No new CSS tokens.** The light-mode block overrides only about ten tokens, so
+an `--added`/`--removed` pair would have been invisible in light mode.
+`--highest` (red) and `--done` (green) are already handled there and already
+mean "was" and "is" everywhere else in the app.
+
+**The suite is at 158** — 94 core, 47 desktop, 17 root. Core covers the parser
+against hand-written fixtures (binary, multi-hunk, rename headers, the
+no-newline marker) and `Vault.history()` against a real `git init` vault: a
+field change without the `updated` churn, creation with zero fields, the
+trash/restore round trip, `sync.state` without `contentHash`, a description-only
+edit, multi-line YAML labels, pagination with `hasMore`, the nested-repo case,
+and empty-rather-than-error for a non-repo and a bad key. Desktop covers
+`history-format.ts`: the em dash for an absent side, which fields get renamed,
+truncation, which kinds earn a badge, the "touched, no visible change"
+fallback, and day grouping that never re-sorts.
+
+**Driven in the real app, with one gap.** Pressing `4` renders commit `828a4dd8`
+as `OPS-5 · due 2026-08-06 → 2026-08-19` with no `updated` line, day headings
+grouping the log, and the short hash at the right edge. `OPS-6` shows `trashed`
+and `restored` badges rather than a `.trash/items/OPS-6-2026-…Z.md` path, and
+commit `5584fbaa` — the 2.6 MB PDF — renders as `attachments — → 1` with no PDF
+bytes anywhere. The live refresh was driven from outside the app: a
+`vault set` with `--git` in another process produced a new commit, and the entry
+appeared with a new day heading and no manual refresh, which is the
+`lastCommit.hash` dependency working end to end. The detail panel's History
+section was confirmed present, last, after Comments, behind its **Show history**
+button.
+
+The gap, stated plainly: **the detail panel's list was never expanded on
+screen.** Synthetic mouse input does not reach Electron in this environment —
+`mouse_event` and `SendInput` both return success and do nothing, while
+`SendKeys` works because App.tsx's shortcuts are a `window` keydown handler
+rather than focus-driven. So the toggle could not be clicked, and the lazy
+fetch, the `limit: 10`, and the `--follow` footer note are covered by types and
+by the shared `HistoryList` being the same component the global view proves —
+not by a screenshot. Worth driving by hand next time the app is open.
+
+A third note for whoever writes the next screenshot driver, beside the two
+already recorded above: **`SetCursorPos` and `GetWindowRect` speak logical
+pixels to a non-DPI-aware caller while `CopyFromScreen` captures physical
+ones.** On a 1.41× display that silently puts every click about 40% off target
+and makes a `MoveWindow` to "the screen size" push the window a third of the way
+off the right edge — which is what hid the detail panel and the commit hash
+through several confusing screenshots.
+
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user

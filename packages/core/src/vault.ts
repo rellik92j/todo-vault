@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { HISTORY_LOG_FORMAT, parseGitLog, type HistoryPage } from "./history.js";
 import { syncedRootFor } from "./links.js";
 import { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 import {
@@ -171,6 +172,16 @@ export interface GitStatus {
   lastError?: string;
   /** True only if a write right now would actually be committed. */
   healthy: boolean;
+}
+
+export interface HistoryQuery {
+  /** One item, followed across key changes. Mutually exclusive with project. */
+  key?: string;
+  /** One project's items and its project file. */
+  project?: string;
+  offset?: number;
+  /** Default 25, capped at 100 — this returns a page, not a whole repo. */
+  limit?: number;
 }
 
 export class Vault {
@@ -1813,6 +1824,89 @@ export class Vault {
       lastError: this.lastCommitError,
       healthy: enabled && gitAvailable && isRepo && !ignored && !this.lastCommitError,
     };
+  }
+
+  /**
+   * A page of vault commits, newest first, with their patches read back into
+   * vault terms by history.ts.
+   *
+   * The subjects this writes are deliberately terse (`Update OPS-5`, `Update 2
+   * items`), so a list of them would say nothing. All the meaning is in the
+   * diff, which is why this fetches patches rather than just a log.
+   */
+  async history(query: HistoryQuery = {}): Promise<HistoryPage> {
+    const limit = Math.min(Math.max(query.limit ?? 25, 1), 100);
+    const offset = Math.max(query.offset ?? 0, 0);
+
+    // execFile takes an argv array, so there is no shell to inject into. The
+    // check is so a malformed key is a clean empty answer rather than a
+    // confusing git error about an unmatched pathspec.
+    if (query.key && !ITEM_KEY_RE.test(query.key)) return { entries: [], hasMore: false };
+    if (query.project && !PROJECT_KEY_RE.test(query.project)) {
+      return { entries: [], hasMore: false };
+    }
+
+    // A pathspec is always passed, never omitted. gitStatus() already models
+    // repoRoot !== root because a vault can sit inside a larger notes repo;
+    // with no pathspec, History would list that repo's unrelated commits.
+    // attachments/ is left out because a diff of PDF bytes is unreadable, and
+    // nothing is lost: attaching a file also rewrites the item's `attachments`
+    // array in the same commit, which is the legible version of the event.
+    const paths = query.key
+      ? [`items/${query.key}.md`]
+      : query.project
+        ? [
+            `items/${query.project}-*.md`,
+            `projects/${query.project}.md`,
+            `.trash/items/${query.project}-*.md`,
+          ]
+        : ["items", "projects", ".trash/items"];
+
+    const args = [
+      "-c",
+      "core.quotepath=false",
+      "log",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      // Git's default 50% rename threshold, deliberately not tightened. Trash
+      // and restore show up as R100 pairs between items/ and .trash/items/, but
+      // a project rename scores only 57–75% because the key is rewritten inside
+      // the file too — and that is the one operation --follow most needs to see.
+      "-M",
+      // With this much context the single hunk spans the whole file, so
+      // history.ts can rebuild both sides byte-for-byte and run the real
+      // frontmatter parser over them. Exact for multi-line YAML and the nested
+      // sync block, where no hunk heuristic can be. The largest patch in a real
+      // 110-commit vault is 18 KB, so it costs nothing.
+      "--patch",
+      "--unified=1000",
+      `--format=${HISTORY_LOG_FORMAT}`,
+      `--skip=${offset}`,
+      // The +1 is how hasMore is learned, with no second rev-list --count.
+      "-n",
+      String(limit + 1),
+      // --follow needs exactly one pathspec, so it is only available per item.
+      ...(query.key ? ["--follow"] : []),
+      "--",
+      ...paths,
+    ];
+
+    try {
+      const { stdout } = await execFileAsync("git", args, {
+        cwd: this.root,
+        // execFile defaults to 1 MB and fails as a silent truncation rather
+        // than an error. Cheap insurance the measurements say we will not need.
+        maxBuffer: 32 * 1024 * 1024,
+        windowsHide: true,
+      });
+      const entries = parseGitLog(stdout);
+      return { entries: entries.slice(0, limit), hasMore: entries.length > limit };
+    } catch {
+      // git log exits 128 both for "not a repo" and "no commits yet". History
+      // is a bonus, not a dependency — the same posture commit() takes.
+      return { entries: [], hasMore: false };
+    }
   }
 
   // ------------------------------------------------------------ validation

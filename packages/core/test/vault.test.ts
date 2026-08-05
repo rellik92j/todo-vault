@@ -16,6 +16,8 @@ import {
 } from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
+import { diffFrontmatter, keyFromPath, parseGitLog } from "../src/history.js";
+import { FRONTMATTER_ORDER } from "../src/constants.js";
 import { classifyLinkTarget } from "../src/link-target.js";
 import { isSyncedPath, syncedRootFor } from "../src/links.js";
 import {
@@ -2017,6 +2019,343 @@ test("gitStatus tells the truth about whether history is being kept", async () =
   assert.equal(status.isRepo, false);
   assert.equal(status.healthy, false, "must not claim health outside a repo");
   assert.ok(status.lastError, "and must say why, rather than staying quiet");
+});
+
+// ------------------------------------------------------------------ history
+
+/** One `git log` record: the NUL-delimited header, then its patch. */
+function logRecord(subject: string, patch: string, hash = "a".repeat(40)): string {
+  // The delimiter has to be written \u0000 here: a \0 escape followed by a
+  // digit is a legacy octal escape, which a template literal rejects.
+  const NUL = "\u0000";
+  return [NUL, hash, NUL, "Test", NUL, "2026-08-04T09:50:00+01:00", NUL, subject, "\n", patch].join(
+    "",
+  );
+}
+
+test("parseGitLog reads a field change back in vault terms", () => {
+  const patch = [
+    "diff --git a/items/OPS-5.md b/items/OPS-5.md",
+    "index 1111111..2222222 100644",
+    "--- a/items/OPS-5.md",
+    "+++ b/items/OPS-5.md",
+    "@@ -1,8 +1,8 @@",
+    " ---",
+    " key: OPS-5",
+    " summary: Chase the unanswered DPA question",
+    "-dueDate: 2026-08-06",
+    "+dueDate: 2026-08-19",
+    "-updated: 2026-08-04T08:00:00.000Z",
+    "+updated: 2026-08-04T09:50:00.000Z",
+    " ---",
+    " ",
+    " Body",
+    "",
+  ].join("\n");
+
+  const [entry] = parseGitLog(logRecord("Update OPS-5", patch));
+  assert.equal(entry.subject, "Update OPS-5");
+  assert.equal(entry.shortHash, "aaaaaaaa");
+  assert.equal(entry.files.length, 1);
+
+  const file = entry.files[0];
+  assert.equal(file.kind, "modified");
+  assert.equal(file.key, "OPS-5");
+  assert.equal(file.title, "Chase the unanswered DPA question");
+  assert.equal(file.bodyChanged, false);
+  assert.deepEqual(file.fields, [
+    { field: "dueDate", before: "2026-08-06", after: "2026-08-19" },
+  ]);
+});
+
+test("parseGitLog says created rather than listing twenty fields", () => {
+  const patch = [
+    "diff --git a/items/OPS-9.md b/items/OPS-9.md",
+    "new file mode 100644",
+    "index 0000000..3333333",
+    "--- /dev/null",
+    "+++ b/items/OPS-9.md",
+    "@@ -0,0 +1,5 @@",
+    "+---",
+    "+key: OPS-9",
+    "+summary: Ship the thing",
+    "+---",
+    "+",
+    "",
+  ].join("\n");
+
+  const [entry] = parseGitLog(logRecord("Create OPS-9", patch));
+  assert.equal(entry.files[0].kind, "added");
+  assert.equal(entry.files[0].title, "Ship the thing");
+  assert.deepEqual(entry.files[0].fields, []);
+});
+
+test("parseGitLog reads trash and restore out of rename headers", () => {
+  const trashed = [
+    "diff --git a/items/OPS-6.md b/.trash/items/OPS-6-2026-07-25T20-30-44-819Z.md",
+    "similarity index 100%",
+    "rename from items/OPS-6.md",
+    "rename to .trash/items/OPS-6-2026-07-25T20-30-44-819Z.md",
+    "",
+  ].join("\n");
+
+  const [entry] = parseGitLog(logRecord("Delete OPS-6", trashed));
+  assert.equal(entry.files[0].kind, "trashed");
+  assert.equal(entry.files[0].key, "OPS-6", "the timestamp suffix is not part of the key");
+  assert.equal(entry.files[0].fromPath, "items/OPS-6.md");
+
+  const restored = trashed
+    .split("\n")
+    .map((l) =>
+      l.startsWith("rename from")
+        ? "rename from .trash/items/OPS-6-2026-07-25T20-30-44-819Z.md"
+        : l.startsWith("rename to")
+          ? "rename to items/OPS-6.md"
+          : l,
+    )
+    .join("\n");
+  assert.equal(parseGitLog(logRecord("Restore OPS-6", restored))[0].files[0].kind, "restored");
+});
+
+test("parseGitLog degrades rather than throwing on binary, multi-hunk and broken files", () => {
+  const binary = [
+    "diff --git a/items/OPS-4.md b/items/OPS-4.md",
+    "index 4444444..5555555 100644",
+    "Binary files a/items/OPS-4.md and b/items/OPS-4.md differ",
+    "",
+  ].join("\n");
+  assert.equal(parseGitLog(logRecord("Binary", binary))[0].files[0].unparsed, "binary");
+
+  const multiHunk = [
+    "diff --git a/items/OPS-4.md b/items/OPS-4.md",
+    "--- a/items/OPS-4.md",
+    "+++ b/items/OPS-4.md",
+    "@@ -1,2 +1,2 @@",
+    " ---",
+    "-key: OPS-4",
+    "+key: OPS-4x",
+    "@@ -40,2 +40,2 @@",
+    "-old",
+    "+new",
+    "",
+  ].join("\n");
+  const partial = parseGitLog(logRecord("Multi", multiHunk))[0].files[0];
+  assert.equal(partial.unparsed, "partial");
+  assert.equal(partial.bodyChanged, true, "we know something changed, just not what");
+  assert.deepEqual(partial.fields, []);
+
+  const unclosed = [
+    "diff --git a/items/OPS-4.md b/items/OPS-4.md",
+    "--- a/items/OPS-4.md",
+    "+++ b/items/OPS-4.md",
+    "@@ -1,2 +1,2 @@",
+    " ---",
+    "-key: OPS-4",
+    "+key: OPS-4x",
+    "",
+  ].join("\n");
+  assert.equal(parseGitLog(logRecord("Unclosed", unclosed))[0].files[0].unparsed, "unparsable");
+});
+
+test("parseGitLog survives a no-newline marker and an attachments-only commit", () => {
+  const patch = [
+    "diff --git a/items/OPS-4.md b/items/OPS-4.md",
+    "--- a/items/OPS-4.md",
+    "+++ b/items/OPS-4.md",
+    "@@ -1,5 +1,5 @@",
+    " ---",
+    " key: OPS-4",
+    "-summary: Old",
+    "+summary: New",
+    " ---",
+    "\\ No newline at end of file",
+    "",
+  ].join("\n");
+  assert.deepEqual(parseGitLog(logRecord("Rename", patch))[0].files[0].fields, [
+    { field: "summary", before: "Old", after: "New" },
+  ]);
+});
+
+test("diffFrontmatter hides updated and contentHash, dots sync, and counts object arrays", () => {
+  const before = {
+    key: "OPS-1",
+    labels: ["a"],
+    comments: [{ body: "one" }, { body: "two" }],
+    sync: { state: "never", contentHash: "0123456789abcdef" },
+    updated: "2026-08-01T00:00:00.000Z",
+  };
+  const after = {
+    key: "OPS-1",
+    labels: ["a", "b"],
+    comments: [{ body: "one" }, { body: "two" }, { body: "three" }],
+    sync: { state: "pushed", contentHash: "fedcba9876543210" },
+    updated: "2026-08-04T00:00:00.000Z",
+  };
+
+  assert.deepEqual(diffFrontmatter(before, after, FRONTMATTER_ORDER), [
+    { field: "labels", before: "a", after: "a, b" },
+    { field: "comments", before: "2", after: "3" },
+    { field: "sync.state", before: "never", after: "pushed" },
+  ]);
+});
+
+test("diffFrontmatter marks an absent side rather than inventing a value", () => {
+  assert.deepEqual(diffFrontmatter({}, { dueDate: "2026-08-19" }, FRONTMATTER_ORDER), [
+    { field: "dueDate", before: undefined, after: "2026-08-19" },
+  ]);
+  assert.deepEqual(diffFrontmatter({ labels: [] }, { labels: ["x"] }, FRONTMATTER_ORDER), [
+    { field: "labels", before: undefined, after: "x" },
+  ]);
+});
+
+test("keyFromPath maps every path shape the vault writes", () => {
+  assert.deepEqual(keyFromPath("items/OPS-5.md"), { subject: "item", key: "OPS-5" });
+  assert.deepEqual(keyFromPath("projects/OPS.md"), { subject: "project", key: "OPS" });
+  assert.deepEqual(keyFromPath(".trash/items/OPS-6-2026-07-25T20-30-44-819Z.md"), {
+    subject: "item",
+    key: "OPS-6",
+  });
+  assert.deepEqual(keyFromPath("attachments/OPS-4/spec.pdf"), { subject: "other" });
+  assert.deepEqual(keyFromPath(".counters.json"), { subject: "other" });
+});
+
+test("history reads a real commit back in vault terms, without the updated churn", async () => {
+  const vault = await gitVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Chase the DPA question" });
+  await vault.updateItem(item.key, { dueDate: "2026-08-19" });
+
+  const { entries } = await vault.history();
+  const [latest] = entries;
+  const file = latest.files.find((f) => f.key === item.key);
+  assert.ok(file, "the item's own file should be in the newest commit");
+  assert.equal(file.kind, "modified");
+  assert.equal(file.title, "Chase the DPA question");
+  assert.deepEqual(file.fields, [
+    { field: "dueDate", before: undefined, after: "2026-08-19" },
+  ]);
+  assert.equal(
+    latest.files.some((f) => f.fields.some((c) => c.field === "updated")),
+    false,
+    "updated changes on every write and is already implied by the commit time",
+  );
+
+  // A creation says "created", not twenty fields nobody asked for.
+  const created = entries
+    .flatMap((e) => e.files)
+    .find((f) => f.key === item.key && f.kind === "added");
+  assert.ok(created);
+  assert.deepEqual(created.fields, []);
+  assert.equal(created.title, "Chase the DPA question");
+});
+
+test("history renders a sync change as sync.state, and a description edit as body only", async () => {
+  const vault = await gitVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Sync me" });
+  await vault.markPushed(item.key, "ENG-1", "10001");
+
+  const synced = (await vault.history({ key: item.key })).entries[0].files[0];
+  assert.equal(
+    synced.fields.some((f) => f.field === "sync"),
+    false,
+    "the nested block is dotted, never dumped whole",
+  );
+  assert.ok(synced.fields.some((f) => f.field === "sync.state" && f.after === "pushed"));
+  assert.equal(
+    synced.fields.some((f) => f.field.endsWith("contentHash")),
+    false,
+    "a 16-hex-character digest is not something anyone reads",
+  );
+
+  // On an item that was never pushed, so the edit cannot also drift the sync
+  // block — that it does drift a pushed one is the app working as intended.
+  const plain = await vault.createItem({ project: "ACME", summary: "Body only" });
+  await vault.updateItem(plain.key, { description: "A longer explanation." });
+  const edited = (await vault.history({ key: plain.key })).entries[0].files[0];
+  assert.equal(edited.bodyChanged, true);
+  assert.deepEqual(edited.fields, [], "no word diff — 'description changed' is the answer wanted");
+
+  // Multi-line YAML: the reconstruct-and-reparse approach makes this exact.
+  await vault.updateItem(plain.key, { labels: ["schema", "urgent"] });
+  const labelled = (await vault.history({ key: plain.key })).entries[0].files[0];
+  assert.deepEqual(labelled.fields, [
+    { field: "labels", before: undefined, after: "schema, urgent" },
+  ]);
+});
+
+test("history reads trash and restore as such, not as a path into .trash", async () => {
+  const vault = await gitVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Round trip" });
+  const [{ trashedTo }] = await vault.deleteItem(item.key);
+
+  const trashed = (await vault.history()).entries[0].files.find((f) => f.key === item.key);
+  assert.ok(trashed);
+  assert.equal(trashed.kind, "trashed");
+  assert.equal(trashed.fromPath, `items/${item.key}.md`);
+
+  await vault.restoreItem(path.posix.basename(trashedTo));
+  const restored = (await vault.history()).entries[0].files.find((f) => f.key === item.key);
+  assert.ok(restored);
+  assert.equal(restored.kind, "restored");
+});
+
+test("history pages, and says whether there is more", async () => {
+  const vault = await gitVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Paged" });
+  for (const priority of ["high", "low", "highest", "lowest"] as const) {
+    await vault.updateItem(item.key, { priority });
+  }
+
+  const first = await vault.history({ limit: 2 });
+  assert.equal(first.entries.length, 2);
+  assert.equal(first.hasMore, true);
+
+  const deep = await vault.history({ limit: 2, offset: 4 });
+  assert.ok(deep.entries.length <= 2);
+  assert.equal(deep.hasMore, false, "there are 6 commits in total: create project, item, 4 edits");
+
+  // Offsets are absolute, so page two never repeats page one.
+  const second = await vault.history({ limit: 2, offset: 2 });
+  assert.equal(
+    first.entries.some((e) => second.entries.some((s) => s.hash === e.hash)),
+    false,
+  );
+});
+
+test("history stays inside the vault when the vault sits in a bigger repo", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "vault-nested-"));
+  await execFileAsync("git", ["init"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.name", "Test"], { cwd: repo });
+  await fs.writeFile(path.join(repo, "NOTES.md"), "# Unrelated\n");
+  await execFileAsync("git", ["add", "-A"], { cwd: repo });
+  await execFileAsync("git", ["commit", "-m", "Unrelated notes", "--no-verify"], { cwd: repo });
+
+  const vault = await Vault.init(path.join(repo, "tasks"), { git: true });
+  await vault.createProject({ key: "ACME", name: "Acme" });
+  await vault.createItem({ project: "ACME", summary: "Inside a bigger repo" });
+
+  const { entries } = await vault.history();
+  assert.ok(entries.length > 0, "the vault's own commits are still found");
+  assert.equal(
+    entries.some((e) => e.subject === "Unrelated notes"),
+    false,
+    "the surrounding repo's commits are not this vault's history",
+  );
+});
+
+test("history is empty rather than an error without a repo or without commits", async () => {
+  const notARepo = await tmpVault();
+  assert.deepEqual(await notARepo.history(), { entries: [], hasMore: false });
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-fresh-git-"));
+  await execFileAsync("git", ["init"], { cwd: dir });
+  const fresh = await Vault.init(dir, { git: false });
+  assert.deepEqual(await fresh.history(), { entries: [], hasMore: false });
+
+  // A key that is not a key gets a clean empty answer, not a git pathspec error.
+  const vault = await gitVault();
+  assert.deepEqual(await vault.history({ key: "not a key" }), { entries: [], hasMore: false });
+  assert.deepEqual(await vault.history({ project: "../etc" }), { entries: [], hasMore: false });
 });
 
 // ------------------------------------------------------------- atomic writes

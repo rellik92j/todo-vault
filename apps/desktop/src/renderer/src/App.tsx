@@ -9,6 +9,7 @@ import { useVault } from "./useVault";
 import { BacklogTable } from "./BacklogTable";
 import { Board } from "./Board";
 import { Agenda } from "./Agenda";
+import { History } from "./History";
 import { ItemDetail } from "./ItemDetail";
 import { Welcome } from "./Welcome";
 import { CreateDialog } from "./CreateDialog";
@@ -24,7 +25,7 @@ import { rangeBetween } from "./selection";
 import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters } from "./pieces";
 import { BulkBar } from "./BulkBar";
 
-type View = "backlog" | "board" | "agenda";
+type View = "backlog" | "board" | "agenda" | "history";
 
 export function App(): React.JSX.Element {
   const vault = useVault();
@@ -75,6 +76,16 @@ export function App(): React.JSX.Element {
    * nothing else.
    */
   const [grouped, setGrouped] = useState(false);
+  /**
+   * History's own project filter, separate from `project` above.
+   *
+   * The two mean different things. `project` narrows a list of items; this
+   * narrows a list of commits, and a single commit routinely touches several
+   * projects at once — `Update 2 items` and `Reseed: 3 projects, 15 items` are
+   * both real entries in this vault's log. Sharing the sidebar selection would
+   * make History reshuffle whenever someone clicked a project to look at it.
+   */
+  const [historyProject, setHistoryProject] = useState<string | null>(null);
   const [text, setText] = useState("");
   /**
    * The backlog rows whose children are hidden — view state, sat here beside
@@ -261,6 +272,19 @@ export function App(): React.JSX.Element {
       return true;
     });
   }, [snapshot, visibleItems, project, status, types, cadence, reporter, openOnly, text]);
+
+  /**
+   * Every key the vault still holds — not `visibleItems`.
+   *
+   * History names things that may since have been deleted, and this is what
+   * decides whether a row opens the detail panel or is drawn as plain text. An
+   * item in a hidden project still exists, so hiding must not make its history
+   * rows look like they point at nothing.
+   */
+  const liveKeys = useMemo(
+    () => new Set((snapshot?.items ?? []).map((i) => i.key)),
+    [snapshot],
+  );
 
   const projectOrder = useMemo(
     () => visibleProjects.map((p) => p.key),
@@ -630,6 +654,9 @@ export function App(): React.JSX.Element {
         case "3":
           setView("agenda");
           return;
+        case "4":
+          setView("history");
+          return;
         // Gated on the board rather than global: it is the only view with lanes,
         // and a key that silently changes something two views away is worse than
         // one that does nothing.
@@ -894,7 +921,7 @@ export function App(): React.JSX.Element {
       <main className="main">
         <div className="toolbar">
           <div className="tabs" role="tablist">
-            {(["backlog", "board", "agenda"] as const).map((candidate, index) => (
+            {(["backlog", "board", "agenda", "history"] as const).map((candidate, index) => (
               <button
                 key={candidate}
                 role="tab"
@@ -908,7 +935,27 @@ export function App(): React.JSX.Element {
             ))}
           </div>
 
-          {view === "agenda" ? (
+          {/*
+            History gets a project dropdown and nothing else. A status/cadence/
+            reporter row over a list of commits is five controls that do nothing,
+            and the filter is its own state rather than the sidebar's because one
+            commit routinely spans projects — following the selection would make
+            the same commit appear and disappear for reasons the row does not
+            explain.
+          */}
+          {view === "history" ? (
+            <select
+              value={historyProject ?? ""}
+              onChange={(e) => setHistoryProject(e.target.value || null)}
+            >
+              <option value="">Every project</option>
+              {visibleProjects.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.key} — {p.name}
+                </option>
+              ))}
+            </select>
+          ) : view === "agenda" ? (
             <select value={scope} onChange={(e) => setScope(e.target.value as AgendaScope)}>
               <option value="today">Today</option>
               <option value="week">This week</option>
@@ -1131,6 +1178,15 @@ export function App(): React.JSX.Element {
               onTick={(key, undo) =>
                 void vault.mutate(() => window.vault.tickItem(key, undefined, undo))
               }
+            />
+          )}
+          {view === "history" && (
+            <History
+              git={snapshot.git}
+              project={historyProject}
+              /* Deliberately not visibleItems — see the memo above. */
+              liveKeys={liveKeys}
+              onSelect={open}
             />
           )}
         </div>

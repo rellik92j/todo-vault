@@ -16,6 +16,7 @@ const api: VaultApi = {
   listItems: (filter) => ipcRenderer.invoke(CHANNELS.listItems, filter),
   getAgenda: (scope) => ipcRenderer.invoke(CHANNELS.getAgenda, scope),
   getRelated: (key) => ipcRenderer.invoke(CHANNELS.getRelated, key),
+  getHistory: (query) => ipcRenderer.invoke(CHANNELS.getHistory, query),
   revealPath: (target) => ipcRenderer.invoke(CHANNELS.revealPath, target),
   openTarget: (target) => ipcRenderer.invoke(CHANNELS.openTarget, target),
   getSuggestedVault: () => ipcRenderer.invoke(CHANNELS.getSuggestedVault),
