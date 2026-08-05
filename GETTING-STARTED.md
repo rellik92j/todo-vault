@@ -126,6 +126,27 @@ npm run build     # rebuilds core; needed whenever the pull touched its source, 
 npm run dev
 ```
 
+### If the pull refuses over package-lock.json
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        package-lock.json
+```
+
+Nothing of yours is in that file. `npm install` edits the lockfile when what is
+already sitting in `node_modules` satisfies the versions `package.json` asks
+for — which happens as soon as you check out a branch that moved a dependency,
+since `node_modules` is shared across every branch. Throw the edit away and the
+pull brings the real copy:
+
+```bash
+git restore package-lock.json
+```
+
+`npm run update` and the `U` menu entry now do that for you, and say so when
+they do. They stop instead if a `package.json` changed too, or if you had
+staged the lockfile — that is a dependency change of yours, and worth keeping.
+
 Your vault and settings (API key, last-open vault) live outside the repo, so
 pulling never touches them.
 
