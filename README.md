@@ -72,13 +72,19 @@ New machine, step by step? See [`GETTING-STARTED.md`](GETTING-STARTED.md).
 irm https://raw.githubusercontent.com/rellik92j/todo-vault/main/scripts/bootstrap.ps1 | iex
 ```
 
-Installs Node and Git via `winget` if either is missing, clones the repo,
-runs `npm install`, and opens the menu. This fetches and runs a script from
-this repo over the network — read [`scripts/bootstrap.ps1`](scripts/bootstrap.ps1)
-first if that's a concern; it's short. If Node or Git had to be installed,
-it stops and asks you to reopen your terminal and run the command again,
-since a freshly installed `PATH` entry doesn't reach a shell that's already
-open.
+Installs Node and Git via `winget` if either is missing, clones the repo, runs
+`npm install`, and opens the menu — all in one run, in the terminal you already
+have open. This fetches and runs a script from this repo over the network — read
+[`scripts/bootstrap.ps1`](scripts/bootstrap.ps1) first if that's a concern; it is
+mostly comments explaining itself.
+
+It asks one question, and only on a machine that needs it. Windows ships
+PowerShell set to refuse scripts, and `npm` is one — typing it runs `npm.ps1`,
+so every `npm` command on this page fails with a security error that names a
+file you've never heard of. The script offers to switch **your account** (not
+the machine) to `RemoteSigned`, which is the standard fix and needs no
+administrator rights. Decline and it still finishes; only your own `npm`
+commands afterwards stay blocked.
 
 Already have Node and Git? The quick start below skips straight to a clone.
 

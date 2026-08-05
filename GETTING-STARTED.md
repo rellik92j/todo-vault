@@ -11,8 +11,10 @@ irm https://raw.githubusercontent.com/rellik92j/todo-vault/main/scripts/bootstra
 ```
 
 Installs Node and Git if missing, clones, installs dependencies, and opens the
-menu — lands you at step 5 below. See the README for what it does before
-running it. The rest of this page is the same steps by hand.
+menu — one run, in the terminal you already have open, landing you at step 5
+below. It asks one question on the way, about PowerShell's execution policy;
+step 4 explains what that is. See the README for what it does before running it.
+The rest of this page is the same steps by hand.
 
 ## 1. Install Node
 
@@ -48,6 +50,22 @@ npm install
 ```
 
 This is fast — Electron itself isn't downloaded yet, only declared.
+
+**If PowerShell answers with a security error instead**, naming `npm.ps1` and
+"running scripts is disabled on this system", nothing is wrong with your install.
+Windows ships PowerShell set to `Restricted`, and PowerShell resolves `npm` to
+`npm.ps1` rather than the `npm.cmd` sitting beside it — so the policy blocks it,
+along with every other `npm` command on this page. The standard fix, for your
+account only and with no administrator rights:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Scripts you write yourself then run; anything downloaded still has to be signed.
+If your machine sets this by group policy, that overrules a per-user change —
+type `npm.cmd` wherever this page says `npm` instead. The bootstrap script above
+handles all of this for you, which is the main reason to prefer it.
 
 ## 5. Open the menu
 
