@@ -25,3 +25,16 @@ issues.csv
 
 # electron-vite build output
 apps/desktop/out/
+
+# In-progress plans — scratch space between an idea and the implementation.
+# Ignored because a plan is not a description of the codebase, and the repo
+# root should not accumulate documents that read as if it were. The durable
+# record is PLAN.md, which each plan is folded into and then deleted from here.
+#
+# The contents are ignored rather than the directory, because git does not
+# descend into an ignored directory and so never evaluates a negation inside
+# one — `/plans/` followed by `!/plans/CLAUDE.md` would silently keep the file
+# ignored. Ignoring `/plans/*` leaves the directory itself visible, which is
+# what gives the negation something to override.
+/plans/*
+!/plans/CLAUDE.md
