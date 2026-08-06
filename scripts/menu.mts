@@ -60,6 +60,14 @@ const NPM_CLI = resolveNpmCli();
 const CORE_CLI = "packages/core/src/cli.ts";
 const SEED_SCRIPT = "packages/core/scripts/seed-vault.ts";
 
+/**
+ * The built server, not the source. Claude spawns this itself, outside npm and
+ * outside tsx, so it has to be plain JavaScript — which is also why `[C]` warns
+ * when the file is missing rather than letting someone paste a config that can
+ * never start.
+ */
+const MCP_ENTRY = "packages/core/dist/mcp-server.js";
+
 // ---------------------------------------------------------------- presentation
 
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
@@ -303,6 +311,57 @@ export function tokenize(input: string): string[] {
   return out;
 }
 
+// ------------------------------------------------------- the Claude MCP config
+
+/**
+ * Builds the `mcpServers` block that points a Claude at this checkout.
+ *
+ * Both paths arrive absolute and leave with forward slashes, on Windows too.
+ * Backslashes are legal in JSON only when doubled, and this block exists to be
+ * pasted and then hand-edited — someone moving their vault will retype the
+ * value, and `C:\Users\...` survives that where `C:\\Users\\...` does not.
+ * Node opens either on Windows, so the forgiving form is the correct one.
+ *
+ * Pure, and exported, so a test can assert the entry point is
+ * `packages/core/dist/mcp-server.js`. The README carried the wrong path here
+ * for a long time and nothing was in a position to notice.
+ */
+export function connectionSnippet(repoRoot: string, vaultDir: string): string {
+  const slashes = (p: string): string => p.replaceAll("\\", "/");
+
+  const config = {
+    mcpServers: {
+      "todo-vault": {
+        command: "node",
+        args: [slashes(path.join(repoRoot, MCP_ENTRY))],
+        env: {
+          VAULT_DIR: slashes(vaultDir),
+          VAULT_GIT: "1",
+        },
+      },
+    },
+  };
+
+  return JSON.stringify(config, null, 2);
+}
+
+/**
+ * Where Claude Desktop keeps its config on this platform.
+ *
+ * Windows resolves for real; the others are printed in `~` form because this is
+ * a line to read and follow, not a path anything here opens. If `APPDATA` is
+ * somehow unset the literal is still a useful thing to paste into Explorer.
+ */
+function desktopConfigPath(): string {
+  if (process.platform === "win32") {
+    return path.join(process.env.APPDATA ?? "%APPDATA%", "Claude", "claude_desktop_config.json");
+  }
+  if (process.platform === "darwin") {
+    return "~/Library/Application Support/Claude/claude_desktop_config.json";
+  }
+  return "~/.config/Claude/claude_desktop_config.json";
+}
+
 // ------------------------------------------------------------------- the menu
 
 interface Entry {
@@ -398,6 +457,13 @@ const ENTRIES: Entry[] = [
     hint: "npm install only — no pull, no build",
     run: () => runSteps([{ kind: "npm", args: ["install"] }]),
   },
+  {
+    key: "c",
+    group: "Setup",
+    label: "Connect Claude…",
+    hint: "prints the MCP config, paths filled in — for Desktop, Cowork and Code",
+    run: runConnect,
+  },
 ];
 
 /**
@@ -425,6 +491,60 @@ async function runSeed(): Promise<number> {
   const args = confirm === "FORCE" ? [target, "--force"] : [target];
 
   return runSteps([{ kind: "tsx", script: SEED_SCRIPT, args }]);
+}
+
+/**
+ * Prints a config block with this machine's real paths already in it, and says
+ * which file each Claude reads. It does not write any of them.
+ *
+ * Reporting rather than editing is deliberate. A real
+ * `claude_desktop_config.json` holds other MCP servers, OAuth credentials and
+ * Cowork preferences beside the key we care about; merging into it means
+ * reserialising the whole file, which reorders and reformats everything the
+ * user wrote. The uninstaller settled on the same rule from the other end.
+ */
+async function runConnect(): Promise<number> {
+  if (!existsSync(path.join(REPO_ROOT, MCP_ENTRY))) {
+    write(
+      `${yellow("The server is not built yet.")} ${bold(MCP_ENTRY)}\n` +
+        `does not exist. A config pointing at a missing file fails quietly — Claude\n` +
+        `shows no error, the vault tools simply never appear — so build it first\n` +
+        `with ${bold("npm run build")}, or option ${bold("[7]")}. The block below is still correct;\n` +
+        `it just will not work until that file is there.\n\n`,
+    );
+  }
+
+  write(`${dim("Which vault should Claude open? Answer with a path, or Enter for the default.")}\n\n`);
+  const answer = await ask(`${cyan("vault directory")} ${dim("[./vault]")} `);
+  const vaultDir = path.resolve(REPO_ROOT, answer || "./vault");
+
+  if (!existsSync(vaultDir)) {
+    write(`\n${yellow("Note:")} ${vaultDir} does not exist yet — seed it with ${bold("[S]")}, or\n`);
+    write(`create it in the app, before expecting anything back from these tools.\n`);
+  }
+
+  write(`\n${bold("Paste this into whichever Claude you use:")}\n\n`);
+  write(`${connectionSnippet(REPO_ROOT, vaultDir)}\n\n`);
+  write(`  ${dim("─".repeat(58))}\n\n`);
+
+  write(`${bold("Claude Desktop — and Cowork")}\n`);
+  write(`  ${cyan(desktopConfigPath())}\n`);
+  write(
+    `  Cowork has no MCP config of its own: it reads this same file and bridges\n` +
+      `  the server into its VM through Desktop. One entry serves both.\n` +
+      `  ${yellow("Quit Desktop fully")} and reopen it — closing to the tray is not enough,\n` +
+      `  because the file is only read at startup.\n\n`,
+  );
+
+  write(`${bold("Claude Code")}\n`);
+  write(`  ${cyan(path.join(REPO_ROOT, ".mcp.json"))}\n`);
+  write(
+    `  Project-scoped, and gitignored precisely because it holds the absolute\n` +
+      `  paths above — safe to create, it will not be committed. ${dim("claude mcp add")} can\n` +
+      `  register the same server instead, if you prefer.\n`,
+  );
+
+  return 0;
 }
 
 function render(): void {

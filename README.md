@@ -144,24 +144,34 @@ when the command finishes.
    [9] Doctor                           validate every file and report problems
    [S] Seed example vault               the worked example; overwriting asks first
 
+  Setup
+   [U] Update                           git pull --ff-only, reinstall, rebuild core
+   [I] Install dependencies             npm install only — no pull, no build
+   [C] Connect Claude…                  prints the MCP config, paths filled in
+
    [0] Exit
 
   ──────────────────────────────────────────────────────────
   Choose an option (single keypress, Ctrl+C to quit):
 ```
 
-Every option runs one npm script. Where a command is really a sequence it is the
-script that encodes it, not the menu: **Prod preview** has to build the core
-*before* launching, or you get a freshly built desktop bundle wrapped around
+Almost every option runs one npm script. Where a command is really a sequence it
+is the script that encodes it, not the menu: **Prod preview** has to build the
+core *before* launching, or you get a freshly built desktop bundle wrapped around
 whatever `packages/core/dist` happened to contain last time — an app that looks
 clean and carries a stale core. `npm run preview` holds that order for everyone,
 including whoever never opens the menu.
 
-Two options take input rather than running straight away. **[8] Vault CLI**
+Three options take input rather than running straight away. **[8] Vault CLI**
 prompts for arguments and hands them to the CLI, quotes honoured, so
 `new --project ENG --summary "Two words"` arrives intact. **[S] Seed** asks for a
 target directory and requires you to type `FORCE` before it will overwrite an
-existing vault, since that is not a recoverable action.
+existing vault, since that is not a recoverable action. **[C] Connect Claude**
+asks which vault to point at and prints the config block below, and is the one
+entry that runs no npm script at all — it composes text and displays it. It
+never edits `claude_desktop_config.json`, because that file holds other servers,
+credentials and preferences, and merging into it would reformat all of them to
+add four lines.
 
 `Ctrl+C` inside a running command — the dev server, the MCP server — stops that
 command and returns you to the menu rather than killing both.
@@ -250,15 +260,18 @@ SharePoint.
 
 ## Wiring up Claude
 
-The MCP server exposes the vault over stdio. Add it to Claude Desktop's
-`claude_desktop_config.json`, or to your Claude Code MCP settings:
+The MCP server exposes the vault over stdio. `npm run menu` → **[C]** prints the
+config below with this machine's paths already filled in, which is the way to do
+this — the two placeholders are exactly the kind of thing that goes wrong
+silently. Add it to Claude Desktop's `claude_desktop_config.json`, or to your
+Claude Code MCP settings:
 
 ```json
 {
   "mcpServers": {
     "todo-vault": {
       "command": "node",
-      "args": ["/absolute/path/to/todo-vault/dist/mcp-server.js"],
+      "args": ["/absolute/path/to/todo-vault/packages/core/dist/mcp-server.js"],
       "env": {
         "VAULT_DIR": "/absolute/path/to/your/vault",
         "VAULT_GIT": "1"
@@ -267,6 +280,16 @@ The MCP server exposes the vault over stdio. Add it to Claude Desktop's
   }
 }
 ```
+
+That path is the *built* server, so `npm run build` has to have run. Point it at
+a file that is not there and nothing announces it: Claude reports no error and
+the vault tools simply never appear.
+
+**Cowork needs nothing extra.** It has no MCP config of its own — it reads the
+same `claude_desktop_config.json` and bridges local stdio servers into its VM
+through Desktop, so the one entry covers both. Desktop has to be quit fully and
+reopened for either to see it; the file is read at startup only, and closing to
+the tray is not quitting.
 
 Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
