@@ -867,11 +867,26 @@ export class Vault {
     );
   }
 
-  async removeLink(key: string, target: string): Promise<Item> {
+  /**
+   * Remove links to `target`. Without `type` this removes every link sharing
+   * that target regardless of type, which is what the desktop ✕ has always done
+   * — the person clicked a row they could see. `addLink` dedupes on
+   * `(type, target)`, though, so two links can legitimately share a target, and
+   * a caller that cannot see the rows needs to name which one it meant. The MCP
+   * tool always passes a type; the default stays wide so the desktop path is
+   * unchanged.
+   */
+  async removeLink(
+    key: string,
+    target: string,
+    type?: Item["links"][number]["type"],
+  ): Promise<Item> {
     const existing = this.getItem(key);
-    const links = existing.links.filter((l) => l.target !== target);
+    const links = existing.links.filter((l) => l.target !== target || (type && l.type !== type));
     if (links.length === existing.links.length) {
-      throw new VaultError(`${key} has no link to ${target}`);
+      throw new VaultError(
+        type ? `${key} has no ${type} link to ${target}` : `${key} has no link to ${target}`,
+      );
     }
     return this.persist({ ...existing, links, updated: nowIso() }, `Unlink ${key} -> ${target}`);
   }

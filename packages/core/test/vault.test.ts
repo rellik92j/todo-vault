@@ -1324,6 +1324,39 @@ test("a drifted item reverted to its pushed content is skipped", async () => {
   assert.equal(plan.drafts.length, 0);
 });
 
+test("removing a link without a type takes every link to that target", async () => {
+  // The desktop ✕ passes no type and must keep this behaviour.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/one" });
+  await vault.addLink(item.key, { type: "note", target: "https://example.com/one" });
+
+  const stripped = await vault.removeLink(item.key, "https://example.com/one");
+  assert.equal(stripped.links.length, 0, "both links share the target, so both go");
+});
+
+test("removing a link with a type leaves the same target under another type", async () => {
+  // addLink dedupes on (type, target), so two links may legitimately share a
+  // target. An agent undoing its own last write must not take the other one out.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Original" });
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/one", label: "Spec" });
+  await vault.addLink(item.key, { type: "note", target: "https://example.com/one" });
+
+  const narrowed = await vault.removeLink(item.key, "https://example.com/one", "url");
+  assert.deepEqual(
+    narrowed.links.map((l) => l.type),
+    ["note"],
+    "only the type that was named is removed",
+  );
+
+  await assert.rejects(
+    () => vault.removeLink(item.key, "https://example.com/one", "url"),
+    /no url link/,
+    "and asking again says which type was missing",
+  );
+});
+
 test("a link added after a push counts as drift", async () => {
   const vault = await tmpVault();
   const item = await vault.createItem({ project: "ACME", summary: "Original" });

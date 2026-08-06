@@ -36,7 +36,7 @@ Scriptable, and the fastest way to add a task without breaking flow.
 
 **An MCP server.** Point Claude Desktop or Claude Code at the vault and ask it
 in plain language: *"what's due this week"*, *"add a task to chase the vendor
-SOW, due Friday, under the migration epic"*. Twenty-six tools, with schema
+SOW, due Friday, under the migration epic"*. Twenty-seven tools, with schema
 validation and hierarchy rules enforced on the way in.
 
 **Optional AI drafting inside the app.** Add an Anthropic API key and the create
@@ -295,7 +295,7 @@ Then, from any Claude session: *"what's due this week"*, *"add a task to chase
 the vendor SOW, due Friday, under the migration epic"*, *"mark ACME-12 done and
 note that legal signed off"*.
 
-Twenty-six tools are registered, covering:
+Twenty-seven tools are registered, covering:
 
 - **Reading** — filtered lists, a full record with children and backlinks, the
   agenda, and the project portfolio.
@@ -317,7 +317,7 @@ and hierarchy rules on top — worth having, but not a hard dependency.
 The CLI and MCP surfaces cover the same ground on items and projects. A handful
 of operations are one-sided — `doctor`, `git-status`, `history` and `jira csv`
 are CLI-only (`history` is also a desktop view);
-`vault_mark_pushed` is MCP-only; bulk edit and removing a link are desktop-only.
+`vault_mark_pushed` is MCP-only; bulk edit is desktop-only.
 
 ---
 

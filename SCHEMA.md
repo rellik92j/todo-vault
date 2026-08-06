@@ -116,6 +116,12 @@ The mechanism for associating arbitrary content with an item.
 | `outlook` | deep link or entry id | Preserved as text; Jira gets it in the description |
 | `note` | free text | Escape hatch |
 
+Removal matches on target, and additionally on type when one is given. Links are
+deduped on `(type, target)`, so a target can legitimately appear twice under two
+types; the desktop ✕ passes no type and clears both, because the person clicked
+a row they could see, while `vault_unlink_item` always names a type, because an
+agent undoing its own write cannot see the rows.
+
 `file` links versus attachments is a real decision, not a duplicate feature.
 Attaching with `copy: true` brings the file into `attachments/<key>/` so it is
 versioned with the item; `copy: false` records a `file` link instead. Copy small
