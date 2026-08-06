@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { FileChange, HistoryEntry } from "todo-vault";
+import type { EntryChange, FileChange, HistoryEntry } from "todo-vault";
 import {
   ABSENT,
+  bodySummary,
   changeLine,
   displayValue,
+  entryLine,
   fallbackNote,
   fieldLabel,
   groupByDay,
@@ -75,6 +77,36 @@ test("a file with no visible change says so rather than looking truncated", () =
   assert.equal(fallbackNote(file({ kind: "added" })), null, "the badge covers it");
   assert.equal(fallbackNote(file({ unparsed: "binary" })), "binary file");
   assert.equal(fallbackNote(file({ unparsed: "partial" })), "changed — too large to summarise");
+});
+
+test("bodySummary names the edit and its size, or nothing when there is none", () => {
+  assert.equal(bodySummary(file()), null);
+  assert.equal(
+    bodySummary(
+      file({
+        bodyChanged: true,
+        body: { added: 3, removed: 1, lines: [{ op: "add", text: "x" }] },
+      }),
+    ),
+    "Description edited  +3 −1",
+  );
+  assert.equal(
+    bodySummary(file({ bodyChanged: true, body: { added: 40, removed: 0, lines: [], truncated: true } })),
+    "Description edited",
+  );
+});
+
+test("entryLine renders each op the way the collapsed row wants", () => {
+  const added: EntryChange = { op: "added", after: "Vendor kickoff — https://example.com" };
+  const removed: EntryChange = { op: "removed", before: "urgent" };
+  const changed: EntryChange = {
+    op: "changed",
+    before: "Vendor kickoff — https://example.com",
+    after: "Vendor SOW — https://example.com",
+  };
+  assert.equal(entryLine(added), "+ Vendor kickoff — https://example.com");
+  assert.equal(entryLine(removed), "− urgent");
+  assert.equal(entryLine(changed), "Vendor kickoff — https://example.com → Vendor SOW — https://example.com");
 });
 
 test("commits group into calendar days without being re-sorted", () => {

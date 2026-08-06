@@ -1970,3 +1970,80 @@ note at that file's imports. Keeping the argument written down after fixing the
 findings is deliberate: the next advisory against this dependency will land the
 same way, and the reasoning is what makes it a five-minute triage instead of a
 fresh investigation.
+
+## History shows what changed, not just that it changed ✅ built and driven
+
+The History view (above) could say *that* a description changed or *that* a
+comment was added, but never show either — `description changed` was a fixed
+string, object arrays collapsed to their length (`comments 2 → 3`), and a
+label edit reprinted the whole scalar list and left you to spot the delta.
+Both were deliberate calls at the time: the comment at the object-array branch
+called entry-by-entry comparison "a diff algorithm this does not need," and a
+test asserted "no word diff — 'description changed' is the answer wanted."
+Both comments were rewritten rather than deleted, so the reversal is on the
+record next to the reasoning it replaces — a reader who finds the old
+argument simply gone learns nothing about why the design moved.
+
+**Structural, not textual.** `parseFileBlock` already reconstructs both whole
+files from the `--unified=1000` patch and parses them with `parseFrontmatter`
+before this feature touches anything, so the change is to the *comparison*,
+not to plumbing. A textual diff of the YAML was the rejected alternative:
+sparse-integer ranks and ordinary rewrites move array entries around, so a
+line diff would report six link changes for a drag that changed nothing.
+
+**`text-diff.ts` is a new pure module with zero imports**, bundled into the
+Electron renderer alongside `description.ts` and `recurrence.ts` — pulling in
+a diff library there would cost more than the module saves. `diffLines`
+trims the common prefix and suffix before running an LCS table over what's
+left, which is load-bearing rather than micro-tuning: a pure append to a
+description trims to zero DP cells. A flat `Uint32Array` backs the table (a
+worst case is 160 KB contiguous, not thousands of boxed arrays), and a
+40,000-cell guard (~200×200 lines) returns `truncated: true` instead of
+running the DP — measured against a prototype on the real vault (15 items,
+110 commits), a whole 25-commit page costs ~0.25 ms against git's own ~85 ms
+process-spawn cost, so the feature adds essentially nothing to the page it
+rides on.
+
+**Entries are matched by identity, not position**, so a reorder produces no
+output at all — the whole reason identity matching earns its code. Identity
+is per-field: a link's is `type` + `target`, an attachment's is `path`, a
+comment's is `at` + `author`, a scalar array's is the value itself, and
+anything else falls back to `JSON.stringify`. This is a heuristic and known
+to be one: editing a link's `target` reads as a remove-plus-add rather than a
+change, since `target` is half the link's identity — correct for
+attachments, where a new path really is a new file, and nearly irrelevant for
+comments, which are append-only. Matching links on `label` instead would make
+a URL correction read as an edit and a re-labelling read as a replacement;
+the chosen tradeoff is the better of the two, not a free one, and it showed
+up immediately in the real vault log as a reseed commit whose attachment
+rows read as `− Target schema draft` / `+ Target schema draft` — a path
+change, not a title edit.
+
+**`bodyChanged` and `FieldChange.before`/`after` keep their exact old
+meaning.** Everything new is additive — `FieldChange.items?: EntryChange[]`
+and `FileChange.body?: TextDiff` — so a consumer that ignores the new fields
+renders exactly what it rendered before. `bodyChanged` stays load-bearing on
+its own: the `unparsed: "partial"`/`"unparsable"` degraded paths set it
+*without* ever having two parseable sides, so it remains the one honest
+signal on those paths, and both `fallbackNote` and the CLI still key off it.
+
+**The renderer gets one expander, not two.** `History.tsx`'s `FileRow` gained
+a single `open` boolean: it drives both the collapsed-description button
+(`Description edited  +3 −1`, raw text never rendered markdown — a diff of
+rendered markdown would hide exactly the syntax that changed) and the cap on
+entry-level lines under each field row (4 lines, then `+N more`, revealed by
+the same toggle). Entry lines truncate to 80 characters with the full text in
+`title`, matching the existing field-row convention.
+
+**The CLI got a `--diff` flag**, off by default because it already prints
+every commit on the page and long descriptions would bury the log; the
+one-line `description edited (+3 −1)` summary prints unconditionally,
+matching what the desktop view shows collapsed.
+
+Driven against the real vault via the Electron dev build: a reseed commit's
+`links 3 → 3` row expanded into three real lines (a URL link, an item link,
+a file link, each rendered `label — target`), its `attachments 1 → 1` row
+into the remove/add pair described above, and its `comments 1 → 1` row into
+the old and new comment bodies plus a `+1 more`. A separate commit's
+collapsed `Description edited  +4 −0` button expanded into the exact four
+added lines the CLI printed for the same commit under `--diff`.

@@ -1,4 +1,4 @@
-import type { FieldChange, FileChange, HistoryEntry } from "todo-vault";
+import type { EntryChange, FieldChange, FileChange, HistoryEntry } from "todo-vault";
 
 /**
  * The pure half of the History view: labels, truncation, and the day grouping.
@@ -38,6 +38,23 @@ export function displayValue(value: string | undefined): string {
 /** One field change as a single line, for titles and the compact detail list. */
 export function changeLine(change: FieldChange): string {
   return `${fieldLabel(change.field)} ${displayValue(change.before)} → ${displayValue(change.after)}`;
+}
+
+/**
+ * The description row's collapsed label. Null means there is nothing to show —
+ * the caller uses that to decide whether the row is a button at all.
+ */
+export function bodySummary(file: FileChange): string | null {
+  if (!file.body) return null;
+  if (file.body.truncated) return "Description edited";
+  return `Description edited  +${file.body.added} −${file.body.removed}`;
+}
+
+/** One entry-level change as a single line, for the expanded field detail. */
+export function entryLine(change: EntryChange): string {
+  if (change.op === "added") return `+ ${change.after}`;
+  if (change.op === "removed") return `− ${change.before}`;
+  return `${change.before} → ${change.after}`;
 }
 
 export function truncate(text: string, max = 80): string {

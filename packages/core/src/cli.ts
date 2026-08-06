@@ -706,6 +706,7 @@ async function main(): Promise<void> {
         );
         return;
       }
+      const showDiff = flags.diff === true;
       for (const entry of page.entries) {
         process.stdout.write(
           `${entry.shortHash}  ${entry.at.slice(0, 16).replace("T", " ")}  ${entry.subject}\n`,
@@ -718,8 +719,26 @@ async function main(): Promise<void> {
             process.stdout.write(
               `      ${change.field}  ${change.before ?? "—"} → ${change.after ?? "—"}\n`,
             );
+            for (const item of change.items ?? []) {
+              const line =
+                item.op === "added"
+                  ? `+ ${item.after}`
+                  : item.op === "removed"
+                    ? `− ${item.before}`
+                    : `${item.before} → ${item.after}`;
+              process.stdout.write(`        ${line}\n`);
+            }
           }
-          if (file.bodyChanged) process.stdout.write("      description changed\n");
+          if (file.bodyChanged) {
+            const diff = file.body;
+            const counts = diff && !diff.truncated ? ` (+${diff.added} −${diff.removed})` : "";
+            process.stdout.write(`      description edited${counts}\n`);
+            if (showDiff && diff && !diff.truncated) {
+              for (const line of diff.lines) {
+                process.stdout.write(`        ${line.op === "add" ? "+" : "−"} ${line.text}\n`);
+              }
+            }
+          }
           if (file.unparsed) process.stdout.write(`      (${file.unparsed})\n`);
         }
       }

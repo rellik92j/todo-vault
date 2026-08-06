@@ -17,14 +17,17 @@ export type {
   GitStatus,
   HistoryQuery,
 } from "./vault.js";
-export { parseGitLog, diffFrontmatter, keyFromPath } from "./history.js";
+export { parseGitLog, diffFrontmatter, diffArray, keyFromPath } from "./history.js";
 export type {
+  EntryChange,
   FieldChange,
   FileChange,
   FileChangeKind,
   HistoryEntry,
   HistoryPage,
 } from "./history.js";
+export { diffLines } from "./text-diff.js";
+export type { DiffLine, TextDiff } from "./text-diff.js";
 export * from "./schema.js";
 export { parseFrontmatter, serializeFrontmatter } from "./markdown.js";
 export {

@@ -16,7 +16,8 @@ import {
 } from "../src/description.js";
 import { buildPushPlan, markdownToAdf, JiraMapSchema } from "../src/jira.js";
 import { parseFrontmatter } from "../src/markdown.js";
-import { diffFrontmatter, keyFromPath, parseGitLog } from "../src/history.js";
+import { diffArray, diffFrontmatter, keyFromPath, parseGitLog } from "../src/history.js";
+import { diffLines } from "../src/text-diff.js";
 import { FRONTMATTER_ORDER } from "../src/constants.js";
 import { classifyLinkTarget } from "../src/link-target.js";
 import { isSyncedPath, syncedRootFor } from "../src/links.js";
@@ -2176,25 +2177,39 @@ test("parseGitLog survives a no-newline marker and an attachments-only commit", 
   ]);
 });
 
-test("diffFrontmatter hides updated and contentHash, dots sync, and counts object arrays", () => {
+test("diffFrontmatter hides updated and contentHash, dots sync, and details object arrays", () => {
   const before = {
     key: "OPS-1",
     labels: ["a"],
-    comments: [{ body: "one" }, { body: "two" }],
+    comments: [{ at: "2026-08-01T00:00:00.000Z", author: "me", body: "one" }, { at: "2026-08-02T00:00:00.000Z", author: "me", body: "two" }],
     sync: { state: "never", contentHash: "0123456789abcdef" },
     updated: "2026-08-01T00:00:00.000Z",
   };
   const after = {
     key: "OPS-1",
     labels: ["a", "b"],
-    comments: [{ body: "one" }, { body: "two" }, { body: "three" }],
+    comments: [
+      { at: "2026-08-01T00:00:00.000Z", author: "me", body: "one" },
+      { at: "2026-08-02T00:00:00.000Z", author: "me", body: "two" },
+      { at: "2026-08-03T00:00:00.000Z", author: "me", body: "three" },
+    ],
     sync: { state: "pushed", contentHash: "fedcba9876543210" },
     updated: "2026-08-04T00:00:00.000Z",
   };
 
   assert.deepEqual(diffFrontmatter(before, after, FRONTMATTER_ORDER), [
-    { field: "labels", before: "a", after: "a, b" },
-    { field: "comments", before: "2", after: "3" },
+    {
+      field: "labels",
+      before: "a",
+      after: "a, b",
+      items: [{ op: "added", after: "b" }],
+    },
+    {
+      field: "comments",
+      before: "2",
+      after: "3",
+      items: [{ op: "added", after: "three" }],
+    },
     { field: "sync.state", before: "never", after: "pushed" },
   ]);
 });
@@ -2204,8 +2219,86 @@ test("diffFrontmatter marks an absent side rather than inventing a value", () =>
     { field: "dueDate", before: undefined, after: "2026-08-19" },
   ]);
   assert.deepEqual(diffFrontmatter({ labels: [] }, { labels: ["x"] }, FRONTMATTER_ORDER), [
-    { field: "labels", before: undefined, after: "x" },
+    { field: "labels", before: undefined, after: "x", items: [{ op: "added", after: "x" }] },
   ]);
+});
+
+test("diffLines finds an edit, a pure append, a pure delete, and leaves the unchanged alone", () => {
+  assert.deepEqual(diffLines("same", "same"), { added: 0, removed: 0, lines: [] });
+
+  assert.deepEqual(diffLines("one\ntwo\nthree", "one\ntwo\nTHREE\nfour"), {
+    added: 2,
+    removed: 1,
+    lines: [
+      { op: "remove", text: "three" },
+      { op: "add", text: "THREE" },
+      { op: "add", text: "four" },
+    ],
+  });
+
+  assert.deepEqual(diffLines("one\ntwo", "one\ntwo\nthree"), {
+    added: 1,
+    removed: 0,
+    lines: [{ op: "add", text: "three" }],
+  });
+
+  assert.deepEqual(diffLines("one\ntwo\nthree", "one\ntwo"), {
+    added: 0,
+    removed: 1,
+    lines: [{ op: "remove", text: "three" }],
+  });
+});
+
+test("diffLines guards its DP table by cell count, not wall-clock time", () => {
+  // 300 x 300 fully-changed lines: 90,000 cells, past the 40,000 cap. Asserting
+  // the guard by size keeps this deterministic on CI, where timing is not.
+  const before = Array.from({ length: 300 }, (_, i) => `before-${i}`).join("\n");
+  const after = Array.from({ length: 300 }, (_, i) => `after-${i}`).join("\n");
+  const result = diffLines(before, after);
+  assert.equal(result.truncated, true);
+  assert.equal(result.added, 300);
+  assert.equal(result.removed, 300);
+  assert.deepEqual(result.lines, []);
+});
+
+test("diffArray matches array entries by identity, not position", () => {
+  // A link added.
+  assert.deepEqual(
+    diffArray(
+      "links",
+      [{ type: "url", target: "https://a", label: "A" }],
+      [
+        { type: "url", target: "https://a", label: "A" },
+        { type: "url", target: "https://b", label: "B" },
+      ],
+    ),
+    [{ op: "added", after: "B — https://b" }],
+  );
+
+  // A link's label edited reads as "changed", since target is the rest of its
+  // identity and did not move.
+  assert.deepEqual(
+    diffArray(
+      "links",
+      [{ type: "url", target: "https://a", label: "Old" }],
+      [{ type: "url", target: "https://a", label: "New" }],
+    ),
+    [{ op: "changed", before: "Old — https://a", after: "New — https://a" }],
+  );
+
+  // A link removed.
+  assert.deepEqual(
+    diffArray("links", [{ type: "url", target: "https://a", label: "A" }], []),
+    [{ op: "removed", before: "A — https://a" }],
+  );
+
+  // A label removed.
+  assert.deepEqual(diffArray("labels", ["urgent", "schema"], ["schema"]), [
+    { op: "removed", before: "urgent" },
+  ]);
+
+  // Reordered with no content change produces no items at all.
+  assert.equal(diffArray("labels", ["a", "b"], ["b", "a"]), undefined);
 });
 
 test("keyFromPath maps every path shape the vault writes", () => {
@@ -2248,7 +2341,7 @@ test("history reads a real commit back in vault terms, without the updated churn
   assert.equal(created.title, "Chase the DPA question");
 });
 
-test("history renders a sync change as sync.state, and a description edit as body only", async () => {
+test("history renders a sync change as sync.state, and a description edit as a body diff", async () => {
   const vault = await gitVault();
   const item = await vault.createItem({ project: "ACME", summary: "Sync me" });
   await vault.markPushed(item.key, "ENG-1", "10001");
@@ -2272,14 +2365,32 @@ test("history renders a sync change as sync.state, and a description edit as bod
   await vault.updateItem(plain.key, { description: "A longer explanation." });
   const edited = (await vault.history({ key: plain.key })).entries[0].files[0];
   assert.equal(edited.bodyChanged, true);
-  assert.deepEqual(edited.fields, [], "no word diff — 'description changed' is the answer wanted");
+  assert.deepEqual(
+    edited.fields,
+    [],
+    "the description text carries no frontmatter field of its own",
+  );
+  assert.deepEqual(
+    edited.body,
+    {
+      added: 1,
+      removed: 1,
+      lines: [
+        { op: "remove", text: "" },
+        { op: "add", text: "A longer explanation." },
+      ],
+    },
+    "the body diff is what makes the edit legible, not just that it happened",
+  );
 
   // Multi-line YAML: the reconstruct-and-reparse approach makes this exact.
   await vault.updateItem(plain.key, { labels: ["schema", "urgent"] });
   const labelled = (await vault.history({ key: plain.key })).entries[0].files[0];
-  assert.deepEqual(labelled.fields, [
-    { field: "labels", before: undefined, after: "schema, urgent" },
-  ]);
+  assert.deepEqual(
+    labelled.fields,
+    [{ field: "labels", before: undefined, after: "schema, urgent" }],
+    "an empty array is omitted from the file entirely, so this is an absent side, not an empty one — no items to show",
+  );
 });
 
 test("history reads trash and restore as such, not as a path into .trash", async () => {
