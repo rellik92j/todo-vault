@@ -8,6 +8,38 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## Removing a comment, and detaching a copied attachment
+
+`vault_unlink_item` closed the link half of this; the other two have no inverse
+anywhere in the core, on any surface. They are not oversights but design
+questions. The comment log is the item's audit trail, so whether a removed
+comment leaves a tombstone or vanishes is a schema decision with a Jira-push
+consequence attached. A copied attachment lives in `attachments/<key>/` and is
+versioned with the item, so detaching it has to decide whether the bytes go too.
+`PLAN-LINKS.md` gotcha 7 logged the attachment half when it was first noticed;
+this is the same entry, still unanswered.
+
+Until one exists, the MCP server's instructions block tells the agent to confirm
+before both.
+
+## MCP has no way to ask what git did
+
+`doctor`, `git-status` and `history` are CLI-only, and `history` is also a
+desktop view. The server's instructions block now says *whether* writes are
+being committed, which answers the question that matters at the moment of a
+risky write, but an agent still cannot read the history back or check whether
+the working tree is clean. Worth doing as one parity pass over all three rather
+than a tool at a time, since the interesting output is `history` and it needs a
+projection that will not blow up a context window.
+
+## `components` is accepted by the core and exposed by no MCP tool
+
+`schema.ts` takes it on create and update, and `jira.ts` pushes it. Nothing on
+the MCP surface can set it, and nothing anywhere says so — an absence with no
+per-tool description to be missing from. The change is small. It was left out of
+the instructions block deliberately: a field nobody has yet asked for does not
+earn a line in every session's context. If someone asks for it twice, expose it.
+
 ## CI, because nothing has ever run the tests except a person who remembered
 
 There are 125 tests — 78 in the core, 41 over the app, 6 over the launcher's

@@ -39,7 +39,44 @@ import path from "node:path";
 const VAULT_DIR = process.env.VAULT_DIR ?? process.argv[2] ?? "./vault";
 const CHARACTER_LIMIT = 24_000;
 
-const server = new McpServer({ name: "todo-vault-mcp-server", version: "0.1.0" });
+/**
+ * The `instructions` block, built at startup rather than declared as a const.
+ *
+ * Every client pays for this in context on every session, and unlike a tool
+ * description that cost is not already being paid — so it carries only what has
+ * no per-tool home: guidance that is cross-cutting (true across tools and
+ * therefore fitting in none of them), that is a *runtime* fact a compiled string
+ * literal cannot report, or that describes something no tool does. Most of what
+ * looks like missing guidance is already in a tool description, arriving at the
+ * moment of the call; restating it here buys a second copy and charges every
+ * session for it.
+ *
+ * The git line is why this is a function. Descriptions cannot say whether the
+ * process was started with an undo behind it.
+ */
+function buildInstructions(): string {
+  const git = process.env.VAULT_GIT === "1";
+  return `A local todo vault of markdown files, one per item, grouped into projects.
+
+Read before you write. Keys are assigned by the vault, never chosen; projects must exist before an item can go in one; parent items are type-checked. Call vault_list_projects first when you do not already know the shape of the vault.
+
+A good item. A summary in the imperative naming the outcome, not the activity. A category reused from the vocabulary already in the vault rather than a new one invented for this item. A reporter whenever the request names who asked. And one of: a dueDate, a cadence, or an explicit decision that it has no deadline — an item with none of the three tends to be one nobody meant.
+
+What can be taken back. Deleting an item is recoverable: it moves to the trash and comes back through vault_list_trash and vault_restore_item. Three things are not, and they are ranked here because no single tool description can rank them. Re-keying is the costliest — vault_move_item_to_project and vault_rename_project reissue keys across a whole subtree, keys are never reused, and moving back burns a third set while outside references to the old keys stay broken. A comment cannot be removed. A copied attachment cannot be detached, and re-attaching the same filename overwrites the bytes. Confirm before those three; the delete needs confirming least, whatever the tool annotations suggest.
+
+${
+  git
+    ? "Undo. Every write is committed to git, so the vault's history is a real backstop even for the operations above."
+    : "Undo. This server was started without git (VAULT_GIT is not set to 1), so no write is being committed and there is no history to recover from. Treat the irreversible operations above with more care than usual, and say so when you are about to perform one."
+}
+
+Files in synced folders. Do not copy a file out of OneDrive, SharePoint, Google Drive, or Dropbox into the vault — link to it, or attach it with copy: false. Copying makes a second copy that diverges from the one the sync client keeps updating. This server cannot detect synced folders, so the rule is yours to apply.`;
+}
+
+const server = new McpServer(
+  { name: "todo-vault-mcp-server", version: "0.1.0" },
+  { instructions: buildInstructions() },
+);
 
 let vault: Vault;
 
@@ -583,6 +620,39 @@ Links of type 'item' are validated against the vault and produce backlinks on th
     try {
       const item = await withFreshVault(() => vault.addLink(key, { type, target, label }));
       return ok({ key: item.key, links: item.links }, `Linked ${type} to ${item.key}.`);
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+server.registerTool(
+  "vault_unlink_item",
+  {
+    title: "Remove a link from an item",
+    description: `Remove a link previously added with vault_link_item. This is the undo for that tool.
+
+Args:
+  - key (string, required)
+  - type ('url'|'file'|'folder'|'item'|'outlook'|'note', required): which link to remove
+  - target (string, required): must match the recorded target exactly
+
+Returns: { key, links: [...] } — the links that remain
+
+Both type and target are required because two links may share a target under different types; only the one you name is removed. Call vault_get_item first if you are unsure of the exact target string.
+
+Removing an 'item' link removes the backlink on the other item with it. A file attached with copy: false is recorded as a 'file' link and can be removed this way; a copied attachment cannot be removed at all.`,
+    inputSchema: {
+      key: itemKey,
+      type: z.enum(["url", "file", "folder", "item", "outlook", "note"]),
+      target: z.string().min(1),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ key, type, target }) => {
+    try {
+      const item = await withFreshVault(() => vault.removeLink(key, target, type));
+      return ok({ key: item.key, links: item.links }, `Removed ${type} link from ${item.key}.`);
     } catch (err) {
       return fail(err);
     }

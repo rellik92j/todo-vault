@@ -2047,3 +2047,98 @@ into the remove/add pair described above, and its `comments 1 → 1` row into
 the old and new comment bodies plus a `+1 more`. A separate commit's
 collapsed `Description edited  +4 −0` button expanded into the exact four
 added lines the CLI printed for the same commit under `--diff`.
+
+## The server says its own rules, and a link can be taken back ✅ built and driven
+
+`mcp-server.ts` had twenty-six tools and no `instructions` block. That looks
+like a straightforward omission — write down the traps an external Claude keeps
+falling into — and the first draft was going to be seventeen bullets long. It is
+five, and the reason it is five is the finding that shaped the whole change.
+
+**Most of the traps were already stated, at the moment of the call.** Checked one
+by one against the file: that `labels` replaces the whole list is written
+verbatim in `update_item`'s description; that a rejected transition names the
+statuses reachable from here; that `in_progress` stamps `startDate`, exception
+included; that `done` is not `disregard`, closing with "do not disregard
+something on their behalf"; that re-keying a subtree leaves outside quotes of the
+old key stale, and to say so when reporting. Restating any of that in
+`instructions` buys a second copy of guidance the client is already guaranteed to
+receive, and charges it to every session that connects — including the ones that
+never call the tool. Tool descriptions are paid for on use; the block is paid for
+on connect, and that asymmetry is the whole budget.
+
+So the bar became: the block carries only what has **no per-tool home at all**,
+of which there are three kinds. **Cross-cutting** — true across tools and
+therefore fitting in none of them; the symptom is duplication, and the
+synced-cloud warning was written out three times (`link_item`, `attach_file`,
+`SCHEMA.md`) and held in agreement by hand. **Runtime** — descriptions are string
+literals compiled into the file and cannot report the state the process actually
+started in. **Absent** — a thing no tool does has no description to be missing
+from. That triple is the test for anything proposed for the block later.
+
+**`buildInstructions()` is a function rather than a const because of the git
+line.** `mcp-server.ts` opens the vault with `git: process.env.VAULT_GIT === "1"`
+where the desktop app hardcodes `git: true`. With it off, no MCP write is
+committed, so the history that backstops every irreversible operation does not
+exist — and there is no `vault_history` or `vault_git_status` tool, so a client
+cannot ask. This is not currently broken: `.mcp.json`, `README.md` and
+`connectionSnippet()` in `scripts/menu.mts` all set `VAULT_GIT=1`, and
+`menu.test.mts` pins the last of them. The exposure is a hand-rolled config and
+the fact that nothing would tell you. The block now does, in one sentence that
+says something different in each world — verified by driving `initialize` over
+stdio twice and diffing the `instructions` that came back.
+
+**The reversibility bullet exists because `destructiveHint` points the wrong
+way.** `delete_item` renames into `.trash/` and pairs with `restore_item`, and it
+is annotated `true`. A comment has no inverse anywhere in the core; a copied
+attachment has none and re-attaching the same basename overwrites the bytes; and
+`move_item_to_project` re-keys a subtree, where keys are never reissued and
+moving back burns a third set. All three were `false`. A client honouring the
+annotations confirms the recoverable operation and waves through three that are
+not. No per-tool description could fix this, because each annotation is locally
+defensible — it is only the *set* that misleads. That is the same shape as the
+re-key warning, which is thorough on its own tool and still incomplete: the
+missing information is *comparative*, and ranking exists only across a set, never
+inside one member of it. So the bullet is one paragraph about ordering rather
+than a restatement of what each tool does.
+
+**`vault_unlink_item` is the smallest part and changed the most.** `removeLink`
+was already built, tested and shipped in the desktop app, and `README.md` listed
+it as desktop-only; the MCP was the surface that could not reach it. It could not
+be registered as-is: `PLAN-LINKS.md` gotcha 8 recorded that `removeLink` matches
+on `target` alone while `addLink` dedupes on `(type, target)`, so one call
+deletes every link sharing a target. Survivable behind a ✕ a person clicked, who
+could see the rows; not behind a tool an agent calls to undo its own last write.
+`removeLink` gained an optional `type` that narrows the match and defaults to
+today's wide behaviour, so the desktop caller and its two tests are untouched —
+and the gotcha 8 case, previously untested on either side, now has both halves
+covered. The tool always passes a type, and is annotated `destructiveHint: true`,
+given that wrong annotations are half of why this change exists.
+
+**What it buys the block is subtraction.** The append-only warning would have had
+to cover links, comments and attachments; with the tool registered it covers two,
+and the trap that said otherwise was rewritten before it was ever written down
+rather than a week after shipping. That ordering — server surface first,
+conversational skills second — is the reverse of what was first proposed, and the
+reason is that a skill in `.claude/skills/` triggers only inside this checkout,
+while the complaint was always about someone running this server from their own
+Claude Desktop. Rules that must reach that reader go in the block; workflows that
+may cite the CLI, the desktop app and `npm run menu` go in skills, which are still
+to be written and should point at the rules rather than restate them. The
+synced-cloud warning living in three places is the failure mode not to repeat.
+
+Three things were deliberately left out and logged in `IDEAS.md` instead:
+`removeComment`/`removeAttachment` in the core, which are schema decisions and
+not oversights; a real `vault_git_status`, which is one parity pass over
+`doctor`, `git-status` and `history` rather than a twenty-eighth tool; and
+exposing `components`, which the core accepts on both input types and no MCP tool
+sets — a genuine absence, but a field nobody has yet asked for does not earn a
+line in every session's context. The two synced-cloud tool descriptions were also
+left long rather than shortened to point at the block: that trades guaranteed
+guidance for guidance that only arrives if the client honours `instructions`, and
+it is worth doing only once the block has been seen working in more than one
+client.
+
+Driven end to end over stdio against a real vault: two links sharing a target
+under `url` and `note`, `vault_unlink_item` on the `url` one, and the `note` link
+still there afterwards.
