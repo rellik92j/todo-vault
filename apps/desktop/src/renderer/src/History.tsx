@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import type { FileChange, GitStatus, HistoryEntry } from "todo-vault";
+import type { FieldChange, FileChange, GitStatus, HistoryEntry } from "todo-vault";
 import {
+  bodySummary,
   changeLine,
   displayValue,
+  entryLine,
   fallbackNote,
   fieldLabel,
   groupByDay,
@@ -38,6 +40,26 @@ function notRecording(git: GitStatus): string | null {
   return null;
 }
 
+/** Entries under one field row, capped until the file row's expander is open. */
+function FieldEntries({ change, open }: { change: FieldChange; open: boolean }): React.JSX.Element | null {
+  if (!change.items || change.items.length === 0) return null;
+  const shown = open ? change.items : change.items.slice(0, 4);
+  const hidden = change.items.length - shown.length;
+  return (
+    <div className="history-entries">
+      {shown.map((item, i) => {
+        const text = entryLine(item);
+        return (
+          <div className="history-entry-change" key={i} title={text}>
+            {truncate(text, 80)}
+          </div>
+        );
+      })}
+      {hidden > 0 && <div className="history-more">+{hidden} more</div>}
+    </div>
+  );
+}
+
 function FileRow({
   file,
   live,
@@ -47,10 +69,13 @@ function FileRow({
   live: boolean;
   onSelect?: (key: string) => void;
 }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
   const badge = kindBadge(file.kind);
   const note = fallbackNote(file);
   const shown = file.fields.slice(0, MAX_FIELDS);
   const hidden = file.fields.length - shown.length;
+  const bodyDiff = file.body;
+  const summary = bodyDiff ? bodySummary(file) : null;
 
   const label = (
     <>
@@ -78,16 +103,39 @@ function FileRow({
 
       <div className="history-fields">
         {shown.map((change) => (
-          <div className="history-field" key={change.field} title={changeLine(change)}>
-            <span className="history-field-name">{fieldLabel(change.field)}</span>
-            <span className="history-before">{displayValue(change.before)}</span>
-            <span className="history-arrow">→</span>
-            <span className="history-after">{displayValue(change.after)}</span>
+          <div key={change.field}>
+            <div className="history-field" title={changeLine(change)}>
+              <span className="history-field-name">{fieldLabel(change.field)}</span>
+              <span className="history-before">{displayValue(change.before)}</span>
+              <span className="history-arrow">→</span>
+              <span className="history-after">{displayValue(change.after)}</span>
+            </div>
+            <FieldEntries change={change} open={open} />
           </div>
         ))}
         {hidden > 0 && <div className="history-more">+{hidden} more</div>}
-        {file.bodyChanged && !file.unparsed && (
-          <div className="history-field history-note">description changed</div>
+        {summary && (
+          <button
+            type="button"
+            className="history-note history-expand"
+            onClick={() => setOpen((v) => !v)}
+          >
+            <span className="history-expand-arrow">{open ? "▾" : "▸"}</span> {summary}
+          </button>
+        )}
+        {bodyDiff && open && (
+          <div className="history-diff">
+            {bodyDiff.truncated
+              ? "Too large to show line-by-line."
+              : bodyDiff.lines.map((line, i) => (
+                  <div
+                    className={`history-diff-line ${line.op === "add" ? "history-diff-add" : "history-diff-remove"}`}
+                    key={i}
+                  >
+                    {line.op === "add" ? "+" : "−"} {line.text}
+                  </div>
+                ))}
+          </div>
         )}
         {note && <div className="history-field history-note">{note}</div>}
       </div>
