@@ -112,6 +112,35 @@ What you do next depends on why you're here.
   the level is remembered across launches — worth setting once on a new display
   rather than squinting at the default.
 
+## 7. Connect Claude to the vault (optional)
+
+Separate from the in-app drafting above: this is what lets Claude Desktop,
+Cowork or Claude Code read and write the vault directly, so you can ask *"what's
+due this week"* in a normal chat.
+
+In the menu, press `C`. It asks which vault to point at, then prints a config
+block with the real paths on this machine already in it — worth using rather
+than copying the one in the README, since the two placeholders there are exactly
+what goes wrong. Paste it into
+
+```
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+creating the file if it isn't there, then **quit Claude Desktop completely and
+reopen it**. Closing the window leaves it running in the tray, and the config is
+only read at startup, so a tray-close looks like the setting simply didn't work.
+
+That one entry covers Cowork too — Cowork has no MCP config of its own, it reads
+Desktop's and bridges the server across. For Claude Code, the same block goes in
+`.mcp.json` at the repo root instead; it's gitignored, so creating it is safe.
+
+Two things to know when it appears not to work. The config points at
+`packages/core/dist/mcp-server.js`, which only exists once you've built — press
+`7` if you skipped it. And a config pointing at a missing file fails silently:
+no error, the vault tools just never show up. Pressing `C` checks for that build
+and warns you before printing.
+
 ## Updating an existing copy
 
 Already cloned and just want the latest changes? `npm run menu`, then press
