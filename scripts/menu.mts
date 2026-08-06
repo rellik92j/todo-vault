@@ -311,6 +311,32 @@ export function tokenize(input: string): string[] {
   return out;
 }
 
+/**
+ * Unwraps a path that arrived wrapped in quotes.
+ *
+ * Explorer's "Copy as path" hands you `"C:\Users\...\Vault"`, quotes included,
+ * and pasting that is the most likely way anyone supplies a non-default vault
+ * on Windows. Left alone, the leading quote stops `path.resolve` recognising
+ * the string as absolute, so it is joined onto the repo root instead —
+ * producing a plausible-looking `VAULT_DIR` that points nowhere.
+ *
+ * Deliberately not `tokenize`. That splits on whitespace outside quotes, which
+ * is right for an argument list and wrong for a single path: an *unquoted*
+ * `C:\Users\me\OneDrive - Acme, LLC\Vault` would come back as five tokens, and
+ * taking the first would truncate it at `OneDrive`. Trading one silent
+ * corruption for another is not a fix. So: strip a matched pair of surrounding
+ * quotes, and otherwise take the line exactly as typed, spaces and all.
+ */
+export function unquotePath(input: string): string {
+  const trimmed = input.trim();
+  const quote = trimmed[0];
+
+  if ((quote === '"' || quote === "'") && trimmed.length >= 2 && trimmed.endsWith(quote)) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 // ------------------------------------------------------- the Claude MCP config
 
 /**
@@ -514,8 +540,11 @@ async function runConnect(): Promise<number> {
     );
   }
 
-  write(`${dim("Which vault should Claude open? Answer with a path, or Enter for the default.")}\n\n`);
-  const answer = await ask(`${cyan("vault directory")} ${dim("[./vault]")} `);
+  write(
+    `${dim("Which vault should Claude open? Answer with a path, or Enter for the default.")}\n` +
+      `${dim("Quotes are fine — paste straight from Explorer's Copy as path.")}\n\n`,
+  );
+  const answer = unquotePath(await ask(`${cyan("vault directory")} ${dim("[./vault]")} `));
   const vaultDir = path.resolve(REPO_ROOT, answer || "./vault");
 
   if (!existsSync(vaultDir)) {

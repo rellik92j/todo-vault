@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { connectionSnippet, tokenize } from "./menu.mjs";
+import { connectionSnippet, tokenize, unquotePath } from "./menu.mjs";
 
 test("splits a plain command line on whitespace", () => {
   assert.deepEqual(tokenize("agenda week"), ["agenda", "week"]);
@@ -52,6 +52,39 @@ test("points at the built server, not the source and not the repo root", () => {
   }).mcpServers["todo-vault"].args;
 
   assert.equal(args[0], "/home/me/todo-vault/packages/core/dist/mcp-server.js");
+});
+
+test("a vault path pasted with its quotes loses them", () => {
+  // Explorer's "Copy as path" includes the quotes, and the leading one stops
+  // path.resolve seeing an absolute path — so it lands under the repo root and
+  // VAULT_DIR points nowhere, which is what this whole function exists to stop.
+  const copied = String.raw`"C:\Users\me\OneDrive - Acme Legal, LLC\Desktop\Vault"`;
+
+  assert.equal(unquotePath(copied), String.raw`C:\Users\me\OneDrive - Acme Legal, LLC\Desktop\Vault`);
+  assert.equal(unquotePath("'/home/me/vault'"), "/home/me/vault");
+});
+
+test("an unquoted path keeps every space in it", () => {
+  // The reason this is not tokenize: that would return five arguments here, and
+  // taking the first would quietly truncate the path at "OneDrive".
+  const typed = String.raw`C:\Users\me\OneDrive - Acme Legal, LLC\Desktop\Vault`;
+
+  assert.equal(unquotePath(typed), typed);
+  assert.equal(unquotePath(`  ${typed}  `), typed);
+});
+
+test("a quote that is not a wrapping pair is left where it is", () => {
+  // A lone quote is likelier to be part of the name than a mistake, and a
+  // half-stripped path is harder to spot than an obviously odd one.
+  assert.equal(unquotePath('"'), '"');
+  assert.equal(unquotePath(`C:\\Users\\me\\Bob's vault`), `C:\\Users\\me\\Bob's vault`);
+  assert.equal(unquotePath('"C:\\half\\quoted'), '"C:\\half\\quoted');
+});
+
+test("an empty answer stays empty, so the caller can apply its own default", () => {
+  assert.equal(unquotePath(""), "");
+  assert.equal(unquotePath("   "), "");
+  assert.equal(unquotePath('""'), "");
 });
 
 test("emits forward slashes so a hand-edited path does not need doubling", () => {
