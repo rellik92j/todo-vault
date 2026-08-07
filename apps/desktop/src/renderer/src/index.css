@@ -1318,77 +1318,83 @@ button:focus-visible {
   margin: 0 0 7px;
 }
 
-/* Rendered markdown, not raw text — so no `white-space: pre-wrap` here: the
-   line breaks are real <br> elements now, and pre-wrap would double every gap
-   between blocks. */
+/* .description is the frame — the chrome that says "click to edit". .prose is
+   the typography underneath it, split out so a comment can use the second
+   without the first: a posted comment is not an editable field. */
 .description {
-  font-size: 12.5px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  color: var(--text-dim);
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 10px 12px;
   margin: 0;
-  font-family: inherit;
   cursor: text;
+}
+
+/* Rendered markdown, not raw text — so no `white-space: pre-wrap` here: the
+   line breaks are real <br> elements now, and pre-wrap would double every gap
+   between blocks. */
+.prose {
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-family: inherit;
 }
 
 /* Browser defaults are sized for a document, not for a 12.5px side panel, so
    every block inside here gets its own spacing and scale. First and last lose
    their outer margin so the container's padding is the only edge. */
-.description > * {
+.prose > * {
   margin: 0 0 8px;
 }
 
-.description > *:last-child {
+.prose > *:last-child {
   margin-bottom: 0;
 }
 
-.description h4,
-.description h5,
-.description h6 {
+.prose h4,
+.prose h5,
+.prose h6 {
   color: var(--text);
   font-weight: 650;
   margin-top: 12px;
 }
 
-.description > h4:first-child,
-.description > h5:first-child,
-.description > h6:first-child {
+.prose > h4:first-child,
+.prose > h5:first-child,
+.prose > h6:first-child {
   margin-top: 0;
 }
 
-.description h4 {
+.prose h4 {
   font-size: 13.5px;
 }
 
-.description h5 {
+.prose h5 {
   font-size: 12.5px;
 }
 
-.description h6 {
+.prose h6 {
   font-size: 11.5px;
   color: var(--text-dim);
 }
 
-.description ul,
-.description ol {
+.prose ul,
+.prose ol {
   padding-left: 20px;
 }
 
-.description li {
+.prose li {
   margin-bottom: 3px;
 }
 
-.description blockquote {
+.prose blockquote {
   border-left: 2px solid var(--border-strong);
   padding-left: 10px;
   color: var(--text-faint);
 }
 
-.description code {
+.prose code {
   font-family: var(--mono);
   font-size: 11.5px;
   background: var(--bg);
@@ -1397,7 +1403,7 @@ button:focus-visible {
   padding: 0 4px;
 }
 
-.description pre {
+.prose pre {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1408,7 +1414,7 @@ button:focus-visible {
 
 /* The <pre> already carries the frame; a nested inline-code box inside it would
    draw a second one around every line. */
-.description pre code {
+.prose pre code {
   background: none;
   border: none;
   padding: 0;
@@ -1416,7 +1422,7 @@ button:focus-visible {
   line-height: 1.5;
 }
 
-.description strong {
+.prose strong {
   color: var(--text);
   font-weight: 650;
 }
@@ -1536,9 +1542,6 @@ button:focus-visible {
 }
 
 .comment-body {
-  font-size: 12.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -1844,6 +1847,20 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 .mini-form input {
   flex: 1;
+}
+
+/* Not a .mini-form: that selector's flex row and `input { flex: 1 }` rules
+   name <input> and <select>, so a RichEditor div would inherit none of them
+   and land as an unsized flex child beside the button anyway. */
+.comment-form {
+  margin-top: 8px;
+}
+
+/* The description's editor is sized for a description. A comment is a line or
+   two, so the surface starts short and grows; .rich-surface's 120px floor
+   would put a half-empty box under every item. */
+.comment-form .rich-surface {
+  min-height: 56px;
 }
 
 .btn-danger {

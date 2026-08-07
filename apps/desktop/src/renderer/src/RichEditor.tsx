@@ -80,7 +80,7 @@ export function RichEditor({
     editorProps: {
       // Reuses the read view's block styling, so the text does not change shape
       // between reading it and editing it.
-      attributes: { class: "description rich-surface" },
+      attributes: { class: "description prose rich-surface" },
     },
     ...(onChange
       ? { onUpdate: ({ editor: e }) => onChange(serializeDescription(blocksFromDoc(e.getJSON()))) }
@@ -91,7 +91,7 @@ export function RichEditor({
     if (linkForm) linkRef.current?.focus();
   }, [linkForm]);
 
-  if (!editor) return <div className="description rich-surface" />;
+  if (!editor) return <div className="description prose rich-surface" />;
 
   const commit = (): void => {
     if (settled.current || !onCommit) return;
