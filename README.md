@@ -190,6 +190,7 @@ command and returns you to the menu rather than killing both.
 | `npm run vault -- <args>` | The vault CLI, from the repo root. |
 | `npm run mcp` | The MCP server, over stdio. |
 | `npm run seed -- <dir>` | Build the worked example vault. |
+| `npm run update` | Pull, reinstall, rebuild core — refuses rather than merging if you have diverged. |
 | `npm run shortcut` | Writes a desktop shortcut that starts the built app with no terminal. |
 | `npm run check-updates` | Is the build stale, or is there a newer version upstream? |
 | `npm run menu` | The launcher above. |
@@ -452,7 +453,15 @@ detection, trash and restore, atomic writes, bulk edit), the desktop app's pure
 renderer logic (nesting, collapse, type filtering, board lanes, agenda bands,
 multi-select ranges), and the launcher's argument tokenizer.
 
-There is no CI yet — the suite is run by hand. See [`IDEAS.md`](IDEAS.md).
+[CI](.github/workflows/ci.yml) runs all of it on every pull request and every
+push to `main` — `npm ci`, a core build, typecheck and the suite, on Node 22 and
+24, plus a separate job for the full build. Windows only, deliberately: this
+codebase routes around the `npm.cmd` shim and retries renames for transient
+Windows file locks, and neither path is reachable on Linux, so a green Linux run
+would be evidence about a program nobody runs.
+
+`main` is not a protected branch, so a red run is still something a human can
+merge past. See [`IDEAS.md`](IDEAS.md).
 
 ---
 
