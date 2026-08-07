@@ -2416,3 +2416,67 @@ with data. Argument handling and the unreachable-host path were driven too. None
 of that is evidence that Atlassian answers in the shape assumed here. The first
 run against a real instance is what would turn this from plausible into
 verified, and it is the only way to find out.
+
+## A `+ new child` from the open item ✅ built
+
+The only route to a child used to be the toolbar's **+ New**, which opens the
+create form with Parent empty and asks you to find the item you were just
+reading in a menu. The detail panel's Children section now carries the
+affordance itself — a button in the heading that opens the create form already
+pointed at the open item.
+
+**The type and the parent have to be set together, in initial state, or the
+form silently undoes the prefill.** `CreateDialog` defaults `type` to `"task"`
+and runs an effect that clears `parent` whenever the chosen type makes it
+illegal. A parent-only prefill survives from an epic — a task's legal parents
+are epics — and is wiped everywhere else, since a story, task or bug can only
+parent a subtask and `type` is still `"task"` when the effect first runs. The
+form would look like it had ignored the click. Both values go into `useState`
+initialisers rather than an effect after mount, so the clearing effect's first
+run always sees a legal pairing.
+
+**The menu is filtered by the open item's type, not the four non-epic types
+flat, for the same reason.** `CHILD_TYPES` in `pieces.tsx` answers "what may
+hang off this type" — the inverse reading of `legalParents`, which answers
+"what can this type hang off." `epic` is never offered: an epic takes no
+parent, so a child that is one cannot exist. An unfiltered menu would let `+
+new task` open under a task, a pairing the vault refuses, and reintroduce the
+exact silent-clear failure through a control that looks deliberate. Where only
+one type is legal — everywhere except an epic — there is no menu at all: the
+button names the type directly (`+ new subtask`), since a menu of one is a
+wasted click and the type is genuinely prefilled, not guessed.
+
+**The Children section now renders whenever the open item's type can have
+children, with the button as its empty state, because an epic with no children
+is worth seeing as an absence rather than a missing section.** It used to be
+gated on `related.children.length > 0`, which hid the section from exactly the
+item most likely to want a first child. The empty state — heading, button, one
+faint "No children." line — is a direct copy of the Links section's existing
+`+ add` / `field-note` pattern rather than a new idea, so it costs three lines
+of vertical space at rest and no new CSS.
+
+`NewChildControl` (`ItemDetail.tsx`) is the same native-`<select>`,
+focus-and-`showPicker()` pattern `ParentField` already uses just above it in
+the same file, for the same reason: the panel scrolls its own body, and a
+native select renders its list above the page rather than needing to be
+reasoned about inside that scroll. `creating` in `App.tsx` became
+`NewItemDefaults | null` instead of a boolean, carrying `project`, `type` and
+`parent` from wherever the click originated; the toolbar's **+ New** and the
+`n` shortcut still pass `{}` and land on an unprefilled `task`, which is the
+regression this change was likeliest to cause.
+
+One interaction was left deliberately unhandled: pressing **Draft** in the
+opened form can clear the prefilled parent, because `draft()` sets `project`
+and `type` from Claude's answer and never touches `parent`, so if the draft
+changes either in a way that makes the parent illegal, the same clearing
+effect fires. That is the effect doing the right thing — the parent genuinely
+became illegal — and the Parent select still shows the true state, so nothing
+is hidden. No core work: `parent` was already accepted on create by the vault,
+the CLI and `vault_create_item`.
+
+No unit test — `pieces.tsx` and `ItemDetail.tsx` are exactly the kind of `.tsx`
+module the desktop suite already excludes, since `tsx --test` importing JSX
+drags React in. Verified with a clean `npm run typecheck` (which does cover
+`CHILD_TYPES`'s `Record<ItemType, …>` exhaustiveness and the `overlaid`
+boolean-to-union change) and, short of a full click-through, a Vite dev-server
+fetch of all four touched files confirming each transforms without error.

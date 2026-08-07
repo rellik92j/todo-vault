@@ -41,6 +41,20 @@ export function legalParents(items: Item[], project: string, type: ItemType): It
 }
 
 /**
+ * Which types may hang off an item of this type — the inverse reading of
+ * legalParents, which answers the same rule from the child's side. Two
+ * readings, one hierarchy: epics take story/task/bug, those three take
+ * subtasks, and a subtask takes nothing.
+ */
+export const CHILD_TYPES: Record<ItemType, readonly ItemType[]> = {
+  epic: ["story", "task", "bug"],
+  story: ["subtask"],
+  task: ["subtask"],
+  bug: ["subtask"],
+  subtask: [],
+};
+
+/**
  * Every reporter name the vault has used, for the suggestion menus.
  *
  * Derived, never stored. The names *are* whatever is on the items, so a list kept

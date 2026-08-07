@@ -27,6 +27,8 @@ export function CreateDialog({
   items,
   reporters,
   defaultProject,
+  defaultType,
+  defaultParent,
   onClose,
   onCreate,
 }: {
@@ -35,16 +37,19 @@ export function CreateDialog({
   /** Every name the vault has used, for the Reporter menu. Derived in App. */
   reporters: string[];
   defaultProject: string | null;
+  /** Optional: the toolbar and the `n` shortcut open with neither and land on `task`. */
+  defaultType?: ItemType;
+  defaultParent?: string;
   onClose: () => void;
   /** Resolves to an error message, or null once the item exists. */
   onCreate: (input: Record<string, unknown>) => Promise<string | null>;
 }): React.JSX.Element {
   const [project, setProject] = useState(defaultProject ?? projects[0]?.key ?? "");
-  const [type, setType] = useState<ItemType>("task");
+  const [type, setType] = useState<ItemType>(defaultType ?? "task");
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>("medium");
-  const [parent, setParent] = useState("");
+  const [parent, setParent] = useState(defaultParent ?? "");
   const [dueDate, setDueDate] = useState("");
   const [category, setCategory] = useState("");
   const [labels, setLabels] = useState("");
