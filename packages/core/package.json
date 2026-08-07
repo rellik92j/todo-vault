@@ -42,7 +42,8 @@
     "dev": "tsx src/cli.ts",
     "mcp": "tsx src/mcp-server.ts",
     "seed": "tsx scripts/seed-vault.ts",
-    "test": "tsx --test test/vault.test.ts",
+    "//test": "Globs, as the root and apps/desktop do. It named test/vault.test.ts alone until there was a second test file, at which point a single name is not a suite — it is a suite that silently ignores everything added to it. The glob is why this workspace needs Node 22: npm hands scripts to cmd.exe on Windows, cmd.exe does not expand globs, and Node only learned to expand the pattern itself in 22. The engines floor here was already >=22 for agreement with the root; this is what makes it load-bearing.",
+    "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

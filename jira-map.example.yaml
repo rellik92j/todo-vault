@@ -2,14 +2,24 @@
 #
 # Copy this to <vault>/jira-map.yaml and fill it in for YOUR instance. Almost
 # every value below differs between Jira sites, which is why this is config and
-# not code. To discover the custom field ids, hit these endpoints on your
-# instance with an API token and search the JSON for the field names:
+# not code.
+#
+# To fill in the custom field ids, let the CLI read them off your instance:
+#
+#   JIRA_EMAIL=you@company.com JIRA_TOKEN=... \
+#     vault jira discover --url https://yoursite.atlassian.net --project ENG
+#
+# It prints a fragment to paste in here, annotated with the name each id had on
+# your site. It reads two endpoints and writes nothing:
 #
 #   GET /rest/api/3/field
 #   GET /rest/api/3/issue/createmeta?projectKeys=ENG&expand=projects.issuetypes.fields
 #
-# The vault never reads this file over the network. It is used only to build a
-# payload you review before anything is sent.
+# Hitting those by hand and searching the JSON still works and is what discover
+# does for you.
+#
+# This file is never sent anywhere. It is used only to build a payload you
+# review before anything leaves the machine.
 
 # Where these items land. This is the Jira project key, not your vault key.
 jiraProjectKey: ENG

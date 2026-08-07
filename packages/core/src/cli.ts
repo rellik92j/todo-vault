@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { Vault, VaultError } from "./vault.js";
 import { buildPushPlan, loadJiraMap, toJiraCsv } from "./jira.js";
+import { discoverJiraMap } from "./jira-discover.js";
 import {
   AGENDA_SCOPES,
   ITEM_KEY_RE,
@@ -82,6 +83,8 @@ Usage: vault <command> [options]
   history [KEY|PROJ]                What changed, newest first, from the git log
   jira plan [--out plan.json]       Build a reviewable Jira push payload
   jira csv  [--out issues.csv]      Export for Jira's CSV importer
+  jira discover --url U --project K Read a live instance for jira-map.yaml ids
+                                    (needs JIRA_EMAIL and JIRA_TOKEN set)
 
 Global options:
   --vault <dir>   Vault location (default: $VAULT_DIR or ./vault)
@@ -747,6 +750,43 @@ async function main(): Promise<void> {
     }
 
     case "jira": {
+      // Before the map is loaded, deliberately: discovery is how you get a map,
+      // so requiring one first would make the command impossible to run for its
+      // only purpose.
+      if (sub === "discover") {
+        const email = process.env.JIRA_EMAIL;
+        const token = process.env.JIRA_TOKEN;
+
+        // Read from the environment rather than accepted as flags. A token on a
+        // command line is in shell history and in the process list, and this
+        // repo already treats a credential as something with no read path at
+        // all — the Anthropic key goes into safeStorage with no getter on the
+        // IPC surface. A discovery convenience is not the place to lower that.
+        if (!email || !token) {
+          const missing = [!email && "JIRA_EMAIL", !token && "JIRA_TOKEN"].filter(Boolean);
+          throw new VaultError(
+            `Set ${missing.join(" and ")} before running this. JIRA_EMAIL is the account's email address; JIRA_TOKEN is an API token from id.atlassian.com. They are read from the environment rather than passed as flags so the token stays out of your shell history.`,
+          );
+        }
+
+        const site = str(flags, "url");
+        if (!site) {
+          throw new VaultError(
+            "Pass --url https://yoursite.atlassian.net. This is the one value that cannot be guessed, since no map exists yet to read a baseUrl from.",
+          );
+        }
+
+        const projectKey = str(flags, "project");
+        if (!projectKey) {
+          throw new VaultError(
+            "Pass --project ENG — the Jira project key, not the vault's. Issue type names are per project, so there is nothing to look up without one.",
+          );
+        }
+
+        process.stdout.write(`${await discoverJiraMap(site, { email, token }, projectKey)}\n`);
+        return;
+      }
+
       const mapPath = str(flags, "map") ?? path.join(vault.root, "jira-map.yaml");
       const map = await loadJiraMap(mapPath);
       const { items } = vault.listItems({

@@ -393,7 +393,7 @@ Push only. The vault is upstream of Jira, never a mirror of it.
 
 ```bash
 cp jira-map.example.yaml vault/jira-map.yaml
-# fill in your instance's custom field ids — see the comments in the file
+# fill in your instance's custom field ids — `jira discover` below finds them
 npm run vault -- jira plan --vault ./vault --out plan.json
 ```
 
@@ -402,17 +402,39 @@ Atlassian Document Format. Parents are sequenced before their children, and
 items already pushed and unchanged are skipped. Review it, POST it, then record
 the push so drift detection has a baseline.
 
-**Nothing in this repo makes a network call.** The actual POST is deliberately
-left to you, so an offline vault stays offline until you decide otherwise.
+**The POST is deliberately left to you**, so an offline vault stays offline
+until you decide otherwise. Nothing here writes to Jira — the only command that
+touches the network at all is `jira discover`, and it only reads.
+
+### Finding your instance's field ids
 
 The part that always bites: **every Jira instance names its fields
-differently.** Start date is a custom field with a different id on every site.
-Run these against your instance and search the output before filling in the map:
+differently.** Start date is a custom field with a different id on every site,
+and estimate is genuinely two different fields — `Story point estimate` on
+team-managed projects, `Story Points` on company-managed ones — which is why a
+hardcoded `customfield_10016` is wrong about half the time.
 
+```bash
+export JIRA_EMAIL=you@company.com
+export JIRA_TOKEN=...        # an API token from id.atlassian.com
+npm run vault -- jira discover --url https://yoursite.atlassian.net --project ENG --vault ./vault
 ```
-GET /rest/api/3/field
-GET /rest/api/3/issue/createmeta?projectKeys=ENG&expand=projects.issuetypes.fields
-```
+
+It reads `GET /rest/api/3/field` and the create metadata for that project, then
+prints a YAML fragment to paste into `jira-map.yaml`, annotated with the name
+each id had on your instance so you can check the guess rather than trust a
+number. It does not write the file — `jira-map.yaml` is nine tenths comments
+explaining what each value is for, and merging into it would mean reserialising
+all of them.
+
+Two things it does deliberately. Where two fields share a display name — which
+Jira permits, and which is how estimates end up written to a field nobody reads
+— it reports both rather than picking one. And where an issue type has been
+renamed, it says so instead of guessing, because a site calling Story
+"Deliverable" cannot be inferred.
+
+Credentials come from the environment rather than flags, so the token stays out
+of your shell history and the process list.
 
 If `fields.startDate` is missing from your map, the plan warns rather than
 silently dropping your dates.
