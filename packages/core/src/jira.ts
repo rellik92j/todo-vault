@@ -240,7 +240,7 @@ export function buildPushPlan(items: Item[], map: JiraMap, vault: Vault): JiraPu
         fields[map.fields.startDate] = item.startDate;
       } else {
         warnings.push(
-          `${item.key} has a start date but jira-map.yaml has no fields.startDate. Run \`vault jira discover\` to find the custom field id for your instance.`,
+          `${item.key} has a start date but jira-map.yaml has no fields.startDate. Run \`vault jira discover --url <your site> --project <KEY>\` with JIRA_EMAIL and JIRA_TOKEN set to find the custom field id for your instance.`,
         );
       }
     }

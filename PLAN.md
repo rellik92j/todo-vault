@@ -4,7 +4,7 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 192 green tests — 99 in the core, 49 over the app
+below them. The suite is at 204 green tests — 111 in the core, 49 over the app
 (ordering, selection, navigation, links, history formatting) and 44 over the
 scripts in `scripts/`. The counts in this paragraph have drifted before; CI now
 runs the suite on every push, so a stale number here is a documentation lapse
@@ -1472,9 +1472,10 @@ deserves a second look before it ships.
 ## Phase 5 — Jira push from the UI
 
 `buildPushPlan` output in a review pane, then the POST as an explicit user
-action. Also implement `vault jira discover`: both the README and a warning
-string inside `jira.ts` instruct you to run it, and `cli.ts` has no such
-subcommand — the only two `jira` subcommands are `csv` and the default plan.
+action. `vault jira discover` was the other half of this phase and has been
+built ahead of it — see its section below — because it had stopped being a
+missing feature and become a warning that named a command the CLI would reject.
+What remains here is the push itself, which is the part that writes.
 
 ## `reporter` — who asked for it, surfaced in the app ✅ built and driven
 
@@ -1822,11 +1823,8 @@ but left `due` and `overdue` double-listing the same three items.
 
 ## Loose ends worth knowing about
 
-**`vault jira discover` still does not exist.** The README no longer names it,
-but `jira.ts` does — twice, and one of them at runtime: the warning at
-`jira.ts:243` fires during a real push and tells the user to run a command
-`cli.ts` has no case for. That makes it the only gap here that reaches a user
-rather than a reader. Phase 5.
+**`vault jira discover` exists now** — see its own section below. The warning at
+`jira.ts:243` that advertised it has told the truth since.
 
 **The OneDrive half of `PLAN-LINKS.md` is built** — steps 3–4, landed together.
 A file inside a discovered sync root can no longer be copied into
@@ -2356,3 +2354,65 @@ stays in `IDEAS.md`: a check that compares the test counts written into prose
 against the ones the suite reports. That drift has now recurred twice more since
 the entry was written. `main` also remains unprotected — verified, not assumed —
 so a red run is still a red X that can be merged straight past.
+
+## `vault jira discover` ✅ built, and the one thing here never run for real
+
+This was Phase 5 work that arrived early, because it had stopped being a missing
+feature and become a false statement. `buildPushPlan` emits a warning during a
+real push — "Run `vault jira discover` to find the custom field id for your
+instance" — and `cli.ts` had no case for that subcommand. The `fields` JSDoc in
+`jira.ts` said the same thing. Every other gap in this repo is something a
+*reader* notices; this one was the app telling a *user* to run a command that
+would answer `Unknown command`.
+
+**It reads and prints, and both halves were settled by precedent rather than
+decided fresh.** Reading only follows from `jira.ts`'s own opening: the vault is
+upstream of Jira and never a mirror, so nothing here creates, updates or
+transitions anything — discovery is two GETs against metadata. Printing rather
+than writing `jira-map.yaml` is the argument `[C] Connect Claude` had already
+had with `claude_desktop_config.json`: merging into a file means reserialising
+everything around it, and `jira-map.example.yaml` is nine tenths comments
+explaining what each value is for. A writer would have to preserve those by hand
+or destroy them.
+
+**Credentials come from the environment, not from flags.** A token passed as
+`--token` is in shell history and in the process list. This repo already treats
+a credential as something with no read path at all — the Anthropic key goes into
+`safeStorage` with no getter on the IPC surface — and a discovery convenience is
+not the place to lower that bar. `--url` and `--project` are flags because
+neither is secret and neither can be guessed: no map exists yet to read a
+`baseUrl` from, and issue type names are per project.
+
+**The two findings worth reporting rather than resolving.** Jira permits two
+fields to share a display name, and a company-managed and a team-managed project
+each having their own "Story Points" is the ordinary way it happens — picking
+one silently is how estimates end up written into a field nobody reads, so both
+come back as `alternatives` for a person to settle. And a site that renamed
+Story to "Deliverable" cannot be inferred, so unmatched types are named in the
+output instead of guessed at. The command's value is that it is checkable: every
+id is printed beside the name it carried on the instance.
+
+**A bug the tests caught that reading would not have.** The candidate name lists
+originally held case variants — "Story Points" beside "Story points" — while
+matching was already case-insensitive, so a single field matched twice and
+surfaced as a phantom duplicate in exactly the ambiguity report that exists to
+be trusted. Names are now listed once, and matches dedupe by id rather than by
+name, since two genuinely distinct fields sharing a name is the finding and one
+field counted twice is the bug.
+
+**`packages/core` now globs its tests.** It ran `test/vault.test.ts` by name,
+which is not a suite so much as a suite that silently ignores everything added
+to it — this change added the second test file and would otherwise never have
+run it. That also makes the `>=22` floor in that workspace load-bearing rather
+than merely consistent with the root: the glob is expanded by Node, because npm
+hands scripts to `cmd.exe` and `cmd.exe` will not do it.
+
+**What has never happened is a request to a real Jira.** The pure matchers are
+covered by twelve tests against canned payloads, and the command was driven end
+to end against a local stub serving realistic `field` and `createmeta`
+responses — which proves the URL building, the Basic auth header, the zod
+parsing and the matchers, since the stub 401s without credentials and answered
+with data. Argument handling and the unreachable-host path were driven too. None
+of that is evidence that Atlassian answers in the shape assumed here. The first
+run against a real instance is what would turn this from plausible into
+verified, and it is the only way to find out.
