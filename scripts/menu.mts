@@ -19,43 +19,19 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
-import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+import { REPO_ROOT, bold, cyan, dim, green, isMain, npmCli, red, yellow } from "./shared.mjs";
 
 /**
- * Both commands the menu spawns are resolved to their JavaScript entry and run
- * through `process.execPath`, never as `node_modules/.bin/tsx` or `npm.cmd`.
- * On Windows those are batch shims, and since the CVE-2024-27980 fix Node
- * refuses to spawn one without `shell: true` — which hands the whole command
- * line to cmd.exe as a single unquoted string, mangling any argument
- * containing a space and earning a DEP0190 deprecation for the privilege.
- * Going through node keeps a real argv, so `--summary "two words"` survives.
+ * tsx's JavaScript entry, run through `process.execPath` rather than as
+ * `node_modules/.bin/tsx`. Same reason npm gets the same treatment: that path
+ * is a batch shim on Windows, and Node will not spawn one without `shell: true`
+ * — see `npmCli` in ./shared.mts for the whole argument.
  */
 const TSX_CLI = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 
-/**
- * npm sets `npm_execpath` for its children and points it at the .js file, so
- * `npm run menu` reuses the exact npm that launched it rather than whichever
- * one PATH finds first — which nvm-windows and friends can disagree about.
- * The fallback covers being started directly (`tsx scripts/menu.mts`), where
- * npm sits beside node. Null means neither was found: fine on POSIX, where the
- * bare name spawns without a shell anyway, and caught in main() on Windows.
- */
-function resolveNpmCli(): string | null {
-  const fromEnv = process.env.npm_execpath;
-  if (fromEnv?.endsWith(".js") && existsSync(fromEnv)) return fromEnv;
-  const beside = path.join(
-    path.dirname(process.execPath),
-    "node_modules",
-    "npm",
-    "bin",
-    "npm-cli.js",
-  );
-  return existsSync(beside) ? beside : null;
-}
-
-const NPM_CLI = resolveNpmCli();
+/** Null means npm's entry point was not found; main() decides what that means. */
+const NPM_CLI = npmCli();
 
 const CORE_CLI = "packages/core/src/cli.ts";
 const SEED_SCRIPT = "packages/core/scripts/seed-vault.ts";
@@ -69,15 +45,6 @@ const SEED_SCRIPT = "packages/core/scripts/seed-vault.ts";
 const MCP_ENTRY = "packages/core/dist/mcp-server.js";
 
 // ---------------------------------------------------------------- presentation
-
-const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
-const paint = (code: string) => (s: string) => (useColor ? `\u001b[${code}m${s}\u001b[0m` : s);
-const bold = paint("1");
-const dim = paint("2");
-const cyan = paint("36");
-const green = paint("32");
-const red = paint("31");
-const yellow = paint("33");
 
 function clear(): void {
   if (process.stdout.isTTY) process.stdout.write("\u001b[2J\u001b[H");
@@ -649,11 +616,7 @@ async function main(): Promise<void> {
 
 // Only when run as a command. Importing this module — the tokenizer tests do —
 // must not launch a menu into the test runner's stdout.
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   main().catch((err: unknown) => {
     write(red(`\n${err instanceof Error ? err.stack ?? err.message : String(err)}\n`));
     process.exitCode = 1;
