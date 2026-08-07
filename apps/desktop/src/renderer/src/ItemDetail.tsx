@@ -15,6 +15,8 @@ import type { Result, VaultSnapshot } from "@shared/api";
 
 import { parseUriList } from "./drops";
 import { HistoryList } from "./History";
+import { Markdown } from "./Markdown";
+import { RichEditor } from "./RichEditor";
 import {
   EditableDate,
   EditableList,
@@ -101,6 +103,10 @@ export function ItemDetail({
   /** null while a page is in flight — distinct from an item with no history. */
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [comment, setComment] = useState("");
+  // Bumped after a successful post, to remount the editor — RichEditor takes
+  // its content once, at mount, so setComment("") alone would clear the state
+  // and leave the typed text on screen. CreateDialog:63 has the same trick.
+  const [commentGeneration, setCommentGeneration] = useState(0);
   const [linkDraft, setLinkDraft] = useState({ type: "url", target: "", label: "" });
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [dropping, setDropping] = useState(false);
@@ -733,25 +739,26 @@ export function ItemDetail({
               <div className="comment-meta">
                 {entry.author} · {entry.at.replace("T", " ").slice(0, 16)}
               </div>
-              <div className="comment-body">{entry.body}</div>
+              <div className="comment-body prose">
+                <Markdown source={entry.body} onOpenLink={(href) => openTarget("external", href)} />
+              </div>
             </div>
           ))}
 
           <form
-            className="mini-form"
+            className="comment-form"
             onSubmit={(e) => {
               e.preventDefault();
               if (!comment.trim()) return;
               void mutate(() => window.vault.addComment(item.key, comment)).then((err) => {
-                if (!err) setComment("");
+                if (!err) {
+                  setComment("");
+                  setCommentGeneration((n) => n + 1);
+                }
               });
             }}
           >
-            <input
-              placeholder="Add to the running log…"
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-            />
+            <RichEditor key={commentGeneration} value={comment} onChange={setComment} />
             <button className="btn" type="submit" disabled={!comment.trim()}>
               Comment
             </button>

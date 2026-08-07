@@ -416,7 +416,7 @@ export function EditableMarkdown({
 
   return (
     <div
-      className="description"
+      className="description prose"
       title="Click to edit"
       onClick={(e) => {
         // A link in the text is there to be followed; only a click on the prose

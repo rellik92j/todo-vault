@@ -2480,3 +2480,65 @@ drags React in. Verified with a clean `npm run typecheck` (which does cover
 `CHILD_TYPES`'s `Record<ItemType, …>` exhaustiveness and the `overlaid`
 boolean-to-union change) and, short of a full click-through, a Vite dev-server
 fetch of all four touched files confirming each transforms without error.
+
+## Comments get the description's editor ✅ built, not yet driven
+
+The comment box was an `<input>` inside a `mini-form`, so a newline could not be
+typed at all, and bodies rendered as raw text. Both halves now reuse what the
+description already had: `RichEditor` mounts in place of the input, and bodies
+render through `Markdown` instead of `{entry.body}`. No core work — `addComment`
+already only trimmed its input, and the frontmatter writer already emitted a
+`body: |-` block scalar for anything multi-line.
+
+**The comment editor takes `onChange`, never `onCommit`.** `RichEditor`'s
+`onCommit` is what wires blur-to-save and Ctrl+Enter — the right bargain for a
+description, which can be edited again after a stray commit. A comment cannot be
+removed, so a half-typed paragraph posted because the sidebar was clicked would
+be permanent. The cost is real and was taken deliberately: Enter now types a
+paragraph instead of submitting, and Ctrl+Enter is dead rather than merely
+unbound, because `commit()` returns early with no `onCommit` to call. Posting is
+type-then-click-**Comment**, full stop. `onCancel` is omitted for the same
+reason in miniature — Escape would discard a paragraph with no undo, and stays
+the panel's key instead. Both omissions are also why the toolbar's
+`Ctrl+Enter saves · Esc cancels` hint does not render on this mount; that
+condition already existed in `RichEditor`, unchanged.
+
+**`.description` split into a frame and `.prose`.** The old rule was two
+stylesheets in one selector — chrome (background, border, padding, cursor) and
+typography (font size, heading scale, list/quote/code rules) — and a comment
+wants only the second: `.comment` already draws its own left rule, and a
+bordered inset box nested inside it would read as an editable field, which a
+posted comment is not. Renamed rather than duplicated, the same reason
+`description.ts` is one grammar instead of two: thirteen descendant selectors
+moved from `.description X` to `.prose X`, and the three mount sites
+(`Editable.tsx`'s read view, `RichEditor.tsx`'s `rich-surface`, and the new
+comment body) each carry both classes now. `.comment-body`'s own font-size and
+line-height became redundant once `.prose` supplied them and were dropped;
+`white-space: pre-wrap` was deleted outright, since rendered markdown supplies
+real line breaks and pre-wrap would double every gap between blocks — the same
+trap `.description` had already hit once.
+
+**Rendering old comments as markdown reinterprets them, and that was accepted
+rather than avoided.** Every existing comment was typed into a plain input by
+someone with no reason to think markdown was in play; a body opening `- `
+becomes a bullet, `*roughly*` loses its asterisks. Unfixable, since a comment
+cannot be removed — but measured rather than guessed: the example vault held
+exactly one comment that rendered differently, and it rendered *better* (a
+backtick span someone clearly meant as code). No `format` flag, no per-comment
+opt-out — a second grammar for comments would be the drift `description.ts`
+exists to prevent, and comments are not pushed to Jira, so there was never a
+correctness argument for a richer one.
+
+`commentGeneration` remounts the editor after a successful post, `CreateDialog`'s
+`draftGeneration` trick under a local name — `useEditor` takes its content once,
+at mount, so `setComment("")` alone would clear the state and leave the typed
+text on screen.
+
+No unit test, consistent with the rest of the panel: `ItemDetail.tsx`,
+`RichEditor.tsx` and `Markdown.tsx` are all `.tsx` the desktop suite already
+excludes, since `tsx --test` importing JSX drags React in. Verified with a clean
+`npm run typecheck` and a dev-server launch with no build or main-process
+errors; the interactive checks — old comment renders correctly, blur does not
+post, Ctrl+Enter is inert, a nested `> quote`'s left border reads fine next to
+the comment's own — still want a human click-through, since this session had no
+way to drive the Electron window itself.
