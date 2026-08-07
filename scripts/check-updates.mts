@@ -23,9 +23,8 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+import { REPO_ROOT, isMain } from "./shared.mjs";
 
 /**
  * The exit codes launch.vbs switches on. Anything not listed — including the 1
@@ -183,11 +182,7 @@ function main(): number {
   return verdict;
 }
 
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   try {
     process.exitCode = main();
   } catch {

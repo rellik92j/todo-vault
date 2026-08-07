@@ -25,17 +25,9 @@
  * delete fails partway through — taking tsx with it and leaving no menu.
  */
 import { spawnSync } from "node:child_process";
-import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
-const paint = (code: string) => (s: string) => (useColor ? `\u001b[${code}m${s}\u001b[0m` : s);
-const dim = paint("2");
-const red = paint("31");
-const yellow = paint("33");
+import { REPO_ROOT, dim, isMain, npmCli, red, yellow } from "./shared.mjs";
 
 /** One `git status --porcelain` line: index status, worktree status, path. */
 export type StatusEntry = { index: string; worktree: string; path: string };
@@ -97,15 +89,17 @@ function run(command: string, args: string[]): number {
 }
 
 /**
- * npm is spawned through `process.execPath` for the same reason menu.mts does
- * it: on Windows `npm.cmd` is a batch shim Node will not spawn without
- * `shell: true`, which mangles arguments. `npm_execpath` is set by the npm
- * that launched this script, which is also the npm the rest of the update
- * should use.
+ * See `npmCli` in ./shared.mts for why npm goes through `process.execPath`.
+ *
+ * The fallback here is the shim after all — `npm.cmd` on Windows — and that is
+ * deliberate rather than an oversight. It only runs when npm's own entry point
+ * could not be found, at which point a shim that might work beats refusing to
+ * update at all; every argument this passes is a bare word, so the quoting
+ * problem the rule exists to avoid cannot arise.
  */
 function runNpm(args: string[]): number {
-  const cli = process.env.npm_execpath;
-  return cli?.endsWith(".js")
+  const cli = npmCli();
+  return cli
     ? run(process.execPath, [cli, ...args])
     : run(process.platform === "win32" ? "npm.cmd" : "npm", args);
 }
@@ -151,8 +145,4 @@ function main(): number {
 }
 
 // Only when run as a command; the tests import the two pure functions above.
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-
-if (invokedDirectly) process.exitCode = main();
+if (isMain(import.meta.url)) process.exitCode = main();

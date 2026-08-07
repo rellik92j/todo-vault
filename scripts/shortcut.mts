@@ -18,9 +18,8 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+import { REPO_ROOT, isMain } from "./shared.mjs";
 
 /** What the shortcut is called, on the desktop and in its own tooltip. */
 const SHORTCUT_NAME = "todo-vault";
@@ -161,11 +160,7 @@ async function main(): Promise<void> {
 
 // Only when run as a command — importing this module, as the test does, must
 // not write a shortcut to the desktop of whoever is running the suite.
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   main().catch((err: unknown) => {
     process.stdout.write(`\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
     process.exitCode = 1;
