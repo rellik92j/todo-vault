@@ -4,8 +4,11 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 125 green tests — 78 in the core, 41 over the app's
-`ordering.ts` and `selection.ts`, and 6 over the launcher's argument parsing.
+below them. The suite is at 179 green tests — 99 in the core, 49 over the app
+(ordering, selection, navigation, links, history formatting) and 31 over the
+scripts in `scripts/`. The counts in this paragraph have drifted before; CI now
+runs the suite on every push, so a stale number here is a documentation lapse
+rather than an untested claim.
 **Phase 5, the Jira push UI, is the only phase left**, and it carries
 `vault jira discover` with it.
 
@@ -2142,3 +2145,85 @@ client.
 Driven end to end over stdio against a real vault: two links sharing a target
 under `url` and `note`, `vault_unlink_item` on the `url` one, and the `note` link
 still there afterwards.
+
+## The app starts without a terminal ✅ built and driven
+
+The complaint was a console window sitting open all day behind an app that has
+no use for it. The obvious reading is that this is what `PACKAGING.md` is for and
+the answer is "wait for the packaged build" — and that reading is wrong, which
+is the finding this change turned on.
+
+**The console is a parent process, not a window.** `npm run preview` is npm
+waiting on electron-vite waiting on Electron; three processes, and the terminal
+lives as long as the innermost one because the two above it are still holding
+it. Closing the window kills all three. Nothing about that is Electron's doing,
+and nothing about packaging is required to undo it.
+
+**The built app has not needed electron-vite at runtime for some time, and
+nobody had noticed.** `index.ts` reaches for a dev server only when
+`ELECTRON_RENDERER_URL` is set and otherwise does `loadFile` off
+`out/renderer/index.html`; a grep for `process.env` across `src/main/` returns
+that one variable and `discoverSyncedRoots`'s injected parameter. So
+`electron.exe apps/desktop` is the same launch with two fewer processes above
+it. `electron-vite preview` was never a dependency of the running app — it is a
+convenience for starting it — and the distinction had gone unstated because
+every path to the app went through npm.
+
+**A `.vbs` is not a trick for hiding a console; it is a host that never gets
+one.** Windows opens a `.vbs` with `wscript.exe`, a GUI-subsystem binary, where
+`cscript.exe` is the identical language with a console attached. That is the
+whole mechanism. The `0, False` on `Run` — hidden window, do not wait — is belt
+and braces, and the part that matters is `False`: wscript exits immediately and
+leaves Electron with no parent at all. Verified rather than assumed, by reading
+`ParentProcessId` off the main Electron process after a launch and confirming
+the parent was already gone.
+
+**The shortcut targets `wscript.exe` and passes the script as an argument**,
+rather than pointing at the `.vbs` and letting Explorer resolve it. A `.lnk` to a
+script file goes through the `.vbs` file association, which is not reliably
+wscript — administrators repoint it at an editor to discourage script execution,
+and a stray "Open with" does the same thing one user at a time. On such a machine
+the shortcut opens Notepad and the app never starts, with nothing to suggest why.
+Naming the host makes the association irrelevant. `shortcutScript()` is pure and
+exported for the same reason `connectionSnippet()` is: both ways this shortcut
+breaks are invisible on the machine that wrote it and only surface on someone
+else's, so a test is the only thing positioned to notice.
+
+**`MsgBox` is the only channel, which is why both guards exist.** Under wscript
+there is no stdout — a message printed on the way out would go nowhere, and a
+missing build would present as double-clicking an icon and having *nothing
+whatsoever happen*. So the launcher checks for `electron.exe` and for
+`out/main/index.js` and puts up a dialog naming the command that fixes each.
+Driven by moving the built entry aside and confirming no Electron process
+started.
+
+**It launches; it does not build.** Two arguments, and the second is the one
+that decided it. A build behind a double-click is about ten seconds of nothing
+visible — measured, warm, and minutes on a clone that has to fetch Electron
+first — with no console to show progress in; the failure mode is a user clicking
+again. And
+`package.json` already owns the build-then-launch order for `preview`, with a
+comment explaining why that sequence must not live in the menu; putting it in the
+launcher too would make that two places, which is the same mistake the
+synced-cloud warning made in three. The cost is real and is written down in all
+three documents rather than discovered: after a pull that touched the desktop
+app, the shortcut starts the old one until `npm run build`.
+
+**Two things it does not fix, both logged rather than papered over.** The app has
+no single-instance lock, so a second double-click is a second window over the
+same vault — previously unlikely when launching meant typing a command, and much
+easier with an icon sitting on the desktop; `IDEAS.md` has it, since it is a
+change to the main process and not to the launcher. And a shortcut still requires
+a clone, an install and a build on the machine, so it does nothing for the
+portability problem. `PACKAGING.md` was rewritten to say which half it now owns,
+because its opening line — that you still start the app from a terminal — had
+become false.
+
+The icon is Electron's own, taken from the binary with `IconLocation`. There is
+still no `.ico` in the tree, and the honest choice was between the stock atom and
+wscript's script page, which reads as "some automation" rather than as an app.
+`PACKAGING.md` keeps the real icon on its checklist.
+
+One Windows detail worth recording because it looks like it should bite and does
+not: `.gitattributes` pins the whole tree to `eol=lf`, and the Windows Script
+Host parses an LF-only `.vbs` and starts the app anyway. Checked, not assumed.

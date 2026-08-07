@@ -1,8 +1,9 @@
 # Running todo-vault on a new computer
 
 This covers the one path that's actually verified today: getting a working copy
-running from a terminal with `npm run dev`. (There is no packaged `.exe` yet —
-see `PACKAGING.md` for that plan.)
+running from a terminal with `npm run dev`. Setting it up needs a terminal;
+running it day to day doesn't, once you've made the desktop shortcut in step 6.
+(There is still no packaged `.exe` — see `PACKAGING.md` for that plan.)
 
 Fastest path on Windows, nothing installed yet:
 
@@ -111,6 +112,14 @@ What you do next depends on why you're here.
 - **Press `?`** for every keyboard shortcut. Ctrl+`+`/`−`/`0` size the text, and
   the level is remembered across launches — worth setting once on a new display
   rather than squinting at the default.
+- **A desktop shortcut**, so you stop needing a terminal to start the app: press
+  `D` in the menu, or `npm run shortcut`. It writes `todo-vault.lnk` to your
+  desktop, and a double-click starts the app with no console window and nothing
+  left running behind it. Two caveats worth knowing before you rely on it: it
+  launches whatever is currently built, so run `npm run build` (menu `7`) after
+  an update or you'll get the old version; and there's no single-instance lock,
+  so double-clicking twice gives you two windows onto the same vault. Re-run it
+  if you ever move the repo — it rewrites the shortcut in place.
 
 ## 7. Connect Claude to the vault (optional)
 
@@ -157,6 +166,16 @@ npm run build     # rebuilds core; needed whenever the pull touched its source, 
 npm run dev
 ```
 
+**If you start the app from the desktop shortcut, `U` on its own is not
+enough.** It rebuilds the core and stops there, which is the right amount of
+work for `npm run dev` and `npm run preview` because both build the desktop
+bundle themselves on the way to launching. The shortcut builds nothing — that is
+the trade it makes for starting instantly — and the desktop bundle has the core
+compiled *into* it, so a rebuilt core sitting in `packages/core/dist` changes
+nothing about what the shortcut opens. Press `7` (Build) after `U`, or run
+`npm run build`, which covers both workspaces. Skipping it looks like an update
+that silently did nothing.
+
 ### If the pull refuses over package-lock.json
 
 ```
@@ -188,6 +207,7 @@ npm run menu            # numbered launcher — pick any of the below by keypres
 npm run update          # pull, install, rebuild core — the [U] menu entry
 npm run dev             # build core, launch the app
 npm run preview         # build core, launch the production build
+npm run shortcut        # desktop shortcut that starts the app with no terminal
 npm run build           # both workspaces
 npm test                # core, desktop, and the launcher's own tests
 npm run typecheck       # both workspaces, plus scripts/

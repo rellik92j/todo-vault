@@ -2,13 +2,24 @@
 
 Two different jobs, and only the first one works today.
 
-**Moving a working copy** is a clone plus two commands, and you still start the
-app from a terminal. That is verified — it is how the app runs here.
+**Moving a working copy** is a clone plus two commands. That is verified — it is
+how the app runs here. Setting it up needs a terminal; starting it afterwards no
+longer does, because `npm run shortcut` writes a desktop `.lnk` that runs the
+built app through `wscript.exe` with no console attached. That covers the
+double-click, but only on a machine that has already been through the clone,
+the install and the build.
 
-**Packaging** turns it into a double-click `.exe` with no console attached.
+**Packaging** is the other half — the one the shortcut cannot reach. It turns
+this into a single file that runs on a machine with no Node, no clone and no
+`node_modules`, which is a different problem from not wanting a terminal.
 Nothing in the repo does that yet: there is no `electron-builder`, no
 `electron-forge`, no `build` config anywhere. Everything in the second half of
 this document is a plan, not a recipe that has been run.
+
+Two things the shortcut leaves for packaging to fix, beyond portability: it
+launches whatever is in `out/` rather than building, so a stale build starts
+silently; and it inherits the app's lack of a single-instance lock, so a second
+double-click opens a second window over the same vault.
 
 ## What `out/` actually is
 
@@ -22,8 +33,11 @@ this document is a plan, not a recipe that has been run.
 
 That is *only* the application code. It needs Electron's ~350 MB runtime around
 it, which is not in the repo and is not in `out/`. This is the whole reason a
-copied folder cannot just be double-clicked, and the whole reason packaging is a
-real step rather than a flag.
+copied folder cannot just be run on the far machine, and the whole reason
+packaging is a real step rather than a flag. The desktop shortcut is not a
+counter-example: it points `wscript.exe` at a launcher that runs
+`node_modules/electron/dist/electron.exe`, so it depends on exactly the runtime
+this section is about, and does nothing on a machine that has not installed it.
 
 `out/` is gitignored, so it never travels with a clone. Neither does
 `node_modules/`. Both are rebuilt on the far end.
@@ -39,7 +53,12 @@ cd files
 npm install                      # seconds; Electron is not fetched yet
 npm run build                    # first run downloads Electron, ~350 MB
 npm run dev
+npm run shortcut                 # optional; a desktop icon for starting it afterwards
 ```
+
+The shortcut has to be made on each machine rather than travelling with the
+repo: a `.lnk` stores absolute paths, and the ones on the machine that wrote it
+are meaningless on the next. Re-running it is also the fix for moving the clone.
 
 **Electron downloads on first `require()`, not on install.** Electron 43
 declares no install script, so `npm install` finishes fast and the first build
@@ -150,9 +169,9 @@ screen:
 
 All three are repo-shaped. In a packaged app `getAppPath()` points inside
 `resources/app.asar`, so none of them will match and the function returns
-`null`. It degrades rather than breaking — the picker simply offers no shortcut
-— but a packaged first run should probably suggest something better, such as a
-vault under `app.getPath('documents')`, with an offer to initialise it.
+`null`. It degrades rather than breaking — the picker simply offers no
+suggestion — but a packaged first run should probably suggest something better,
+such as a vault under `app.getPath('documents')`, with an offer to initialise it.
 
 ### Two things to expect, neither of them bugs
 
@@ -169,8 +188,9 @@ that ever stops being true.
 - [ ] `electron-builder` added to `apps/desktop`
 - [ ] `electron-builder.yml` with portable + NSIS targets
 - [ ] External dependencies resolved — packaged app starts with no `Cannot find module`
-- [ ] An `.ico`, so it is not the stock Electron icon
+- [ ] An `.ico`, so it is not the stock Electron icon — which `scripts/shortcut.mts` also points at, and should be changed to use once one exists
 - [ ] `suggestedVault()` given a sensible packaged-app default
 - [ ] Built app launched on a machine with no Node installed
 - [ ] A vault created from scratch through the picker, not just opened
 - [ ] The API key entered and used once, to confirm `safeStorage` works in a packaged context
+- [ ] Decided what happens to `scripts/launch.vbs` and `npm run shortcut` — an installer makes its own Start Menu and desktop entries, so the two would overlap. Keep them for the from-source workflow, or retire them; do not leave both writing a `todo-vault.lnk` without saying which wins
