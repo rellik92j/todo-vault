@@ -4,8 +4,8 @@ Stack is decided: **Electron**. This started as the plan for the desktop shell
 and has become the log of what was built and why each call was made.
 
 **Phases 0 through 4 are complete**, plus the run of smaller features recorded
-below them. The suite is at 179 green tests — 99 in the core, 49 over the app
-(ordering, selection, navigation, links, history formatting) and 31 over the
+below them. The suite is at 192 green tests — 99 in the core, 49 over the app
+(ordering, selection, navigation, links, history formatting) and 44 over the
 scripts in `scripts/`. The counts in this paragraph have drifted before; CI now
 runs the suite on every push, so a stale number here is a documentation lapse
 rather than an untested claim.
@@ -2227,3 +2227,77 @@ wscript's script page, which reads as "some automation" rather than as an app.
 One Windows detail worth recording because it looks like it should bite and does
 not: `.gitattributes` pins the whole tree to `eol=lf`, and the Windows Script
 Host parses an LF-only `.vbs` and starts the app anyway. Checked, not assumed.
+
+## The launcher notices an update is due ✅ built and driven
+
+Starting from an icon rather than a command made the shortcut the one way into
+this app that can quietly run a version replaced weeks ago. Every other route
+builds on the way past — `dev` and `preview` both do — and the shortcut
+deliberately does not, so the staleness it trades for an instant start needed
+something to close the loop. The previous change wrote that cost into three
+documents. Writing it down is not the same as handling it.
+
+**The check runs after the launch, and that ordering is the design rather than
+an implementation detail.** A check in front would spend a `git fetch` of
+silence before the window appeared, on every launch including the overwhelming
+majority with nothing to report — which is precisely the instant start the
+shortcut was built to get. So Electron starts and is orphaned as before,
+wscript stays alive a few seconds longer, and a dialog arrives over a running
+app or not at all. `launch.test.mts` pins the order, because reversing those two
+lines would reintroduce the wait invisibly and nothing else would notice.
+
+**Two questions, deliberately different in cost.** Is the build stale — newest
+source timestamp against oldest build output, instant and offline — and is there
+a newer version, which needs a fetch. The first is the one that matters most
+here and is the one git cannot answer: after `npm run update` the tree is
+perfectly clean and the app is still the old one, because update rebuilds the
+core alone and `electron.vite.config.ts` compiles the core *into*
+`out/main/index.js`. A clean `git status` and a stale app are the same state.
+Oldest output rather than newest, so a build that failed partway cannot have one
+rewritten file vouch for two that were left behind.
+
+**The verdict travels as an exit code.** VBScript cannot read a child's stdout
+without redirecting to a temp file and then owning the cleanup, while
+`Run(..., True)` returns the exit code for nothing. 0 up to date, 2 stale, 3
+behind, 4 both; anything else — including the 1 Node exits with on an uncaught
+exception, and the error `Run` raises when node is not on `PATH` — means the
+check could not tell, and the response to that is silence. A test asserts no
+verdict is ever 1, since a crashed check surfacing as advice is the failure this
+numbering exists to prevent.
+
+**Everything fails soft, which is most of the code.** No git, no remote, no
+upstream for this branch, offline, credentials refused, a folder copied out of
+its clone: each returns zero and says nothing. `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=never` are both set because this runs from a hidden window —
+the first stops a console prompt waiting forever on a stdin nobody can reach,
+and the second stops Git Credential Manager raising a GUI dialog that would
+appear from nowhere with nothing to say what wanted it. A twenty-second timeout
+backstops the rest. The failure mode being designed against is a dialog nagging
+on every single launch about something it could not actually determine.
+
+**`Yes` opens a visible terminal**, and picks the command from the verdict:
+`npm run build` alone when nothing needs pulling, `npm run update && npm run
+build` when it does. Visible and `/k` so the window stays, because this is the
+one moment in the whole design where a console is what the user wants — a build
+is worth watching and a failure needs reading. `cmd.exe` rather than PowerShell,
+since `npm` resolves to `npm.cmd` there and cannot be stopped by an execution
+policy, which is the trap `scripts/bootstrap.ps1` exists to explain.
+
+**The bug worth recording is an encoding one, and it was invisible in the
+source.** The Windows Script Host reads a `.vbs` through the system ANSI
+codepage rather than as UTF-8, so an em dash written into a message arrived in
+the dialog as the three characters its UTF-8 bytes spell. It was found by
+reading the rendered dialog back out of the window with `GetWindowText` — a step
+taken to check the wording, not the encoding — and would have survived any
+amount of reading the file. Strings in that file are ASCII now, comments are
+not, since nothing renders a comment. `launch.test.mts` pins the rule, and pins
+the extractor against a sample with a known answer as well: the first version of
+that test passed because it was looking in the wrong place, which a scan for
+absence will always do quietly.
+
+All four verdicts were driven end to end, with the dialog text read back out of
+the window each time rather than assumed: silent when up to date, the rebuild
+prompt naming `npm run build`, and both new-version prompts naming the update.
+`No` was confirmed to run nothing; `Yes` was confirmed to open the terminal and
+complete the build — which it does with the app still running, so Windows does
+not hold `out/main/index.js` open the way it holds a running `.exe`.

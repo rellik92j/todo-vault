@@ -16,9 +16,11 @@ Nothing in the repo does that yet: there is no `electron-builder`, no
 `electron-forge`, no `build` config anywhere. Everything in the second half of
 this document is a plan, not a recipe that has been run.
 
-Two things the shortcut leaves for packaging to fix, beyond portability: it
-launches whatever is in `out/` rather than building, so a stale build starts
-silently; and it inherits the app's lack of a single-instance lock, so a second
+Two things the shortcut leaves for packaging to fix, beyond portability. It
+launches whatever is in `out/` rather than building — no longer *silently*,
+since it now checks after starting the app and offers to run the update, but
+still without the automatic in-place upgrade an installer plus `electron-updater`
+would give. And it inherits the app's lack of a single-instance lock, so a second
 double-click opens a second window over the same vault.
 
 ## What `out/` actually is
