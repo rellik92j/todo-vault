@@ -86,3 +86,80 @@ shell.CurrentDirectory = repoRoot
 ' Quoted because both paths contain the user's profile directory and will
 ' contain a space on any machine whose account name has one.
 shell.Run """" & electronExe & """ """ & appDir & """", 0, False
+
+' ---------------------------------------------------------------- update check
+'
+' Everything below runs with the app already on screen, and that ordering is the
+' point rather than an implementation detail. The shortcut exists to open the
+' app instantly; a check in front of the launch would spend a `git fetch` of
+' silence before the window appeared, and would do it on every launch including
+' the ones with nothing to report. So the app starts, wscript stays alive a few
+' seconds longer, and a dialog arrives over a running app or not at all.
+'
+' scripts/check-updates.mts answers in its exit code, because reading a child's
+' stdout from VBScript means redirecting to a temp file and then owning the
+' cleanup, while Run(..., True) returns the exit code for nothing. 0 is up to
+' date; 2, 3 and 4 are the three things worth saying; anything else — including
+' the 1 Node exits with after an uncaught exception, and the error raised when
+' node is not on PATH at all — means the check could not tell, and the right
+' response to that is silence.
+
+Dim tsxCli, checker, verdict, message, command
+
+tsxCli = fso.BuildPath(repoRoot, "node_modules\tsx\dist\cli.mjs")
+checker = fso.BuildPath(repoRoot, "scripts\check-updates.mts")
+
+verdict = 0
+If fso.FileExists(tsxCli) And fso.FileExists(checker) Then
+    ' `node` by bare name, resolved through PATH, and wrapped because Run raises
+    ' rather than returning when the executable is not found — a machine with
+    ' the repo but no Node on PATH should still get its app, in silence.
+    On Error Resume Next
+    verdict = shell.Run("node """ & tsxCli & """ """ & checker & """", 0, True)
+    If Err.Number <> 0 Then verdict = 0
+    On Error GoTo 0
+End If
+
+' Every string below is deliberately plain ASCII, and this is the one rule in
+' this file that cannot be inferred from reading it. The Windows Script Host
+' reads a .vbs through the system ANSI codepage, not as UTF-8, so an em dash
+' written here arrives in the dialog as the three characters its UTF-8 bytes
+' happen to spell. That was found by reading the rendered dialog back out of the
+' window rather than by looking at the source, where it is invisible. Comments
+' are exempt because nothing renders them; strings are not.
+'
+' `npm run build` alone where nothing needs pulling: the two cases that involve
+' new commits need the update first, and the one that does not would be spending
+' a pull to fix a problem a build already fixes.
+If verdict = 2 Then
+    message = "The app has changed since it was last built, so this just " & _
+              "started the previous version." & vbCrLf & vbCrLf & _
+              "Rebuild it now?"
+    command = "npm run build"
+ElseIf verdict = 3 Then
+    message = "A newer version is available." & vbCrLf & vbCrLf & _
+              "Update now?"
+    command = "npm run update && npm run build"
+ElseIf verdict = 4 Then
+    message = "A newer version is available, and the app has changed since " & _
+              "it was last built, so this just started the previous version." & _
+              vbCrLf & vbCrLf & "Update and rebuild now?"
+    command = "npm run update && npm run build"
+Else
+    WScript.Quit 0
+End If
+
+message = message & " A terminal will open and run:" & vbCrLf & vbCrLf & _
+          "    " & command & vbCrLf & vbCrLf & _
+          "The app already running is the old one. Close it and use the " & _
+          "shortcut again once this finishes."
+
+If MsgBox(message, vbYesNo + vbQuestion, "todo-vault") = vbYes Then
+    ' Visible, and /k so the window stays after it finishes — the one moment in
+    ' this whole design where a console is what the user wants, since a build is
+    ' the thing worth watching and a failure here needs reading. cmd.exe rather
+    ' than PowerShell because `npm` resolves to npm.cmd there and cannot be
+    ' stopped by an execution policy, which is the trap scripts/bootstrap.ps1
+    ' exists to explain.
+    shell.Run "cmd /k cd /d """ & repoRoot & """ && " & command, 1, False
+End If

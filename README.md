@@ -191,6 +191,7 @@ command and returns you to the menu rather than killing both.
 | `npm run mcp` | The MCP server, over stdio. |
 | `npm run seed -- <dir>` | Build the worked example vault. |
 | `npm run shortcut` | Writes a desktop shortcut that starts the built app with no terminal. |
+| `npm run check-updates` | Is the build stale, or is there a newer version upstream? |
 | `npm run menu` | The launcher above. |
 
 ### Starting it without a terminal
@@ -213,16 +214,42 @@ leaving the app running with no parent process and nothing to close.
 
 Two things follow from how it works, both deliberate:
 
-- **It launches what is built, and does not build.** After a pull that touched
-  the desktop app you still need `npm run build`, or you get the previous
-  version. A build behind a double-click would be about ten seconds of nothing
-  visible, with no console to show progress in, and it would put the
-  build-then-launch order in a second place when `npm run preview` already owns
-  it. If nothing is built yet,
-  the launcher says so in a dialog rather than failing silently.
+- **It launches what is built, and does not build.** A build behind a
+  double-click would be about ten seconds of nothing visible, with no console to
+  show progress in, and it would put the build-then-launch order in a second
+  place when `npm run preview` already owns it. If nothing is built yet, the
+  launcher says so in a dialog rather than failing silently — and if something
+  *is* built but out of date, it says that too, which is what the next section
+  is about.
 - **Nothing stops you opening it twice.** The app has no single-instance lock,
   so a second double-click is a second window over the same vault. Logged in
   `IDEAS.md`; it belongs in the main process, not in the launcher.
+
+#### It tells you when you are behind
+
+Because the shortcut never builds, it would otherwise be the one way of starting
+the app that can quietly run a version you replaced weeks ago. So a moment after
+the window appears, `npm run check-updates` runs hidden and asks two questions:
+
+| | |
+|---|---|
+| **Is the build stale?** | Newest source timestamp against oldest build output. Instant, no network, and the only thing that catches `npm run update` having rebuilt the core alone. |
+| **Is there a newer version?** | `git fetch`, then how many commits upstream has that you do not. |
+
+If either is true you get a dialog naming exactly what will run, and **Yes**
+opens a visible terminal to run it — the one moment in this design where a
+console is what you want, since a build is worth watching and a failure needs
+reading. **No** closes it and nothing happens.
+
+The order is the point: the app has already started before any of this begins.
+A check in front of the launch would spend a `git fetch` of silence on every
+single start, including the overwhelming majority with nothing to report.
+
+Everything about it fails soft. No git, no network, no remote, no Node on
+`PATH`, a folder copied out of its clone — each of those ends in silence and a
+running app, never in a dialog nagging about something it could not actually
+determine. Run `npm run check-updates` yourself to see the same answer in
+prose.
 
 Run it again if you move the repo — it rewrites the existing shortcut rather
 than making another one. Windows only; this is a `.lnk`. It is not packaging:
