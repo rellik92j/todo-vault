@@ -150,7 +150,53 @@ function fail(err: unknown) {
   };
 }
 
-/** Every write reloads first, since the desktop app may have changed files underneath us. */
+/**
+ * Turns anything thrown by a tool into `fail`'s error result.
+ *
+ * Every one of the tools below can throw — `VaultError` for a rejected
+ * transition or a missing key, a `ZodError` from a schema that `inputSchema`
+ * cannot express — and an exception escaping a tool callback is not an error
+ * result the client can read, it is a dead request. So every tool needs the
+ * same `catch`, and before this they each carried their own: twenty-seven
+ * copies of `} catch (err) { return fail(err); }`, byte-identical.
+ *
+ * The other two surfaces over this vault had already reached the same place by
+ * the same road. `handle()` in the desktop's `main/index.ts` wraps every
+ * `ipcMain.handle` so the renderer receives a `Result` rather than a rejected
+ * promise; `cli.ts` catches once, around the whole command. Only this file was
+ * still paying per tool.
+ *
+ * It wraps the callback rather than the whole `registerTool` call, and that is
+ * the one thing here worth not changing. `registerTool` is generic over its
+ * `inputSchema`, and it is what gives each handler's `args` its type — wrapping
+ * the registration means threading that inference through by hand, and getting
+ * it wrong degrades every handler's `args` to `unknown` silently, in twenty-seven
+ * places at once. Wrapping the callback leaves the inference exactly where it
+ * was: `guard` is generic over the handler's own signature, so the SDK still
+ * types the argument and the call site still reads like a registration.
+ */
+function guard<A extends unknown[], R>(
+  run: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R | ReturnType<typeof fail>> {
+  return async (...args: A) => {
+    try {
+      return await run(...args);
+    } catch (err) {
+      return fail(err);
+    }
+  };
+}
+
+/**
+ * Reloads before running, since the desktop app may have changed files
+ * underneath us.
+ *
+ * Named for writes and used by them, but the reason is not that writes are
+ * special — it is that any answer built from a stale in-memory vault is wrong,
+ * and a read hands that staleness straight to the caller. The read tools do the
+ * same reload inline rather than through here, which is why this no longer
+ * claims to be about writes.
+ */
 async function withFreshVault<T>(fn: () => Promise<T>): Promise<T> {
   await vault.load();
   return fn();
@@ -201,21 +247,17 @@ Don't use when: you want today's or this week's priorities — vault_get_agenda 
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async (args) => {
-    try {
-      await vault.load();
-      const { total, items } = vault.listItems(args);
-      return ok({
-        total,
-        count: items.length,
-        offset: args.offset,
-        items: items.map(summarize),
-        has_more: total > args.offset + items.length,
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async (args) => {
+    await vault.load();
+    const { total, items } = vault.listItems(args);
+    return ok({
+      total,
+      count: items.length,
+      offset: args.offset,
+      items: items.map(summarize),
+      has_more: total > args.offset + items.length,
+    });
+  }),
 );
 
 server.registerTool(
@@ -233,19 +275,15 @@ Use when: you need the full context of a task before updating it or writing abou
     inputSchema: { key: itemKey },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key }) => {
-    try {
-      await vault.load();
-      const item = vault.getItem(key);
-      return ok({
-        item: detail(item),
-        children: vault.children(key).map(summarize),
-        backlinks: vault.backlinks(key).map(summarize),
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key }) => {
+    await vault.load();
+    const item = vault.getItem(key);
+    return ok({
+      item: detail(item),
+      children: vault.children(key).map(summarize),
+      backlinks: vault.backlinks(key).map(summarize),
+    });
+  }),
 );
 
 server.registerTool(
@@ -301,30 +339,26 @@ Use when: "what's on for today", "what's due this week", "what's coming up next 
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ scope, reference }) => {
-    try {
-      await vault.load();
-      const sections = vault.agenda(scope, reference ?? todayIso());
-      return ok({
-        reference: reference ?? todayIso(),
-        sections: sections.map((s) => ({
-          kind: s.kind,
-          scope: s.scope,
-          from: s.from,
-          to: s.to,
-          // Ranges, not items. The section's `items` stay one flat list and a
-          // band is the slice of them whose dueDate falls in its range, so
-          // reporting the structure costs three short strings per band rather
-          // than a second copy of the agenda.
-          bands: s.bands,
-          count: s.items.length,
-          items: s.items.map(summarize),
-        })),
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ scope, reference }) => {
+    await vault.load();
+    const sections = vault.agenda(scope, reference ?? todayIso());
+    return ok({
+      reference: reference ?? todayIso(),
+      sections: sections.map((s) => ({
+        kind: s.kind,
+        scope: s.scope,
+        from: s.from,
+        to: s.to,
+        // Ranges, not items. The section's `items` stay one flat list and a
+        // band is the slice of them whose dueDate falls in its range, so
+        // reporting the structure costs three short strings per band rather
+        // than a second copy of the agenda.
+        bands: s.bands,
+        count: s.items.length,
+        items: s.items.map(summarize),
+      })),
+    });
+  }),
 );
 
 server.registerTool(
@@ -343,25 +377,21 @@ Use when: you need a project key before creating an item, or want a portfolio-le
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async () => {
-    try {
-      await vault.load();
-      return ok({
-        projects: vault.listProjects().map((p) => ({
-          key: p.key,
-          name: p.name,
-          status: p.status,
-          category: p.category,
-          lead: p.lead,
-          dueDate: p.dueDate,
-          rank: p.rank,
-          openItems: vault.listItems({ project: p.key, open: true, limit: 500 }).total,
-        })),
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async () => {
+    await vault.load();
+    return ok({
+      projects: vault.listProjects().map((p) => ({
+        key: p.key,
+        name: p.name,
+        status: p.status,
+        category: p.category,
+        lead: p.lead,
+        dueDate: p.dueDate,
+        rank: p.rank,
+        openItems: vault.listItems({ project: p.key, open: true, limit: 500 }).total,
+      })),
+    });
+  }),
 );
 
 // ------------------------------------------------------------------ write
@@ -409,14 +439,10 @@ Error handling: returns a message naming the valid options if the project does n
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async (args) => {
-    try {
-      const item = await withFreshVault(() => vault.createItem(args));
-      return ok({ created: detail(item) }, `Created ${item.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async (args) => {
+    const item = await withFreshVault(() => vault.createItem(args));
+    return ok({ created: detail(item) }, `Created ${item.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -459,14 +485,10 @@ Setting status to 'in_progress' also sets startDate to today when the item has n
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, ...patch }) => {
-    try {
-      const item = await withFreshVault(() => vault.updateItem(key, patch));
-      return ok({ updated: detail(item) }, `Updated ${item.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, ...patch }) => {
+    const item = await withFreshVault(() => vault.updateItem(key, patch));
+    return ok({ updated: detail(item) }, `Updated ${item.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -498,14 +520,10 @@ Use when: "mark ACME-12 done", "I've started on the vendor task", "we're not doi
     inputSchema: { key: itemKey, status: z.enum(STATUSES) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, status }) => {
-    try {
-      const item = await withFreshVault(() => vault.transition(key, status));
-      return ok({ updated: summarize(item) }, `${item.key} is now ${item.status}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, status }) => {
+    const item = await withFreshVault(() => vault.transition(key, status));
+    return ok({ updated: summarize(item) }, `${item.key} is now ${item.status}.`);
+  }),
 );
 
 server.registerTool(
@@ -544,22 +562,18 @@ Use when: "I did the daily review", "log my weekly report as done", "tick off AC
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, on, undo }) => {
-    try {
-      const date = on ?? todayIso();
-      const item = await withFreshVault(() =>
-        undo ? vault.untickItem(key, date) : vault.tickItem(key, date),
-      );
-      return ok(
-        { ticked: summarize(item) },
-        undo
-          ? `Removed ${item.key}'s completion for ${date}.`
-          : `${item.key} logged as done for ${date}. Status is still ${item.status}; it returns when the ${item.cadence} cadence comes round.`,
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, on, undo }) => {
+    const date = on ?? todayIso();
+    const item = await withFreshVault(() =>
+      undo ? vault.untickItem(key, date) : vault.tickItem(key, date),
+    );
+    return ok(
+      { ticked: summarize(item) },
+      undo
+        ? `Removed ${item.key}'s completion for ${date}.`
+        : `${item.key} logged as done for ${date}. Status is still ${item.status}; it returns when the ${item.cadence} cadence comes round.`,
+    );
+  }),
 );
 
 server.registerTool(
@@ -577,14 +591,10 @@ Returns: { key, commentCount }`,
     inputSchema: { key: itemKey, body: z.string().min(1), author: z.string().default("me") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ key, body, author }) => {
-    try {
-      const item = await withFreshVault(() => vault.addComment(key, body, author));
-      return ok({ key: item.key, commentCount: item.comments.length }, `Comment added to ${item.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, body, author }) => {
+    const item = await withFreshVault(() => vault.addComment(key, body, author));
+    return ok({ key: item.key, commentCount: item.comments.length }, `Comment added to ${item.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -616,14 +626,10 @@ Links of type 'item' are validated against the vault and produce backlinks on th
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, type, target, label }) => {
-    try {
-      const item = await withFreshVault(() => vault.addLink(key, { type, target, label }));
-      return ok({ key: item.key, links: item.links }, `Linked ${type} to ${item.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, type, target, label }) => {
+    const item = await withFreshVault(() => vault.addLink(key, { type, target, label }));
+    return ok({ key: item.key, links: item.links }, `Linked ${type} to ${item.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -649,14 +655,10 @@ Removing an 'item' link removes the backlink on the other item with it. A file a
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, type, target }) => {
-    try {
-      const item = await withFreshVault(() => vault.removeLink(key, target, type));
-      return ok({ key: item.key, links: item.links }, `Removed ${type} link from ${item.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, type, target }) => {
+    const item = await withFreshVault(() => vault.removeLink(key, target, type));
+    return ok({ key: item.key, links: item.links }, `Removed ${type} link from ${item.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -682,17 +684,13 @@ Error handling: returns a message naming the path if the file does not exist or 
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ key, sourcePath, copy, title }) => {
-    try {
-      const item = await withFreshVault(() => vault.addAttachment(key, sourcePath, { copy, title }));
-      return ok(
-        { key: item.key, attachments: item.attachments, links: item.links.filter((l) => l.type === "file") },
-        `Attached to ${item.key}.`,
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, sourcePath, copy, title }) => {
+    const item = await withFreshVault(() => vault.addAttachment(key, sourcePath, { copy, title }));
+    return ok(
+      { key: item.key, attachments: item.attachments, links: item.links.filter((l) => l.type === "file") },
+      `Attached to ${item.key}.`,
+    );
+  }),
 );
 
 server.registerTool(
@@ -722,14 +720,10 @@ Returns: { created: { key, name, ... } }`,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async (args) => {
-    try {
-      const project = await withFreshVault(() => vault.createProject(args));
-      return ok({ created: project }, `Created project ${project.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async (args) => {
+    const project = await withFreshVault(() => vault.createProject(args));
+    return ok({ created: project }, `Created project ${project.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -761,14 +755,10 @@ Returns: { updated: { key, name, status, ... } }`,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, ...patch }) => {
-    try {
-      const project = await withFreshVault(() => vault.updateProject(key, patch));
-      return ok({ updated: project }, `Updated project ${project.key}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, ...patch }) => {
+    const project = await withFreshVault(() => vault.updateProject(key, patch));
+    return ok({ updated: project }, `Updated project ${project.key}.`);
+  }),
 );
 
 server.registerTool(
@@ -790,20 +780,16 @@ Don't use when: they only want to change the display name — that is vault_upda
     inputSchema: { from: projectKey, to: projectKey },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ from, to }) => {
-    try {
-      return await withFreshVault(async () => {
-        const count = vault.listItems({ project: from, limit: 500 }).total;
-        const project = await vault.renameProject(from, to);
-        return ok(
-          { project, rekeyed: count },
-          `Renamed ${from} to ${to}, re-keying ${count} item(s). References outside the vault still say ${from}-.`,
-        );
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ from, to }) => {
+    return await withFreshVault(async () => {
+      const count = vault.listItems({ project: from, limit: 500 }).total;
+      const project = await vault.renameProject(from, to);
+      return ok(
+        { project, rekeyed: count },
+        `Renamed ${from} to ${to}, re-keying ${count} item(s). References outside the vault still say ${from}-.`,
+      );
+    });
+  }),
 );
 
 server.registerTool(
@@ -829,22 +815,18 @@ Returns: { rekeyed: [{ from, to }], parentDropped? }`,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ key, targetProject, parent }) => {
-    try {
-      const result = await withFreshVault(() =>
-        vault.moveItemsToProject(key, targetProject, { parent }),
-      );
-      const moved = result.rekeyed.find((r) => r.from === key);
-      return ok(
-        result,
-        `Moved ${key} to ${targetProject} as ${moved?.to}` +
-          (result.rekeyed.length > 1 ? ` with ${result.rekeyed.length - 1} descendant(s).` : ".") +
-          (result.parentDropped ? ` Parent ${result.parentDropped} stayed behind, link dropped.` : ""),
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, targetProject, parent }) => {
+    const result = await withFreshVault(() =>
+      vault.moveItemsToProject(key, targetProject, { parent }),
+    );
+    const moved = result.rekeyed.find((r) => r.from === key);
+    return ok(
+      result,
+      `Moved ${key} to ${targetProject} as ${moved?.to}` +
+        (result.rekeyed.length > 1 ? ` with ${result.rekeyed.length - 1} descendant(s).` : ".") +
+        (result.parentDropped ? ` Parent ${result.parentDropped} stayed behind, link dropped.` : ""),
+    );
+  }),
 );
 
 server.registerTool(
@@ -868,20 +850,16 @@ Returns: { key, rank, order: [<keys in the new order>] }`,
     inputSchema: { key: projectKey, after: projectKey.optional(), before: projectKey.optional() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, after, before }) => {
-    try {
-      return await withFreshVault(async () => {
-        const project = await vault.moveProject(key, { after, before });
-        const order = vault.listProjects().map((p) => p.key);
-        return ok(
-          { key: project.key, rank: project.rank, order },
-          `${project.key} repositioned. Order is now ${order.join(", ")}.`,
-        );
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, after, before }) => {
+    return await withFreshVault(async () => {
+      const project = await vault.moveProject(key, { after, before });
+      const order = vault.listProjects().map((p) => p.key);
+      return ok(
+        { key: project.key, rank: project.rank, order },
+        `${project.key} repositioned. Order is now ${order.join(", ")}.`,
+      );
+    });
+  }),
 );
 
 server.registerTool(
@@ -904,18 +882,14 @@ Don't use when: they want it gone — that is vault_delete_project, which is rec
     inputSchema: { key: projectKey },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key }) => {
-    try {
-      const project = await withFreshVault(() => vault.hideProject(key));
-      return ok(
-        { project },
-        `Hid project ${project.key}. Nothing was deleted — it is still in vault_list_projects, ` +
-          `and vault_unhide_project puts it back in the sidebar.`,
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key }) => {
+    const project = await withFreshVault(() => vault.hideProject(key));
+    return ok(
+      { project },
+      `Hid project ${project.key}. Nothing was deleted — it is still in vault_list_projects, ` +
+        `and vault_unhide_project puts it back in the sidebar.`,
+    );
+  }),
 );
 
 server.registerTool(
@@ -933,14 +907,10 @@ Returns: { project }`,
     inputSchema: { key: projectKey },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key }) => {
-    try {
-      const project = await withFreshVault(() => vault.unhideProject(key));
-      return ok({ project }, `Project ${project.key} is visible again, with status ${project.status}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key }) => {
+    const project = await withFreshVault(() => vault.unhideProject(key));
+    return ok({ project }, `Project ${project.key} is visible again, with status ${project.status}.`);
+  }),
 );
 
 // -------------------------------------------------------------- destructive
@@ -967,19 +937,15 @@ Use when: the user asks to delete, remove, or drop an item.`,
     inputSchema: { key: itemKey, cascade: z.boolean().default(false) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ key, cascade }) => {
-    try {
-      const trashed = await withFreshVault(() => vault.deleteItem(key, { cascade }));
-      const dangling = trashed.flatMap((t) => t.danglingBacklinks);
-      return ok(
-        { trashed },
-        `Trashed ${trashed.map((t) => t.key).join(", ")}. Recoverable with vault_restore_item.` +
-          (dangling.length ? ` Still linking to it: ${[...new Set(dangling)].join(", ")}.` : ""),
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, cascade }) => {
+    const trashed = await withFreshVault(() => vault.deleteItem(key, { cascade }));
+    const dangling = trashed.flatMap((t) => t.danglingBacklinks);
+    return ok(
+      { trashed },
+      `Trashed ${trashed.map((t) => t.key).join(", ")}. Recoverable with vault_restore_item.` +
+        (dangling.length ? ` Still linking to it: ${[...new Set(dangling)].join(", ")}.` : ""),
+    );
+  }),
 );
 
 server.registerTool(
@@ -1000,19 +966,15 @@ Use when: the user asks to delete a project. Confirm the cascade with them first
     inputSchema: { key: projectKey, cascade: z.boolean().default(false) },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ key, cascade }) => {
-    try {
-      const result = await withFreshVault(() => vault.deleteProject(key, { cascade }));
-      return ok(
-        result,
-        `Trashed project ${result.key}` +
-          (result.items.length ? ` and ${result.items.length} item(s).` : ".") +
-          " Recoverable with vault_restore_project.",
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, cascade }) => {
+    const result = await withFreshVault(() => vault.deleteProject(key, { cascade }));
+    return ok(
+      result,
+      `Trashed project ${result.key}` +
+        (result.items.length ? ` and ${result.items.length} item(s).` : ".") +
+        " Recoverable with vault_restore_project.",
+    );
+  }),
 );
 
 server.registerTool(
@@ -1030,15 +992,11 @@ Pass 'file' to vault_restore_item or vault_restore_project.`,
     inputSchema: { projects: z.boolean().default(false) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ projects }) => {
-    try {
-      await vault.load();
-      const entries = projects ? await vault.listTrashedProjects() : await vault.listTrash();
-      return ok({ entries }, `${entries.length} recoverable ${projects ? "project" : "item"}(s).`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ projects }) => {
+    await vault.load();
+    const entries = projects ? await vault.listTrashedProjects() : await vault.listTrash();
+    return ok({ entries }, `${entries.length} recoverable ${projects ? "project" : "item"}(s).`);
+  }),
 );
 
 server.registerTool(
@@ -1058,14 +1016,10 @@ Returns: { restored: { key, summary, ... } }`,
     inputSchema: { file: z.string().min(1) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ file }) => {
-    try {
-      const item = await withFreshVault(() => vault.restoreItem(file));
-      return ok({ restored: detail(item) }, `Restored ${item.key}: ${item.summary}`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ file }) => {
+    const item = await withFreshVault(() => vault.restoreItem(file));
+    return ok({ restored: detail(item) }, `Restored ${item.key}: ${item.summary}`);
+  }),
 );
 
 server.registerTool(
@@ -1083,17 +1037,13 @@ Returns: { restored: { key, name, ... } }`,
     inputSchema: { file: z.string().min(1) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ file }) => {
-    try {
-      const project = await withFreshVault(() => vault.restoreProject(file));
-      return ok(
-        { restored: project },
-        `Restored project ${project.key}. Its items are still in the trash.`,
-      );
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ file }) => {
+    const project = await withFreshVault(() => vault.restoreProject(file));
+    return ok(
+      { restored: project },
+      `Restored project ${project.key}. Its items are still in the trash.`,
+    );
+  }),
 );
 
 server.registerTool(
@@ -1118,14 +1068,10 @@ Don't use when: they mean a different project — that is vault_move_item_to_pro
     inputSchema: { key: itemKey, after: itemKey.optional(), before: itemKey.optional() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, after, before }) => {
-    try {
-      const item = await withFreshVault(() => vault.moveItem(key, { after, before }));
-      return ok({ key: item.key, rank: item.rank }, `${item.key} repositioned.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, after, before }) => {
+    const item = await withFreshVault(() => vault.moveItem(key, { after, before }));
+    return ok({ key: item.key, rank: item.rank }, `${item.key} repositioned.`);
+  }),
 );
 
 // -------------------------------------------------------------------- jira
@@ -1154,17 +1100,13 @@ Don't use when: you want the items themselves — use vault_list_items.`,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ project, includeDone, mapPath }) => {
-    try {
-      await vault.load();
-      const map = await loadJiraMap(mapPath ?? path.join(vault.root, "jira-map.yaml"));
-      const { items } = vault.listItems({ project, open: includeDone ? undefined : true, limit: 500 });
-      const plan = buildPushPlan(items, map, vault);
-      return ok(plan, `${plan.drafts.length} issue(s) would be created in ${plan.jiraProjectKey}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ project, includeDone, mapPath }) => {
+    await vault.load();
+    const map = await loadJiraMap(mapPath ?? path.join(vault.root, "jira-map.yaml"));
+    const { items } = vault.listItems({ project, open: includeDone ? undefined : true, limit: 500 });
+    const plan = buildPushPlan(items, map, vault);
+    return ok(plan, `${plan.drafts.length} issue(s) would be created in ${plan.jiraProjectKey}.`);
+  }),
 );
 
 server.registerTool(
@@ -1182,14 +1124,10 @@ Returns: { key, sync: { jiraKey, state, lastPushedAt } }`,
     inputSchema: { key: itemKey, jiraKey: z.string().min(1), jiraId: z.string().optional() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ key, jiraKey, jiraId }) => {
-    try {
-      const item = await withFreshVault(() => vault.markPushed(key, jiraKey, jiraId));
-      return ok({ key: item.key, sync: item.sync }, `${item.key} recorded as ${jiraKey}.`);
-    } catch (err) {
-      return fail(err);
-    }
-  },
+  guard(async ({ key, jiraKey, jiraId }) => {
+    const item = await withFreshVault(() => vault.markPushed(key, jiraKey, jiraId));
+    return ok({ key: item.key, sync: item.sync }, `${item.key} recorded as ${jiraKey}.`);
+  }),
 );
 
 // --------------------------------------------------------------- resources
