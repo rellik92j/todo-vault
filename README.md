@@ -147,6 +147,7 @@ when the command finishes.
   Setup
    [U] Update                           git pull --ff-only, reinstall, rebuild core
    [I] Install dependencies             npm install only — no pull, no build
+   [D] Desktop shortcut                 double-click to start the app, no terminal
    [C] Connect Claude…                  prints the MCP config, paths filled in
 
    [0] Exit
@@ -189,7 +190,44 @@ command and returns you to the menu rather than killing both.
 | `npm run vault -- <args>` | The vault CLI, from the repo root. |
 | `npm run mcp` | The MCP server, over stdio. |
 | `npm run seed -- <dir>` | Build the worked example vault. |
+| `npm run shortcut` | Writes a desktop shortcut that starts the built app with no terminal. |
 | `npm run menu` | The launcher above. |
+
+### Starting it without a terminal
+
+Every command above leaves a console window open for as long as the app runs,
+because each of them puts a process above Electron that has to stay alive —
+`npm run preview` is npm waiting on electron-vite waiting on Electron, and
+closing the terminal takes all three down. Fine while developing, tiresome on a
+machine you only use the app on.
+
+```bash
+npm run shortcut
+```
+
+Writes `todo-vault.lnk` to your desktop — the same thing as the menu's **[D]**.
+It runs `scripts/launch.vbs` under `wscript.exe`, which is Windows' script host
+in its windowless form: the same language `cscript.exe` runs with a console,
+hosted by a binary that never allocates one. So it starts Electron and exits,
+leaving the app running with no parent process and nothing to close.
+
+Two things follow from how it works, both deliberate:
+
+- **It launches what is built, and does not build.** After a pull that touched
+  the desktop app you still need `npm run build`, or you get the previous
+  version. A build behind a double-click would be about ten seconds of nothing
+  visible, with no console to show progress in, and it would put the
+  build-then-launch order in a second place when `npm run preview` already owns
+  it. If nothing is built yet,
+  the launcher says so in a dialog rather than failing silently.
+- **Nothing stops you opening it twice.** The app has no single-instance lock,
+  so a second double-click is a second window over the same vault. Logged in
+  `IDEAS.md`; it belongs in the main process, not in the launcher.
+
+Run it again if you move the repo — it rewrites the existing shortcut rather
+than making another one. Windows only; this is a `.lnk`. It is not packaging:
+the shortcut still needs the clone, the install and the build on that machine,
+which is the problem `PACKAGING.md` is about.
 
 ---
 

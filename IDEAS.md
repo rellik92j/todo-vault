@@ -8,6 +8,31 @@ for the shape of one of those).
 Newest at the top. No status tracking here — once something's picked up, its
 entry moves out to wherever it's being built.
 
+## A second double-click opens a second window over the same vault
+
+The app never calls `requestSingleInstanceLock()`, so nothing stops two copies
+running against one vault. That was survivable while every launch meant typing a
+command in a terminal — you knew you had already started it, because you were
+looking at it. `npm run shortcut` puts an icon on the desktop and makes an
+accidental double-launch ordinary, so this stopped being theoretical the moment
+that shipped.
+
+What two instances actually do to a vault is the part that needs establishing
+before the fix, rather than after. Writes are atomic and each item is its own
+file, so the damage is not obviously corruption; the likelier symptom is one
+window holding a stale render of an item the other just rewrote, since each has
+its own `chokidar` watcher and its own idea of what is on disk. Worth reproducing
+deliberately — two windows, edit the same item in both — because the answer
+decides whether the second instance should be refused outright or allowed and
+merely focused.
+
+The usual shape is a lock plus a `second-instance` handler that focuses the
+existing window, which is the right behaviour for a desktop icon: clicking it
+twice should get you back to the app you already have, not a rival copy of it.
+It belongs in `src/main/index.ts` rather than in the launcher — a `.vbs` cannot
+focus a window it did not create — which is why it was left out of the change
+that made the shortcut.
+
 ## Removing a comment, and detaching a copied attachment
 
 `vault_unlink_item` closed the link half of this; the other two have no inverse

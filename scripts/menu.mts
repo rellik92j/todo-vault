@@ -484,6 +484,13 @@ const ENTRIES: Entry[] = [
     run: () => runSteps([{ kind: "npm", args: ["install"] }]),
   },
   {
+    key: "d",
+    group: "Setup",
+    label: "Desktop shortcut",
+    hint: "double-click to start the built app, no terminal — re-run if the repo moves",
+    run: () => runSteps([{ kind: "npm", args: ["run", "shortcut"] }]),
+  },
+  {
     key: "c",
     group: "Setup",
     label: "Connect Claude…",
