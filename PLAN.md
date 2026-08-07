@@ -1822,8 +1822,11 @@ but left `due` and `overdue` double-listing the same three items.
 
 ## Loose ends worth knowing about
 
-**`vault jira discover` still does not exist.** Both the README and a warning
-string inside `jira.ts` tell you to run it. Phase 5.
+**`vault jira discover` still does not exist.** The README no longer names it,
+but `jira.ts` does — twice, and one of them at runtime: the warning at
+`jira.ts:243` fires during a real push and tells the user to run a command
+`cli.ts` has no case for. That makes it the only gap here that reaches a user
+rather than a reader. Phase 5.
 
 **The OneDrive half of `PLAN-LINKS.md` is built** — steps 3–4, landed together.
 A file inside a discovered sync root can no longer be copied into
@@ -2301,3 +2304,55 @@ prompt naming `npm run build`, and both new-version prompts naming the update.
 `No` was confirmed to run nothing; `Yes` was confirmed to open the terminal and
 complete the build — which it does with the app still running, so Windows does
 not hold `out/main/index.js` open the way it holds a running `.exe`.
+
+## CI, and the three things it decided differently ✅ built
+
+`.github/workflows/ci.yml` runs `npm ci`, a core build, typecheck and the suite
+on every pull request and every push to `main`, plus a separate build job. It
+came out of an `IDEAS.md` entry, and the interesting part of writing this down
+is that the entry proposed a shape and the first real runs overruled it three
+times. Each reversal is the sort of thing that only an execution can settle.
+
+**The runner is `windows-latest`, and only that.** The idea argued the opposite,
+and argued it well: every Windows-shaped predicate in the tree is tested as a
+pure function against canned input — `synced-roots.ts` parsing `reg query`,
+`isTransientRenameError` naming `EPERM`/`EACCES`/`EBUSY`, `classifyLinkTarget`
+handling `C:\` and UNC paths — so nothing in the suite needs a Windows
+filesystem, and Linux would be faster and cheaper. What that reasoning left out
+is what a green run would then be evidence *of*. This codebase has Windows in it
+on purpose; `menu.mts` routes around the `npm.cmd` shim, and the vault's atomic
+write retries its rename for transient Windows locks. Neither path is reachable
+on Linux at all, so a Linux pass would be a true statement about a program
+nobody runs. Cheapness is not the axis.
+
+**The build job exists, where the idea said to leave it out at first.** The
+argument for omitting it was that typecheck already covers all five projects and
+`build` only adds bundling, while `prebuild` forces the lazy Electron download on
+every run. The first half is exactly wrong in a way worth remembering: typecheck
+reads types and never invokes the bundler, so a change can typecheck clean and
+fail to build. The second half was real and got solved rather than avoided — the
+Electron binary is cached on `package-lock.json`'s hash, and the job is kept
+separate so it is the only one paying for it.
+
+**The engines floor was a guess, and CI is what turned it into a fact.**
+`package.json` claimed `>=20`, which nothing had ever run. `npm test` globs its
+test files; npm hands scripts to `cmd.exe` on Windows; `cmd.exe` does not expand
+globs; and Node only learned to expand the pattern itself in 22. The suite could
+therefore never have run on 20, in any workspace. Node 20 also left LTS on
+2026-04-30. The floor moved to 22, and the matrix runs 22 and 24 — 22 because a
+claim nothing tests is a guess, 24 because it is what this gets developed on.
+
+**One thing no one predicted.** The check job builds core before typechecking,
+because `apps/desktop` imports the `todo-vault` workspace package whose `types`
+field points at `dist/index.d.ts` — build output, and gitignored. A working copy
+has that directory lying around from earlier builds, so typecheck passes locally
+and a clean checkout reports `Cannot find module 'todo-vault'` ten times over.
+This is the class of bug CI exists for: not a mistake anyone made, but a
+dependency on local state that no amount of reading finds, because every machine
+that could notice it already had the file.
+
+What has *not* been done is the part the idea was most interested in, and it
+stays in `IDEAS.md`: a check that compares the test counts written into prose
+against the ones the suite reports. That drift has now recurred twice more since
+the entry was written. `main` also remains unprotected — verified, not assumed —
+so a red run is still a red X that can be merged straight past.

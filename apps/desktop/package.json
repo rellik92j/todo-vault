@@ -27,6 +27,10 @@
     "chokidar": "^4.0.3",
     "todo-vault": "*"
   },
+  "//engines": "Declared here rather than left to the root, because this is the workspace that genuinely needs 22: its `test` script globs (test/*.test.ts), npm hands scripts to cmd.exe on Windows, cmd.exe does not expand globs, and Node only learned to expand the pattern itself in 22. The workspace with the hard requirement was the one saying nothing.",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

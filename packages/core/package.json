@@ -55,7 +55,8 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
+  "//engines": "Matches the root, which moved to >=22 when the first CI run disproved >=20. Unlike the root and apps/desktop, this workspace's own `test` script names a single file rather than a glob, so 20 was never disproven *here* — it is corrected for agreement rather than because this suite was seen to fail. Two manifests disagreeing about the floor is a claim nobody can act on, and the root's is the one CI actually exercises.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
