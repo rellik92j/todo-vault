@@ -24,6 +24,7 @@ import {
 } from "./Editable";
 import {
   Cadence as CadencePill,
+  CHILD_TYPES,
   STATUS_LABELS,
   StatusPill,
   isOverdue,
@@ -47,6 +48,7 @@ export function ItemDetail({
   onClose,
   onSelect,
   onDelete,
+  onNewChild,
   mutate,
   attachPaths,
 }: {
@@ -65,6 +67,8 @@ export function ItemDetail({
   onClose: () => void;
   onSelect: (key: string) => void;
   onDelete: (item: Item) => void;
+  /** Opens the create form pointed at this item as parent, already typed. */
+  onNewChild: (parent: Item, type: ItemType) => void;
   mutate: (call: () => Promise<Result<VaultSnapshot | null>>) => Promise<string | null>;
   /** Dropped paths, which main may link rather than copy — see `onDrop`. */
   attachPaths: (
@@ -511,9 +515,18 @@ export function ItemDetail({
           />
         </div>
 
-        {related.children.length > 0 && (
+        {/*
+          The second disjunct is defensive and should be dead — the core
+          forbids a subtask being a parent — but a hand-edited file that broke
+          the rule would otherwise have its children silently disappear from
+          the panel, and hiding data is the worse failure.
+        */}
+        {(CHILD_TYPES[item.type].length > 0 || related.children.length > 0) && (
           <div className="detail-section">
-            <h3>Children</h3>
+            <h3>
+              Children
+              <NewChildControl types={CHILD_TYPES[item.type]} onPick={(type) => onNewChild(item, type)} />
+            </h3>
             <div className="rows">
               {related.children.map((child) => (
                 <button type="button" className="row" key={child.key} onClick={() => onSelect(child.key)}>
@@ -523,6 +536,9 @@ export function ItemDetail({
                 </button>
               ))}
             </div>
+            {related.children.length === 0 && (
+              <div className="field-note">No children.</div>
+            )}
           </div>
         )}
 
@@ -972,6 +988,93 @@ function ParentField({
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * The button (or menu, when there is a real choice) that opens the create
+ * form already pointed at this item as parent.
+ *
+ * A native `<select>`, the same pattern ParentField uses just above: it
+ * renders its list above the page and inherits keyboard handling, dismissal
+ * and scroll behaviour for free, which a popover positioned inside this
+ * panel's own scroll would have to reimplement.
+ */
+function NewChildControl({
+  types,
+  onPick,
+}: {
+  types: readonly ItemType[];
+  onPick: (type: ItemType) => void;
+}): React.JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSelectElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    ref.current?.focus();
+    try {
+      // Same bargain ParentField and EditableDate make: the click that opened
+      // this is the user activation showPicker needs, and if it has lapsed the
+      // select is still a focused select — the list is one more click away.
+      ref.current?.showPicker();
+    } catch {
+      /* the keyboard and a second click both still work */
+    }
+  }, [open]);
+
+  if (types.length === 0) return null;
+
+  // One legal type is not a choice, and a menu of one is a wasted click. The
+  // button names the type instead — the same instinct as ParentField rendering
+  // "epics sit at the top" rather than an empty menu.
+  if (types.length === 1) {
+    return (
+      <button className="add-btn" onClick={() => onPick(types[0])}>
+        + new {types[0]}
+      </button>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button className="add-btn" onClick={() => setOpen(true)}>
+        + new ▾
+      </button>
+    );
+  }
+
+  return (
+    <select
+      ref={ref}
+      className="inline-select"
+      // Always empty: this picks an action, not a value, and it unmounts the
+      // moment one is picked — so there is no state to reset. The placeholder
+      // is what the closed select would otherwise have nothing to display.
+      value=""
+      onChange={(e) => {
+        setOpen(false);
+        onPick(e.target.value as ItemType);
+      }}
+      onBlur={() => setOpen(false)}
+      onKeyDown={(e) => {
+        // Closes this before App's handler sees the key, which is what stops
+        // the same Escape from closing the whole panel. ParentField:908.
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setOpen(false);
+        }
+      }}
+    >
+      <option value="" disabled>
+        new child…
+      </option>
+      {types.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </select>
   );
 }
 

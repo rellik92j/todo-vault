@@ -27,6 +27,9 @@ import { BulkBar } from "./BulkBar";
 
 type View = "backlog" | "board" | "agenda" | "history";
 
+/** What a new-item form should open pointed at. Empty from the toolbar. */
+type NewItemDefaults = { project?: string; type?: ItemType; parent?: string };
+
 export function App(): React.JSX.Element {
   const vault = useVault();
   const [view, setView] = useState<View>("backlog");
@@ -101,7 +104,7 @@ export function App(): React.JSX.Element {
    */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [scope, setScope] = useState<AgendaScope>("week");
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<NewItemDefaults | null>(null);
   const [creatingProject, setCreatingProject] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -146,7 +149,13 @@ export function App(): React.JSX.Element {
 
   /** Any overlay that owns the keyboard while it is up. */
   const overlaid =
-    creating || creatingProject || showTrash || showHidden || paletteOpen || helpOpen || claudeOpen;
+    creating !== null ||
+    creatingProject ||
+    showTrash ||
+    showHidden ||
+    paletteOpen ||
+    helpOpen ||
+    claudeOpen;
 
   /** Whether the bulk edit bar is showing — backlog only, and only with a selection. */
   const bulkBarOpen = view === "backlog" && checked.size > 0;
@@ -665,7 +674,7 @@ export function App(): React.JSX.Element {
           return;
         case "n":
           event.preventDefault();
-          setCreating(true);
+          setCreating({});
           return;
         case "x":
           if (selectedItem) void handleDelete(selectedItem);
@@ -1083,7 +1092,7 @@ export function App(): React.JSX.Element {
           </button>
           <button
             className="btn btn-primary"
-            onClick={() => setCreating(true)}
+            onClick={() => setCreating({})}
             title="New item (n)"
           >
             + New
@@ -1223,6 +1232,9 @@ export function App(): React.JSX.Element {
           onClose={() => setDetailKey(null)}
           onSelect={open}
           onDelete={handleDelete}
+          onNewChild={(parent, type) =>
+            setCreating({ project: parent.project, type, parent: parent.key })
+          }
           mutate={vault.mutate}
           attachPaths={vault.attachPaths}
         />
@@ -1253,8 +1265,11 @@ export function App(): React.JSX.Element {
           projects={visibleProjects}
           items={visibleItems}
           reporters={allReporters}
-          defaultProject={project}
-          onClose={() => setCreating(false)}
+          /* The sidebar's project, unless a prefill names the parent's. */
+          defaultProject={creating.project ?? project}
+          defaultType={creating.type}
+          defaultParent={creating.parent}
+          onClose={() => setCreating(null)}
           onCreate={vault.createItem}
         />
       )}
