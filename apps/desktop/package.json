@@ -13,7 +13,9 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.test.json"
+    "//e2e": "Launches the built app, so it reads out/ rather than source — see the root e2e script's own comment for why building first is not optional here.",
+    "e2e": "tsx --test e2e/*.e2e.mts",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.e2e.json"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
@@ -32,12 +34,13 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.2.0",
     "electron-vite": "^5.0.0",
-    "@types/node": "^22.0.0",
+    "playwright-core": "^1.62.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tsx": "^4.19.0",

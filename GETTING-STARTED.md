@@ -217,6 +217,7 @@ npm run shortcut        # desktop shortcut that starts the app with no terminal
 npm run check-updates   # is the build stale, or is a newer version upstream?
 npm run build           # both workspaces
 npm test                # core, desktop, and the launcher's own tests
+npm run e2e             # build both, then drive the built app end to end (slow, not in CI)
 npm run typecheck       # both workspaces, plus scripts/
 npm run vault -- agenda week --vault ./vault   # CLI, run from repo root
 ```

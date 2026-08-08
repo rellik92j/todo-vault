@@ -2481,7 +2481,7 @@ drags React in. Verified with a clean `npm run typecheck` (which does cover
 boolean-to-union change) and, short of a full click-through, a Vite dev-server
 fetch of all four touched files confirming each transforms without error.
 
-## Comments get the description's editor ✅ built, not yet driven
+## Comments get the description's editor ✅ built and driven
 
 The comment box was an `<input>` inside a `mini-form`, so a newline could not be
 typed at all, and bodies rendered as raw text. Both halves now reuse what the
@@ -2536,9 +2536,137 @@ text on screen.
 
 No unit test, consistent with the rest of the panel: `ItemDetail.tsx`,
 `RichEditor.tsx` and `Markdown.tsx` are all `.tsx` the desktop suite already
-excludes, since `tsx --test` importing JSX drags React in. Verified with a clean
-`npm run typecheck` and a dev-server launch with no build or main-process
-errors; the interactive checks — old comment renders correctly, blur does not
-post, Ctrl+Enter is inert, a nested `> quote`'s left border reads fine next to
-the comment's own — still want a human click-through, since this session had no
-way to drive the Electron window itself.
+excludes, since `tsx --test` importing JSX drags React in.
+
+**Driven in the real app** instead, against the seeded fixture vault, under
+`apps/desktop/e2e/comment-editor.e2e.mts` — see "Driving the desktop app with
+Playwright" below for the harness itself. The old comment renders as markdown
+while the file on disk still holds its literal backticks, the bargain this
+feature actually struck. The `Ctrl+Enter saves · Esc cancels` hint is absent
+from this mount, proven against the description editor's own hint as a positive
+control rather than trusting an unrendered `.field-note` to mean what it looks
+like it means. Blur does not post, with the blur itself confirmed via
+`document.activeElement` before concluding anything from what did not follow
+it. Ctrl+Enter is inert, confirmed by zero `<br>` and byte-identical text
+rather than only an unchanged comment count, so a capture-phase handler that
+later moved to the bubble phase would still be caught. And posting for real
+works — the positive control the two negative checks above depend on to mean
+anything at all.
+
+The one check that still wants a person: a nested `> quote`'s left border
+reading fine next to the comment's own, in both colour schemes. Two same-width,
+same-coloured `border-left` rules stacked can only be proven offset by a
+measured amount, not proven to actually *read* as two rules rather than one
+thick line or an artefact — the same limit the reporter datalist's "a check
+that reads the DOM cannot verify a native control" already put a name to.
+`apps/desktop/e2e/artifacts/panel-dark.png` and `panel-light.png` are that
+check, and being looked at by a person is what discharges it.
+
+## Driving the desktop app with Playwright, so a click-through stops needing a human ✅ built and driven
+
+The comment editor above was the trigger, but not a one-off: `ItemDetail.tsx`,
+`RichEditor.tsx` and `Markdown.tsx` are exactly the `.tsx` the desktop suite
+deliberately excludes, since `tsx --test` importing JSX drags React in. So the
+panel where most recent work has landed had no automated coverage of any kind,
+and every change to it ended the same way — a green typecheck, unverified
+behaviour, and a note asking someone to go and look. `npm run e2e` now builds
+core and the app, launches the built app against a throwaway vault, drives the
+comment editor, and answers those questions — leaving a harness the next panel
+change reuses instead of rebuilding.
+
+**`playwright-core`'s `_electron`, not `@playwright/test`** — and **this
+supersedes the two "not installed" notes above**, on the related-items status
+colour and on bulk edit, rather than editing them: both drove the app over
+`--remote-debugging-port` and Node's global `WebSocket` because
+`playwright-core` genuinely was not installed at the time. It is now. The
+tempting argument against it was the install script — `@playwright/test` pulls
+`playwright`, which downloads three browsers this harness would never launch —
+but that argument does not hold: the script only downloads browsers, so
+`allowScripts: { playwright: false }` would deny it with no functional loss,
+Electron already being the browser. The decisive argument is that
+`@playwright/test` cannot be run by `tsx --test` — it wants its own CLI, its own
+config, its own idea of what a test file is — and this repo has exactly one test
+runner. A second one means two answers to "how do I run a test here," a
+permanent conceptual cost the polling loop below did not need bought. Auto-
+waiting lives in the *library*, not the runner, and comes with `playwright-core`
+unchanged — every action retries actionability and every read that resolves an
+element waits for it, which is the overwhelming majority of e2e flake, free.
+What auto-waiting does not cover is a read that answers about right now
+(`count()`, `isVisible()`, …), and "the comment list grew by one" is only true a
+React render after the IPC round trip — so `eventually()` and `stays()` in
+`e2e/drive.mts` were the only waiting logic this needed writing. The honest cost
+is the trace viewer; partly bought back by piping the renderer's console and the
+main process's stderr into the test output, and screenshotting the failing case
+on the visual check. And the dependency itself: `playwright-core` installed at
+~14 MB with no browser download, against a `node_modules` already at hundreds of
+MB whose `electron` alone is 351 MB — and `electron` is itself a
+`devDependency`, as are `react`, `vite` and `typescript`. Nothing here builds or
+launches without them, so "why is a test tool in everyone's install" has an
+answer worth writing down once rather than re-arguing at review time.
+
+**`.mts`, not `.ts`.** `apps/desktop` has no `"type": "module"`, so tsx
+transpiles a `.ts` file here to CJS — and `todo-vault` is `"type": "module"`
+with no CJS entry, so `import { Vault } from "todo-vault"` would become a
+`require()` of an ESM-only package, working only on Node ≥22.12 while `engines`
+says `>=22`. `.mts` is unambiguously ESM regardless of the package's own
+`type`, matching `scripts/*.mts` at the repo root. A fourth tsconfig
+(`tsconfig.e2e.json`) rather than folding `e2e/**` into `tsconfig.test.json`:
+that config uses `"moduleResolution": "bundler"`, `.mts` with `.mjs`-suffixed
+specifiers wants `NodeNext`, and `*.ts` globs do not match `.mts` regardless. It
+is wired in as a fourth `tsc --noEmit -p` pass, which does pull `e2e/**` into
+CI's `check` job — deliberately: `playwright-core` has no browser to download,
+`npm ci` installs it in seconds, and typechecking reads its types without
+launching a binary.
+
+**A throwaway vault, and a `--user-data-dir` checked against the app's own
+answer, not the string passed in.** The desktop app ignores `VAULT_DIR` — only
+the core's CLI and MCP server read it — so the only way in is an isolated
+`--user-data-dir` holding a pre-written `settings.json` naming a throwaway
+vault, which also avoids the first-run picker's native OS dialogs that no
+harness can click. Before the harness does anything else it asks the running
+app for its own `app.getPath("userData")` over Electron's `evaluate` and asserts
+that answer — not the path this run constructed — resolves under the OS temp
+directory. If `--user-data-dir` were ever silently ignored, the app would open
+whatever vault this machine last used and every write this suite makes would
+land in it: not a flake, damage. `git init` plus a repo-local identity, not
+merely `git init`: `VaultService` always opens `{ git: true }` and the core's
+auto-commit is best-effort and never throws, so a vault with no identity at all
+would not fail — it would silently fail to commit on every write, leaving
+`gitStatus().healthy` false and a `banner-info` in `App.tsx` shifting every
+screenshot down.
+
+**Teardown asks, checks, then insists.** An earlier driving run, on the
+`reporter` field above, recorded `app.close()` not killing the instance, leaving
+two briefly live at once — so `close()` here races `app.close()` against a 10s
+timeout, checks `process.kill(pid, 0)` for whether the Electron process is
+actually gone, and only then runs `taskkill /pid <pid> /T /F` (`/T` for the GPU
+and utility child processes, which would otherwise keep the temp directory
+open). `fs.rm`'s own retries never clear a Windows `EPERM` — git marks objects
+under `.git` read-only, the same reason a Windows worktree refuses to delete —
+so removal falls back to `cmd /c rd /s /q`. And because a crashed run can still
+leave a leaked Electron holding handles no amount of retrying will free, every
+new run first sweeps sibling temp directories over an hour old: the only cleanup
+that reliably happens is the one done by the *next* run, not the one that made
+the mess.
+
+**Six checks, all under `apps/desktop/e2e/comment-editor.e2e.mts`, one app and
+one vault, run in order.** An old plain-text comment renders as markdown while
+the file keeps its literal backticks. The `Ctrl+Enter saves · Esc cancels` hint
+is absent from the comment form, proven against the description editor's own
+hint as a positive control. Blur does not post — with the blur itself confirmed
+via `document.activeElement`, the biggest false-pass risk in the file, before
+concluding anything from what did not follow it. Ctrl+Enter is inert, confirmed
+by zero `<br>` and byte-identical text rather than only an unchanged comment
+count. Posting for real works, the positive control the two negative checks
+depend on to be falsifiable at all. And a quoted comment's border sits at least
+~8px inside the comment's own — mechanical, and paired with three screenshots in
+`e2e/artifacts/` (gitignored) for the part no DOM assertion can prove, per the
+reporter datalist's lesson above. Proved the suite can actually fail by
+temporarily flipping the Ctrl+Enter check to expect a post, watching it go red,
+then reverting. Across the whole run the real `vault/` at the repo root stayed
+untouched — same precedent the reporter section set.
+
+CI stays out of scope, deliberately: it belongs in `ci.yml`'s **`build`** job,
+which already caches the Electron download, not in `check`, which never
+downloads Electron and would otherwise pay the ~150 MB twice across the Node
+22/24 matrix.
