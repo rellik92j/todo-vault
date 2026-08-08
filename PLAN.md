@@ -2670,3 +2670,73 @@ CI stays out of scope, deliberately: it belongs in `ci.yml`'s **`build`** job,
 which already caches the Electron download, not in `check`, which never
 downloads Electron and would otherwise pay the ~150 MB twice across the Node
 22/24 matrix.
+
+## `vault-capture` and `vault-update`, the draft-then-confirm step for an external Claude ✅ built and driven
+
+The in-app assistant already solves this problem once: `claude.ts` hands
+Claude the live project list, categories, and labels in use, then drafts
+straight into the create form, where the user sees every field before
+anything is written. An external Claude talking to the vault through the MCP
+server has no form. Every write tool looks identical from outside —
+`vault_update_item` moving a due date and `vault_move_item_to_project`
+re-keying a subtree are both one call — and nothing prompted filling in the
+fields (category, labels, parent, due date, reporter) that make an item
+findable a month later instead of a bare summary nobody can find again.
+
+Two project skills, `.claude/skills/vault-capture/` and
+`.claude/skills/vault-update/`, split on trigger rather than tool — "add a
+task" and "push it to Friday" arrive in different moods and need different
+material in front of them. Alongside `git-recover` / `ship-change` /
+`start-change`, so they ship with the repo on clone and are scoped to this
+checkout, the same trade those three already made.
+
+**The draft is the question, not an interrogation.** The naive reading of
+"ask or assume" is a per-field decision procedure, which produces five
+questions before a single task exists. Inverted instead: resolve everything
+into one complete draft, mark what was inferred with a `←` note, and let one
+reply correct all of it. A question only comes *before* the draft when it
+truly can't be built without an answer — no project fits, two fit equally, or
+the note implies an illegal hierarchy. Category and label reuse comes from
+reading `vault_list_items` before drafting, the same context `claude.ts`
+already assembles, rebuilt from the MCP side.
+
+**The confirmation ladder comes from two axes, not a field list.** Who chose
+the change — named by the user, or inferred by Claude — crossed with what it
+costs to be wrong — cheap to undo, or hard/wide. A named, cheap change (a due
+date) just happens, reported in one line after the fact. An inferred or
+costly one gets confirmed, and for a costly one the confirmation says what it
+touches, not just what it is — "re-keys ACME-4 and its subtask ACME-5, drops
+the ACME-1 epic link" rather than "move ACME-4 to OPS?" A list of fields would
+need re-deriving by hand for every case it didn't anticipate; the two axes
+don't.
+
+Twelve traps are encoded in `vault-update/references/significance.md`, each
+one a case where a tool's own description states the rule correctly but too
+late — by the time an agent has already chosen `vault_update_item` with a bare
+`labels: ["urgent"]`, the four words in that tool's description warning that
+labels replace the whole list are behind it. The skill's job is catching the
+moment ("add a label" *sounds* like it should be additive) before the call is
+reached for, not restating rules the tool descriptions and `SCHEMA.md` already
+carry correctly.
+
+Driven against the real dev vault on the branch before merging, each check
+reverted after: capture on "add a task to chase the renewal quote" reused the
+existing `Procurement` category and `vendor` label rather than coining new
+ones; "add a label 'urgent' to ACME-6" preserved `reporting` and `finance`
+through a read-modify-write; "I did the morning batch check" on the daily-
+cadence `OPS-1` ticked it and left `status` at `todo` rather than closing it
+for good; and forcing `ACME-10` from `todo` straight to `in_review` failed
+exactly as `SCHEMA.md`'s transition table says it should, then succeeded once
+routed through `in_progress`, which also confirmed the `startDate` auto-stamp
+along the way. The remaining prompts in the plan's eleven-prompt test table —
+a project-move confirmation, `copy: false` on a synced-folder path, a project
+rename, a four-item brain-dump split — were left unrun in favor of shipping
+the four covering the sharpest failure modes: silent data loss, a permanently
+retired recurring item, and a hard validation error.
+
+Left for later, sketched in the plan and not built: `vault-groom` (the
+hygiene sweep — stale `in_progress`, missing categories, orphaned epics),
+`vault-jira-push` (the multi-tool push loop, worth building once Jira use is
+more than one item), and `vault-review` (agenda reporting, lowest priority
+since `vault_get_agenda`'s own description already carries most of the
+banding advice).
