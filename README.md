@@ -186,6 +186,7 @@ command and returns you to the menu rather than killing both.
 | `npm run preview` | Builds the core, then the production preview. Closest to what ships. |
 | `npm run preview:skip-build` | The same preview without rebuilding. Only correct if nothing changed. |
 | `npm test` | Runs both workspaces' tests plus the launcher's own. |
+| `npm run e2e` | Builds both workspaces, then drives the built app end to end against a throwaway vault. Slow; not part of `npm test` or CI. |
 | `npm run typecheck` | Both workspaces, plus `scripts/`. |
 | `npm run vault -- <args>` | The vault CLI, from the repo root. |
 | `npm run mcp` | The MCP server, over stdio. |
@@ -474,6 +475,23 @@ description grammar in both directions, ADF conversion, push ordering, drift
 detection, trash and restore, atomic writes, bulk edit), the desktop app's pure
 renderer logic (nesting, collapse, type filtering, board lanes, agenda bands,
 multi-select ranges), and the launcher's argument tokenizer.
+
+```bash
+npm run e2e
+```
+
+Drives the *built* app itself, over `playwright-core`'s `_electron`, against a
+throwaway seeded vault and an isolated `--user-data-dir` — never the real
+`vault/` at the repo root. This is where `ItemDetail.tsx`, `RichEditor.tsx` and
+`Markdown.tsx` get covered: they are `.tsx`, which `npm test` deliberately
+excludes so that `tsx --test` importing JSX does not drag React into the fast
+suite. Today that means the comment editor — old comments rendering as
+markdown, the save hint being absent, blur and Ctrl+Enter not posting, posting
+for real, and a quoted comment's border reading clear of the comment's own.
+Screenshots land in `apps/desktop/e2e/artifacts/` (gitignored) for the one part
+no DOM assertion can prove — see `PLAN.md`'s "Driving the desktop app with
+Playwright" section for the whole argument. It is slow, launches a real Electron
+window, and stays out of both `npm test` and CI on purpose.
 
 [CI](.github/workflows/ci.yml) runs all of it on every pull request and every
 push to `main` — `npm ci`, a core build, typecheck and the suite, on Node 22 and

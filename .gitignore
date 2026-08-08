@@ -26,6 +26,10 @@ issues.csv
 # electron-vite build output
 apps/desktop/out/
 
+# Screenshots the e2e harness writes on each run — the output of a check, not
+# a baseline to diff against. See apps/desktop/e2e/comment-editor.e2e.mts.
+apps/desktop/e2e/artifacts/
+
 # In-progress plans — scratch space between an idea and the implementation.
 # Ignored because a plan is not a description of the codebase, and the repo
 # root should not accumulate documents that read as if it were. The durable
