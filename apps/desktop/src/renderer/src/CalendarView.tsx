@@ -3,10 +3,10 @@ import type { Item } from "todo-vault";
 import { monthGrid } from "./calendar";
 import { isOverdue } from "./pieces";
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /**
- * The month grid: due dates only, Monday-anchored, growing rather than
+ * The month grid: due dates only, Sunday-anchored, growing rather than
  * truncating a heavy day — see the plan's reasoning in `calendar.ts`.
  *
  * Reads `items` straight from `filtered`, the same list the board and backlog
