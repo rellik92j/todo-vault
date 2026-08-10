@@ -2740,3 +2740,68 @@ hygiene sweep — stale `in_progress`, missing categories, orphaned epics),
 more than one item), and `vault-review` (agenda reporting, lowest priority
 since `vault_get_agenda`'s own description already carries most of the
 banding advice).
+
+## A Calendar view, beside Agenda ✅ built and driven
+
+A fifth tab, between Agenda and History because the two date-shaped views
+belong together. The agenda ranks; the calendar arranges — a month grid is the
+one layout that makes density visible, answering "what does the shape of this
+month look like" where the backlog column, the board card, and the agenda's
+list all only answer "what is coming up."
+
+**It reads `filtered`, not the core.** Deciding which dates count as "this
+week" is core logic the agenda rightly goes over IPC for, but a month grid is
+pure layout over items that already carry a date. So `calendar.ts` +
+`CalendarView.tsx` work from `filtered` in the renderer, the way the board and
+backlog do — every toolbar filter narrows the grid the same way it narrows the
+board, unlike the agenda, which notably takes only `visibleItems` and a scope.
+No new IPC channel, no `shared/api.ts` change, no main-process work, and it
+re-renders synchronously with every edit.
+
+**Due dates only.** An item appears on a day when `item.dueDate` equals it;
+recurring items appear only if they also carry one. Projecting cadences onto
+the grid (a weekly item landing on each Monday) was considered and rejected —
+a single daily item would put a chip in every cell, burying the deadlines the
+view exists to show. Recurrence is a schedule, not a deadline, and the agenda
+already has a section that says so.
+
+**Sunday-anchored weeks**, deliberately apart from `recurrence.ts`'s
+Monday-anchored `startOfWeek`. The two consumers that key off that shared
+anchor — the agenda's week bands and a weekly cadence's period — never draw a
+grid, so there was no second consumer for the calendar's own visual anchor to
+stay in step with. A small local `sundayOnOrBefore` in `calendar.ts` handles
+it, tested on its own in `test/calendar.test.ts` alongside `stepMonth` and the
+priority/key tie-break `compareWithinDay` uses within a day.
+
+**The grid grows; it does not truncate.** Rows are `minmax(110px, auto)`, so a
+heavy day makes its week taller rather than hiding chips behind a "+N more" —
+which would break the keyboard walk, since `j` stepping onto an off-screen chip
+is exactly the failure `orderedKeys` exists to prevent.
+
+**Overdue work from before the visible month** gets a one-line banner above
+the grid with a jump-to-earliest button, so the view never silently reads as
+"you are clear" just because last month's deadline scrolled off the left edge.
+
+Phase 1 shipped the read-only grid: `calendar.ts`, `CalendarView.tsx`, the tab
+(renumbering History from `4` to `5`), the month stepper, `[`/`]` to page
+months, and `j`/`k` walking the grid in reading order through `orderedKeys`.
+
+**Phase 2, drag to reschedule, followed the same session.** `Board.tsx` was
+the working model: `@dnd-kit/core`'s `DndContext` wraps the grid, each day
+cell is a `useDroppable` keyed on its own `YYYY-MM-DD` — already globally
+unique across the grid, leading/trailing days included, so no composite id
+was needed the way the board needs one for `project` + `status` — and each
+chip is a `useDraggable` keyed on the item's key. Dropping fires
+`vault.mutate(() => window.vault.updateItem(key, { dueDate }))`, a plain field
+on `UpdateItemInput` that needed no schema change. Deliberately kept out of
+Phase 1: a calendar that only reads is useful on its own, and a mis-drop that
+silently rewrites a deadline is a worse bug than a missing feature — so it
+shipped once the read-only view had already proven itself.
+
+Driven end to end against the built app: a chip dragged from a seeded item's
+due date onto today's cell moved the due date on disk and the chip followed
+in the DOM, checked on both layers the way the comment-editor e2e suite
+already does. No permanent e2e file was added — the drag path was verified
+with a throwaway script against `e2e/harness.mts`, then deleted, in line with
+the plan's own "Verifying it" section treating this as a by-hand check rather
+than an addition to the unit suite.

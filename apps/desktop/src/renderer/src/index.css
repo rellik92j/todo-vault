@@ -978,6 +978,26 @@ button:focus-visible {
   background: var(--accent-dim);
 }
 
+.cal-chip {
+  cursor: grab;
+}
+
+.cal-chip-placeholder {
+  opacity: 0.3;
+}
+
+.cal-chip-overlay {
+  cursor: grabbing;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.45);
+  transform: rotate(1.5deg);
+}
+
+.cal-day-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+}
+
 /* ---------------------------------------------------------------- agenda */
 .agenda {
   padding: 14px 16px 28px;
