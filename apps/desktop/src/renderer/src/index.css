@@ -904,7 +904,10 @@ button:focus-visible {
 
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* The 0 minimum is load-bearing: 1fr alone is minmax(auto, 1fr), and an
+     auto minimum lets the widest chip's min-content width dictate its track,
+     which is what made columns uneven and chip truncation never engage. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
