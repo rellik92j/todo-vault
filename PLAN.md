@@ -2805,3 +2805,59 @@ already does. No permanent e2e file was added — the drag path was verified
 with a throwaway script against `e2e/harness.mts`, then deleted, in line with
 the plan's own "Verifying it" section treating this as a by-hand check rather
 than an addition to the unit suite.
+
+## Assignee gets the menu Reporter already had ✅
+
+Reporter and Assignee sit next to each other, hold the same kind of value —
+a person's name, typed free-hand, `max(120)` in the schema — and behaved
+completely differently. Reporter offered every name the vault had ever been
+told; Assignee was a bare text box. The asymmetry was not a decision anyone
+made, it was where the work stopped: `knownReporters` was written for the
+reporter menu, wired into the two places that needed it, and Assignee was
+never revisited. The consequence was the one a suggestion menu exists to
+prevent — the same person accumulating as "Dan Okafor", "dan okafor", and
+"Dan  Okafor" with nothing offering the spelling already in use.
+
+`knownReporters` generalized into `knownPeople(items, field)` in
+`pieces.tsx`, kept as a thin wrapper at its old name because it reads
+better at its call sites and because the doc comment above it — about why
+the list is derived rather than stored, and how spellings fold — was worth
+keeping attached to something. `App.tsx` derives `allAssignees` from the
+whole snapshot the same way it derives `allReporters` (hidden projects
+included — a name is not an item, and hiding a project should not make a
+colleague un-nameable). `ItemDetail`'s Assignee field gets `suggestions`
+the same way Reporter's does.
+
+`BulkBar`'s Assignee input got a matching `<datalist>` rather than
+`Suggest`, deliberately, even though `Editable.tsx` carries a pointed note
+about why `datalist` was wrong *there*: Chromium filters the native popup
+against the input's existing value, so a box already reading "Dan Okafor"
+offers a menu of one name. The bulk bar's boxes are always empty — they
+reset after every commit, because a pick there is an instruction rather
+than a fact about the selection — so that failure mode can't arise. And
+`Suggest` doesn't express the bulk bar's actual commit semantics anyway:
+Enter commits even when empty (clearing the field across the whole
+selection), blur commits only when non-empty (a passive click elsewhere
+must not read as "clear the assignee for twelve items"), Escape discards.
+`CreateDialog` was left alone on purpose — there is still no Assignee
+field on the create form, for the same reason Reporter's comment already
+gives: who wants the work is known while logging it, who will do it
+usually is not.
+
+Taken with it: once the menu folds spellings for Assignee, an exact-match
+filter would contradict it — pick "Dan Okafor" off the menu and a query for
+"dan okafor" would miss the item just written, which is precisely the
+failure the reporter fold was introduced to avoid. `Vault.listItems` now
+folds `filter.assignee` case-insensitively in the same pre-pass `reporter`
+already gets, the free-text search haystack (`vault.ts` and `App.tsx`'s
+client-side filter both) now includes `assignee`, and `schema.ts` /
+`SCHEMA.md` describe one rule for both fields instead of spelling out an
+asymmetry that no longer existed.
+
+112 core tests green (new: case-insensitive assignee filter, mixed
+whitespace/case, assignee-only text search), 65 desktop tests green (new:
+5 `knownPeople` tests covering fold, tie-break, whitespace-only values, and
+parity between the two fields over the same data), typecheck clean.
+Verified by hand against the running app: the detail panel's suggestion
+menu, the bulk bar's native datalist popup and its empty-box commit
+semantics, and a hidden project's assignee still surfacing in the menu.
