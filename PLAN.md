@@ -2806,6 +2806,41 @@ with a throwaway script against `e2e/harness.mts`, then deleted, in line with
 the plan's own "Verifying it" section treating this as a by-hand check rather
 than an addition to the unit suite.
 
+**The seven columns came out uneven, and the fix was one keyword.**
+`.cal-grid` read `grid-template-columns: repeat(7, 1fr)`, which looks like
+seven equal fractions and is not one: `1fr` is shorthand for
+`minmax(auto, 1fr)`, and grid track sizing always satisfies every track's
+*minimum* before the `fr` units divide whatever space is left. With `auto` in
+that minimum slot, a track can never end up narrower than its widest chip's
+min-content width — and `.cal-chip`'s `white-space: nowrap` makes that width
+the chip's entire un-truncated summary, since intrinsic sizing runs before
+`overflow: hidden` / `text-overflow: ellipsis` get a chance to clip anything.
+The practical effect: a Tuesday holding a long summary grew visibly wider than
+its neighbours, the header row (sharing the same grid) drifted out of line
+with the days below it, and past a certain point the whole grid started
+scrolling sideways — which a seven-day week, unlike the board's paginated
+columns, has no business ever doing. The fix takes content out of track
+sizing entirely: `repeat(7, minmax(0, 1fr))`. An explicit `0` minimum means
+all seven tracks split the container evenly regardless of what is inside
+them, and the truncation CSS that was already sitting on `.cal-chip` — written
+for exactly this, never once engaged — finally does its job. Deliberately not
+given the board's `minmax(170px, 320px)` floor: the board can fall back to
+horizontal scrolling because its columns are a list that happens to be six
+long, but a week is fixed at seven and cannot be paged, so a floor would just
+push the seventh day off the right edge instead of narrowing it. The window's
+own 900px `minWidth` already bounds how far the columns can shrink.
+
+Verified with a new permanent spec, `e2e/calendar-columns.e2e.mts`: a positive
+control confirming a chip is genuinely truncated (unfalsifiable without it —
+seven equal columns is also what an empty grid or the wrong view produces),
+equal day-column widths, the weekday header aligned to the columns below it,
+and equal-and-widening columns with no horizontal overflow across a resize
+from 1000px to 1600px, screenshotted at both. Running it against the
+pre-fix CSS first, deliberately, showed the mechanism rather than assumed it:
+the positive control itself failed — no chip truncated, because the track
+was still growing to fit it — alongside the uneven-column assertion. 10/10
+desktop e2e, 112/112 core unit tests, typecheck clean.
+
 ## Assignee gets the menu Reporter already had ✅
 
 Reporter and Assignee sit next to each other, hold the same kind of value —
