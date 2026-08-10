@@ -9,6 +9,7 @@ import { useVault } from "./useVault";
 import { BacklogTable } from "./BacklogTable";
 import { Board } from "./Board";
 import { Agenda } from "./Agenda";
+import { Calendar } from "./CalendarView";
 import { History } from "./History";
 import { ItemDetail } from "./ItemDetail";
 import { Welcome } from "./Welcome";
@@ -21,11 +22,12 @@ import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardLanes } from "./ordering";
+import { monthGrid, stepMonth } from "./calendar";
 import { rangeBetween } from "./selection";
-import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters } from "./pieces";
+import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters, todayIso } from "./pieces";
 import { BulkBar } from "./BulkBar";
 
-type View = "backlog" | "board" | "agenda" | "history";
+type View = "backlog" | "board" | "agenda" | "calendar" | "history";
 
 /** What a new-item form should open pointed at. Empty from the toolbar. */
 type NewItemDefaults = { project?: string; type?: ItemType; parent?: string };
@@ -104,6 +106,12 @@ export function App(): React.JSX.Element {
    */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [scope, setScope] = useState<AgendaScope>("week");
+  /**
+   * The calendar's visible month, YYYY-MM. Not persisted, for the same reason
+   * `grouped` is not — see the note there. Resets to the current month on
+   * every launch.
+   */
+  const [month, setMonth] = useState<string>(() => todayIso().slice(0, 7));
   const [creating, setCreating] = useState<NewItemDefaults | null>(null);
   const [creatingProject, setCreatingProject] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -331,8 +339,13 @@ export function App(): React.JSX.Element {
         lane.columns.flatMap((c) => c.items.map((i) => i.key)),
       );
     }
+    if (view === "calendar") {
+      return monthGrid(month, filtered, todayIso()).flatMap((day) =>
+        day.items.map((i) => i.key),
+      );
+    }
     return agendaOrder;
-  }, [view, backlogRows, filtered, projectOrder, grouped, agendaOrder]);
+  }, [view, backlogRows, filtered, projectOrder, grouped, month, agendaOrder]);
 
   const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
   const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
@@ -664,6 +677,9 @@ export function App(): React.JSX.Element {
           setView("agenda");
           return;
         case "4":
+          setView("calendar");
+          return;
+        case "5":
           setView("history");
           return;
         // Gated on the board rather than global: it is the only view with lanes,
@@ -671,6 +687,14 @@ export function App(): React.JSX.Element {
         // one that does nothing.
         case "g":
           if (view === "board") setGrouped((on) => !on);
+          return;
+        // Same reasoning as "g": a key that pages the calendar's month while
+        // some other view is open is worse than a key that does nothing there.
+        case "[":
+          if (view === "calendar") setMonth((m) => stepMonth(m, -1));
+          return;
+        case "]":
+          if (view === "calendar") setMonth((m) => stepMonth(m, 1));
           return;
         case "n":
           event.preventDefault();
@@ -930,7 +954,7 @@ export function App(): React.JSX.Element {
       <main className="main">
         <div className="toolbar">
           <div className="tabs" role="tablist">
-            {(["backlog", "board", "agenda", "history"] as const).map((candidate, index) => (
+            {(["backlog", "board", "agenda", "calendar", "history"] as const).map((candidate, index) => (
               <button
                 key={candidate}
                 role="tab"
@@ -975,6 +999,40 @@ export function App(): React.JSX.Element {
             </select>
           ) : (
             <>
+              {/*
+                Calendar-only, and at the head of the row rather than replacing
+                it: the shared filters below still narrow the grid, which is the
+                whole reason the calendar reads `filtered` instead of going over
+                IPC like the agenda does.
+              */}
+              {view === "calendar" && (
+                <div className="cal-toolbar">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setMonth((m) => stepMonth(m, -1))}
+                    title="Previous month ([)"
+                  >
+                    ‹
+                  </button>
+                  <span>{monthLabel(month)}</span>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setMonth((m) => stepMonth(m, 1))}
+                    title="Next month (])"
+                  >
+                    ›
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setMonth(todayIso().slice(0, 7))}
+                  >
+                    Today
+                  </button>
+                </div>
+              )}
               <select value={status} onChange={(e) => setStatus(e.target.value as Status | "all")}>
                 <option value="all">Any status</option>
                 {BOARD_ORDER.map((s) => (
@@ -1189,6 +1247,16 @@ export function App(): React.JSX.Element {
               }
             />
           )}
+          {view === "calendar" && (
+            <Calendar
+              month={month}
+              items={filtered}
+              today={todayIso()}
+              selected={selected}
+              onSelect={open}
+              onJumpToMonth={setMonth}
+            />
+          )}
           {view === "history" && (
             <History
               git={snapshot.git}
@@ -1319,6 +1387,14 @@ export function App(): React.JSX.Element {
       )}
     </div>
   );
+}
+
+function monthLabel(month: string): string {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(year, monthIndex - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function shortenPath(full: string): string {
