@@ -40,9 +40,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["1"], label: "Backlog", group: "Views" },
   { keys: ["2"], label: "Board", group: "Views" },
   { keys: ["3"], label: "Agenda", group: "Views" },
-  { keys: ["4"], label: "History", group: "Views" },
+  { keys: ["4"], label: "Calendar", group: "Views" },
+  { keys: ["5"], label: "History", group: "Views" },
 
   { keys: ["g"], label: "Group the board by project", group: "Display" },
+  { keys: ["["], label: "Previous month (calendar)", group: "Display" },
+  { keys: ["]"], label: "Next month (calendar)", group: "Display" },
 
   // The three below are the one group the App.tsx handler never sees: the main
   // process claims them in zoom.ts, before the key reaches the page, which is
