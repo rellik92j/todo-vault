@@ -1,6 +1,6 @@
 import type { Item } from "todo-vault";
 import { PRIORITIES } from "todo-vault/constants";
-import { addDays, endOfMonth, startOfMonth, startOfWeek } from "todo-vault/recurrence";
+import { addDays, endOfMonth, startOfMonth } from "todo-vault/recurrence";
 
 export interface CalendarDay {
   date: string; // YYYY-MM-DD
@@ -26,7 +26,22 @@ function compareWithinDay(a: Item, b: Item): number {
 }
 
 /**
- * The weeks a month view draws: Monday-anchored, running from the start of the
+ * Sunday on or before `dateIso` — the grid's own week anchor.
+ *
+ * Deliberately not `startOfWeek` from `recurrence.ts`: that one is
+ * Monday-anchored, because the agenda's week bands and a weekly cadence's
+ * period both need to agree with it. Neither of those is a grid — the agenda
+ * states a week as a `from`/`to` range in prose, and a cadence period is never
+ * drawn as columns — so there is no second consumer for this grid's anchor to
+ * agree with, and it is free to follow the calendar convention instead.
+ */
+function sundayOnOrBefore(dateIso: string): string {
+  const dow = new Date(`${dateIso}T00:00:00`).getDay();
+  return addDays(dateIso, -dow);
+}
+
+/**
+ * The weeks a month view draws: Sunday-anchored, running from the start of the
  * week containing the 1st to the end of the week containing the last day, so
  * the grid is always a whole number of 7-day rows.
  *
@@ -36,8 +51,8 @@ function compareWithinDay(a: Item, b: Item): number {
  */
 export function monthGrid(month: string, items: Item[], today: string): CalendarDay[] {
   const first = `${month}-01`;
-  const gridStart = startOfWeek(first);
-  const gridEnd = addDays(startOfWeek(endOfMonth(first)), 6);
+  const gridStart = sundayOnOrBefore(first);
+  const gridEnd = addDays(sundayOnOrBefore(endOfMonth(first)), 6);
 
   const byDate = new Map<string, Item[]>();
   for (const item of items) {

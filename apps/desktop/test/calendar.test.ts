@@ -26,21 +26,21 @@ function item(key: string, dueDate?: string, priority = "medium"): Item {
   } as unknown as Item;
 }
 
-test("a month starting on a Sunday leads with six days from the previous month", () => {
-  // Feb 1 2026 is a Sunday.
-  const grid = monthGrid("2026-02", [], TODAY);
-  const leading = grid.filter((d) => !d.inMonth && d.date < "2026-02-01");
+test("a month starting on a Saturday leads with six days from the previous month", () => {
+  // Aug 1 2026 is a Saturday.
+  const grid = monthGrid("2026-08", [], TODAY);
+  const leading = grid.filter((d) => !d.inMonth && d.date < "2026-08-01");
   assert.equal(leading.length, 6);
   assert.deepEqual(
     leading.map((d) => d.date),
-    ["2026-01-26", "2026-01-27", "2026-01-28", "2026-01-29", "2026-01-30", "2026-01-31"],
+    ["2026-07-26", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31"],
   );
 });
 
-test("a month starting on a Monday leads with nothing", () => {
-  // Jun 1 2026 is a Monday.
-  const grid = monthGrid("2026-06", [], TODAY);
-  assert.equal(grid[0].date, "2026-06-01");
+test("a month starting on a Sunday leads with nothing", () => {
+  // Feb 1 2026 is a Sunday.
+  const grid = monthGrid("2026-02", [], TODAY);
+  assert.equal(grid[0].date, "2026-02-01");
   assert.equal(grid[0].inMonth, true);
 });
 
@@ -67,19 +67,19 @@ test("inMonth is false for exactly the leading and trailing days", () => {
 });
 
 test("an item lands in the cell matching its due date, leading cells included", () => {
-  const items = [item("A1", "2026-02-05"), item("A2", "2026-01-31")];
-  const grid = monthGrid("2026-02", items, TODAY);
+  const items = [item("A1", "2026-08-05"), item("A2", "2026-07-31")];
+  const grid = monthGrid("2026-08", items, TODAY);
 
-  const feb5 = grid.find((d) => d.date === "2026-02-05");
+  const aug5 = grid.find((d) => d.date === "2026-08-05");
   assert.deepEqual(
-    feb5?.items.map((i) => i.key),
+    aug5?.items.map((i) => i.key),
     ["A1"],
   );
 
-  const jan31 = grid.find((d) => d.date === "2026-01-31");
-  assert.equal(jan31?.inMonth, false);
+  const jul31 = grid.find((d) => d.date === "2026-07-31");
+  assert.equal(jul31?.inMonth, false);
   assert.deepEqual(
-    jan31?.items.map((i) => i.key),
+    jul31?.items.map((i) => i.key),
     ["A2"],
   );
 });
