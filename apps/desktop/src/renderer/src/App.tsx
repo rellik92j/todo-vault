@@ -1255,6 +1255,9 @@ export function App(): React.JSX.Element {
               selected={selected}
               onSelect={open}
               onJumpToMonth={setMonth}
+              onReschedule={(key, dueDate) =>
+                void vault.mutate(() => window.vault.updateItem(key, { dueDate }))
+              }
             />
           )}
           {view === "history" && (
