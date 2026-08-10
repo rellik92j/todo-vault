@@ -55,7 +55,8 @@ export const CHILD_TYPES: Record<ItemType, readonly ItemType[]> = {
 };
 
 /**
- * Every reporter name the vault has used, for the suggestion menus.
+ * Every name the vault has used for a given person-field, for the suggestion
+ * menus.
  *
  * Derived, never stored. The names *are* whatever is on the items, so a list kept
  * beside them could only ever be a second copy to drift; and one copy read by
@@ -70,10 +71,10 @@ export const CHILD_TYPES: Record<ItemType, readonly ItemType[]> = {
  * filter that consumes this folds case the same way so the menu's claim that
  * these are one person holds when you act on it.
  */
-export function knownReporters(items: Item[]): string[] {
+export function knownPeople(items: Item[], field: "reporter" | "assignee"): string[] {
   const byPerson = new Map<string, Map<string, number>>();
   for (const item of items) {
-    const name = item.reporter?.trim();
+    const name = item[field]?.trim();
     if (!name) continue;
     const spellings = byPerson.get(name.toLowerCase()) ?? new Map<string, number>();
     spellings.set(name, (spellings.get(name) ?? 0) + 1);
@@ -85,6 +86,12 @@ export function knownReporters(items: Item[]): string[] {
         [...spellings].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0],
     )
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+/** `knownPeople` for reporter — kept as a name because it reads better at its
+ * call sites. */
+export function knownReporters(items: Item[]): string[] {
+  return knownPeople(items, "reporter");
 }
 
 /**

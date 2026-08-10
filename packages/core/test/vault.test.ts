@@ -149,6 +149,38 @@ test("filters by reporter, folding case the way the app's menu does", async () =
   );
 });
 
+test("filters by assignee, folding case the way the app's menu does", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "Doing it properly", assignee: "Dan Okafor" });
+  await vault.createItem({ project: "ACME", summary: "Doing it again", assignee: "dan okafor" });
+  await vault.createItem({ project: "ACME", summary: "Someone else", assignee: "Priya Raman" });
+  await vault.createItem({ project: "ACME", summary: "Nobody assigned" });
+
+  const summaries = (assignee: string): string[] =>
+    vault
+      .listItems({ assignee })
+      .items.map((i) => i.summary)
+      .sort();
+
+  // knownPeople offers one menu entry per person, so both spellings have to come
+  // back however the filter value was capitalised — otherwise picking a name off
+  // that menu silently hides half of what it claims to match.
+  assert.deepEqual(summaries("dan okafor"), ["Doing it again", "Doing it properly"]);
+  assert.deepEqual(summaries("DAN OKAFOR"), ["Doing it again", "Doing it properly"]);
+  assert.deepEqual(summaries("  Dan Okafor  "), ["Doing it again", "Doing it properly"]);
+  assert.deepEqual(summaries("Priya Raman"), ["Someone else"]);
+  assert.deepEqual(summaries("Nobody"), [], "an unused name matches nothing, not everything");
+
+  // Same as reporter: a name in `assignee` is queryable by free text.
+  assert.deepEqual(
+    vault
+      .listItems({ text: "okafor" })
+      .items.map((i) => i.summary)
+      .sort(),
+    ["Doing it again", "Doing it properly"],
+  );
+});
+
 test("reporter survives an update, and null clears it", async () => {
   const vault = await tmpVault();
   const item = await vault.createItem({

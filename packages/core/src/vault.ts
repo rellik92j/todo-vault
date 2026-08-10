@@ -386,14 +386,14 @@ export class Vault {
       : undefined;
     const text = filter.text?.toLowerCase();
     /*
-     * Folded once here rather than per item. Reporter matches case-insensitively
-     * where assignee matches exactly, and the asymmetry is deliberate: reporter
-     * names are typed free-hand into a suggestion menu that already folds
-     * spellings of one person together (knownReporters), so a filter that did not
-     * fold would contradict the menu offering it. Nothing offers assignee that way
-     * yet, and loosening it would change what existing callers already match.
+     * Folded once here rather than per item. Both reporter and assignee are
+     * typed free-hand into a suggestion menu that already folds spellings of one
+     * person together (knownPeople), so a filter that did not fold would
+     * contradict the menu offering it: pick "Dan Okafor" from the menu and it
+     * must still find the item that was written "dan okafor".
      */
     const reporter = filter.reporter?.trim().toLowerCase();
+    const assignee = filter.assignee?.trim().toLowerCase();
 
     const matched = [...this.items.values()].filter((item) => {
       if (filter.project && item.project !== filter.project) return false;
@@ -402,7 +402,7 @@ export class Vault {
       if (filter.priority && item.priority !== filter.priority) return false;
       if (filter.cadence && item.cadence !== filter.cadence) return false;
       if (filter.category && item.category !== filter.category) return false;
-      if (filter.assignee && item.assignee !== filter.assignee) return false;
+      if (assignee && item.assignee?.trim().toLowerCase() !== assignee) return false;
       if (reporter && item.reporter?.trim().toLowerCase() !== reporter) return false;
       if (filter.parent && item.parent !== filter.parent) return false;
       if (filter.label && !item.labels.includes(filter.label)) return false;
@@ -416,6 +416,7 @@ export class Vault {
           item.category ?? "",
           item.labels.join(" "),
           item.reporter ?? "",
+          item.assignee ?? "",
         ]
           .join("\n")
           .toLowerCase();
