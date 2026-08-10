@@ -319,7 +319,12 @@ export const ItemFilter = z
     cadence: z.enum(CADENCES).optional(),
     category: z.string().optional(),
     label: z.string().optional(),
-    assignee: z.string().optional(),
+    assignee: z
+      .string()
+      .optional()
+      .describe(
+        "Matched case-insensitively, so 'John Doe' and 'john doe' are one person — the app's assignee menu folds the same way and this has to agree with it.",
+      ),
     reporter: z
       .string()
       .optional()
@@ -333,7 +338,9 @@ export const ItemFilter = z
     text: z
       .string()
       .optional()
-      .describe("Case-insensitive match on summary, description, category, labels, and reporter"),
+      .describe(
+        "Case-insensitive match on summary, description, category, labels, reporter, and assignee",
+      ),
     sort: z
       .enum(["work", "rank"])
       .default("work")

@@ -28,6 +28,7 @@ export function BulkBar({
   checkedItems,
   hiddenByFilter,
   reporters,
+  assignees,
   busy,
   onClear,
   onUpdate,
@@ -36,6 +37,7 @@ export function BulkBar({
   /** How many checked rows the current filter or "Hide closed" is not showing. */
   hiddenByFilter: number;
   reporters: string[];
+  assignees: string[];
   busy: boolean;
   onClear: () => void;
   onUpdate: (patch: Record<string, unknown>) => Promise<BulkUpdateOutcome>;
@@ -127,6 +129,7 @@ export function BulkBar({
       */}
       <input
         type="text"
+        list="bulk-bar-assignees"
         placeholder="Assignee…"
         value={assigneeDraft}
         disabled={busy}
@@ -148,6 +151,11 @@ export function BulkBar({
           if (trimmed) void run({ assignee: trimmed });
         }}
       />
+      <datalist id="bulk-bar-assignees">
+        {assignees.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
 
       <input
         type="text"

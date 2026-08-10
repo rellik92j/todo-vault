@@ -24,7 +24,7 @@ import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardLanes } from "./ordering";
 import { monthGrid, stepMonth } from "./calendar";
 import { rangeBetween } from "./selection";
-import { BOARD_ORDER, STATUS_LABELS, isClosed, knownReporters, todayIso } from "./pieces";
+import { BOARD_ORDER, STATUS_LABELS, isClosed, knownPeople, knownReporters, todayIso } from "./pieces";
 import { BulkBar } from "./BulkBar";
 
 type View = "backlog" | "board" | "agenda" | "calendar" | "history";
@@ -214,6 +214,14 @@ export function App(): React.JSX.Element {
   const reporters = useMemo(() => knownReporters(visibleItems), [visibleItems]);
 
   /**
+   * Assignee's counterpart to `allReporters` — same source, same reasoning:
+   * hiding a project should not make a colleague un-nameable in the menu. There
+   * is no `assignees` (visible-only) twin because nothing filters on assignee
+   * yet; see the toolbar non-goal.
+   */
+  const allAssignees = useMemo(() => knownPeople(snapshot?.items ?? [], "assignee"), [snapshot]);
+
+  /**
    * Open items per project, for the Hide button's tooltip. The count alone is
    * already on ProjectSummary; this is what the core's refusal would name, so
    * the reason is readable before the click rather than after it.
@@ -283,7 +291,7 @@ export function App(): React.JSX.Element {
       if (reporter !== "all" && item.reporter?.trim().toLowerCase() !== reporter) return false;
       if (openOnly && isClosed(item.status)) return false;
       if (needle) {
-        const haystack = `${item.key} ${item.summary} ${item.description} ${item.category ?? ""} ${item.labels.join(" ")} ${item.reporter ?? ""}`;
+        const haystack = `${item.key} ${item.summary} ${item.description} ${item.category ?? ""} ${item.labels.join(" ")} ${item.reporter ?? ""} ${item.assignee ?? ""}`;
         if (!haystack.toLowerCase().includes(needle)) return false;
       }
       return true;
@@ -1284,6 +1292,7 @@ export function App(): React.JSX.Element {
             checkedItems={checkedItems}
             hiddenByFilter={checkedHiddenByFilter}
             reporters={allReporters}
+            assignees={allAssignees}
             busy={vault.busy}
             onClear={clearChecked}
             onUpdate={(patch) => vault.updateItems([...checked], patch)}
@@ -1298,6 +1307,7 @@ export function App(): React.JSX.Element {
              window says is not there is not somewhere to file work under. */
           items={visibleItems}
           reporters={allReporters}
+          assignees={allAssignees}
           editSummary={editSummaryFor === detailItem.key}
           onEditSummaryConsumed={() => setEditSummaryFor(null)}
           onClose={() => setDetailKey(null)}

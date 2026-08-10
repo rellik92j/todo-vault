@@ -45,6 +45,7 @@ export function ItemDetail({
   item,
   items,
   reporters,
+  assignees,
   editSummary,
   onEditSummaryConsumed,
   onClose,
@@ -63,6 +64,8 @@ export function ItemDetail({
    * must be somewhere you can see, and a name need only have been used once.
    */
   reporters: string[];
+  /** Same deal as `reporters`, for the Assignee menu. */
+  assignees: string[];
   /** Open with the summary already in edit mode — the `e` shortcut. */
   editSummary?: boolean;
   onEditSummaryConsumed?: () => void;
@@ -443,6 +446,7 @@ export function ItemDetail({
             <EditableText
               value={item.assignee ?? ""}
               placeholder="none"
+              suggestions={assignees}
               onCommit={(assignee) => patch({ assignee: assignee || null })}
             />
           </dd>
