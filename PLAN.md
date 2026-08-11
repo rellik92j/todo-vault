@@ -3003,12 +3003,87 @@ resolves to the dark `--bg` after two clicks, which — since no CSS was written
 for this feature — is the evidence that the untouched media query is the thing
 the button drives.
 
-**Still outstanding, and known.** Two checks need eyes rather than assertions,
-by this codebase's own standard that "a check that reads the DOM cannot verify a
-native control": the date picker's popup and indicator following into Light, and
-the Windows window frame following into Dark. And Part 2 of the plan is not
-done — the light block redefines twelve surface tokens and leaves every status
-and priority hue at values chosen against `#0f1115`, `--disregard` included.
-That is design work rather than typing, it does not block the button, and until
-it lands light mode is offered rather than supported. `plans/PLAN-theme-toggle.md`
-keeps the argument for it.
+Checked afterwards by hand, and both fine: the date picker's popup and its
+indicator icon follow into Light and back, and the Windows frame follows into
+Dark. That was the pair a `data-theme` attribute would have failed silently.
+
+## Identity colours are chosen against both grounds ✅ built and driven
+
+Part 2 of the same plan, and the thing that turned light mode from offered into
+supported.
+
+The light block redefined twelve surface tokens and left ten identity hues —
+every status, and three of five priorities — at values chosen against `#0f1115`.
+Diffing the block against its first version shows it was *born* that way rather
+than drifting: it covered surfaces and skipped identity colours from the start.
+
+**But the plan's ranking of the damage was wrong, and measuring it said so.**
+The plan's by-hand check was whether the six status dots stay distinguishable at
+6px in light, with `--disregard` called "the worst possible token to have
+missed". Measured, `--disregard` lands at 3.05–3.49:1 on the light surfaces —
+it clears the 3:1 that non-text UI owes, and it was confirmed fine by eye. The
+real failure was the tokens that also render as *text*, which that check never
+looks at: `--done` is **1.97:1** as `.history-diff-add` on white, and
+`--overdue` is 2.60:1 as `.due-overdue`. The History view's whole red/green diff
+was failing WCAG AA, and the dots — the thing being inspected — were the half
+that mostly worked.
+
+Three things the plan did not mention at all. `--lowest` already *had* a light
+value and it was still wrong at 2.63:1, which breaks the rule the plan wanted to
+write down — "a token in `:root` and not in the light block is a bug" catches
+omissions, not bad values. The three `color: #fff` literals were framed as a
+light-mode problem, and two of them are a *dark*-mode problem: `.btn-primary` is
+white on `--accent`, which is `#6ea8fe` in dark, at **2.42:1**. And
+`.btn-danger:hover` is white on `--overdue` at 2.77:1 in both schemes.
+
+Ten tokens turned out to be seven hues — `--highest`/`--blocked`/`--overdue`
+are one red, `--low`/`--todo` one grey — so the design work was smaller than the
+count implied. The values were chosen to a 3:1 floor against all three light
+surfaces, 4.5:1 for the three that render as text, and checked for mutual
+separation with ΔE2000: the closest pair in light is in-progress against
+in-review at 15.1, where dark's closest is 16.6. Light is now at least as
+distinguishable as dark rather than merely passing.
+
+Two picks worth their reasoning. `--in_progress` takes `--accent`'s light value
+because it holds `--accent`'s dark one — that equivalence already existed in the
+dark palette, and leaving `--in_progress` behind would have dissolved it in one
+scheme only. And `--low` moved despite clearing the floor on its own: `--lowest`
+has to stay lighter than `--low` while still reaching 3:1 on `--bg-inset`, and
+there was no room under `#7f8796`, so `--low` had to make some. `--todo` and
+`--disregard` are the two left unchanged, because the warm/cool split the
+`--disregard` comment reasons about is a property of the *pair*.
+
+The three `#fff` became `--on-fill`, defined in both blocks: dark ink in the
+dark scheme, where the fills are pale, and white in the light one, where they
+are dark.
+
+**The mechanism, which is the part that outlasts the values.** The plan proposed
+writing a rule into this document. A rule here would not have caught
+`--disregard` either — nothing did, for months. So the invariant is enforced in
+`test/tokens.test.ts` instead: every colour in `:root` must appear in the light
+block, neither block may introduce a colour the other lacks, every identity
+token must clear 3:1 against all three grounds *in both schemes*, the ones that
+render as text must clear 4.5:1 where they render, `--on-fill` must be readable
+on every fill it is painted onto, and no rule outside the two token blocks may
+hardcode a colour literal. The light block now restates every colour including
+the three that come out identical, because one redundant line is what separates
+"checked, correct against white" from "nobody looked".
+
+It earned itself on the first run by failing on something nobody had suspected:
+`--lowest` at `#5d646f` is **2.94:1** against `--bg-raised` — in the *dark*
+palette, which this whole plan treated as the finished half. Nudged to `#646c78`.
+
+Left alone deliberately: the twelve `rgb(0 0 0 / …)` values the plan wanted
+moved behind tokens. Nine are `box-shadow`, and black shadows on light surfaces
+are how light UIs cast shadows; the two backdrops at `0.55` are scrims, where a
+heavy dim is the intent in both schemes. Also left: on a selected row the ground
+becomes `--accent-dim` and the greys fall to ~2.4:1 — pre-existing, worse in
+dark (`--lowest` at 1.5:1 there), and a question about `--accent-dim` as a
+selected background rather than about these hues. Both are recorded in the
+stylesheet rather than silently skipped.
+
+237 tests green (6 new in `test/tokens.test.ts`), 21 e2e green, typecheck clean,
+and screenshots of the board, the backlog and the command-palette scrim read in
+both schemes. Not verified: nothing was checked on a real display other than
+this one, so the values are right by measurement and by one pair of eyes on one
+monitor.
