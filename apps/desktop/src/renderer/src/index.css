@@ -215,6 +215,16 @@ button {
   opacity: 0.5;
 }
 
+/*
+  The count sits at the same coordinates the Hide slot overlays (see the
+  comment above .project-hide-slot). Without this, a disabled Hide at 0.5
+  opacity reads as a ghost superimposed on the still-opaque count digits.
+*/
+.project-row:hover .project-count,
+.project-row:has(.project-hide:focus-visible) .project-count {
+  opacity: 0;
+}
+
 .project[aria-current="true"] {
   background: var(--accent-dim);
   color: var(--text);
