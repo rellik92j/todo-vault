@@ -10,12 +10,27 @@
   --text-faint: #6b7280;
   --accent: #6ea8fe;
   --accent-dim: #2c4a7c;
+  /*
+   * Ink on a saturated fill — the primary button, the danger button's hover.
+   * A token rather than a literal `#fff` because which ink is readable flips
+   * with the scheme: here the fills are *light* colours (a pale blue, a pale
+   * red) and want dark ink, while in light mode they are dark and want white.
+   * White on #6ea8fe is 2.4:1, which is what this used to be.
+   */
+  --on-fill: #0f1115;
 
   --highest: #f87171;
   --high: #fb9a4b;
   --medium: #d7dae0;
   --low: #7f8796;
-  --lowest: #5d646f;
+  /*
+   * Nudged up from #5d646f, which was 2.94:1 on --bg-raised — under the 3:1 a
+   * 6px dot and a 2px card stripe owe. Found by tokens.test.ts on its first run,
+   * having sat in the dark palette unnoticed since it was written: the light
+   * half was the half everyone suspected. Still plainly dimmer than --low, which
+   * is the whole job of this token.
+   */
+  --lowest: #646c78;
 
   --todo: #7f8796;
   --in_progress: #6ea8fe;
@@ -25,7 +40,7 @@
   /*
    * Closed, but not achieved. Warm and desaturated on purpose: it is the only
    * warm neutral in the set, so it cannot be confused with todo's cool grey at
-   * the size these actually render — a 7px dot, where hue is most of what is
+   * the size these actually render — a 6px dot, where hue is most of what is
    * left to tell two statuses apart.
    */
   --disregard: #9b8579;
@@ -44,6 +59,37 @@
   color-scheme: dark;
 }
 
+/*
+ * Every colour token in :root is restated here, including the three that come
+ * out identical.
+ *
+ * That redundancy is the point. This block used to carry twelve of twenty-two,
+ * and nothing distinguished "this colour is right against white too" from
+ * "nobody looked" — which is how --disregard was added to :root a day after
+ * light mode existed and simply never got considered here. Restating a token at
+ * the same value is one line that answers the question. tokens.test.ts enforces
+ * it, so a new colour cannot be added to one block alone.
+ *
+ * The two kinds of token are chosen differently:
+ *
+ * SURFACE-RELATIVE — bg, border, text, accent — describe a position relative to
+ * the ground they sit on, so they invert.
+ *
+ * IDENTITY — the status and priority hues — name a thing. --done should read as
+ * the same green in both schemes, but "the same green" against white is not the
+ * same hex as against near-black, because the contrast it was chosen for
+ * changed. Nine of these previously kept the number and lost the identity, which
+ * is the wrong invariant held by default: --done at #4ec98a is 8.4:1 on the dark
+ * surface and 2.0:1 on white, where it is also used as .history-diff-add's text.
+ *
+ * The floor is 3:1 against --bg, --bg-raised and --bg-inset, because a 6px dot
+ * and a 2px card stripe are non-text UI; the ones that also render as text
+ * (--done, --highest, --overdue) clear 4.5:1 on the surfaces they actually
+ * appear on. Known residual: on a selected row, where the ground becomes
+ * --accent-dim, the greys fall to ~2.4:1. That is pre-existing, it is worse in
+ * dark (--lowest lands at 1.5:1 there), and it is a question about --accent-dim
+ * as a selected background rather than about these hues.
+ */
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
@@ -57,8 +103,38 @@
     --text-faint: #858c9b;
     --accent: #2563eb;
     --accent-dim: #bfd3f7;
+    --on-fill: #ffffff;
+
+    --highest: #c5221f;
+    --high: #b45309;
     --medium: #4b5261;
-    --lowest: #9aa0ab;
+    /*
+     * --low moved even though #7f8796 cleared the floor on its own. --lowest
+     * has to stay lighter than --low to keep the ramp readable, and there is no
+     * room under #7f8796 that still reaches 3:1 on --bg-inset — so --low had to
+     * make room. --lowest inherits the value --low vacated.
+     */
+    --low: #6b7280;
+    --lowest: #7f8796;
+
+    /*
+     * --todo and --disregard are deliberately unchanged: they already clear the
+     * floor on white (3.6:1 and 3.5:1), and the warm/cool split the --disregard
+     * comment reasons about is a property of the pair, which moving one of them
+     * would break. Confirmed by eye against a board in light.
+     *
+     * --in_progress takes --accent's light value because it holds --accent's
+     * dark one. That equivalence is already in the dark palette; leaving
+     * --in_progress behind would have quietly dissolved it in light only.
+     */
+    --todo: #7f8796;
+    --in_progress: #2563eb;
+    --in_review: #7c3aed;
+    --blocked: #c5221f;
+    --done: #1a7f37;
+    --disregard: #9b8579;
+
+    --overdue: #c5221f;
   }
 }
 
@@ -387,11 +463,11 @@ button:focus-visible {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-fill);
 }
 
 .btn-primary:hover {
-  color: #fff;
+  color: var(--on-fill);
   filter: brightness(1.08);
 }
 
@@ -2000,7 +2076,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .btn-danger:hover {
-  color: #fff;
+  color: var(--on-fill);
   background: var(--overdue);
   border-color: var(--overdue);
 }
