@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // pieces.tsx: the root pulls vault.js, and node:fs with it, into the bundle.
 import { ITEM_TYPES, type ItemType } from "todo-vault/constants";
 import type { Item, Status } from "todo-vault";
-import type { AgendaScope, ProjectSummary } from "@shared/api";
+import type { AgendaScope, ProjectSummary, ThemePreference } from "@shared/api";
 
 import { useVault } from "./useVault";
 import { BacklogTable } from "./BacklogTable";
@@ -24,6 +24,7 @@ import { isTypingTarget } from "./shortcuts";
 import { backlogOrder, boardLanes, visibleBoardStatuses } from "./ordering";
 import { monthGrid, stepMonth } from "./calendar";
 import { rangeBetween } from "./selection";
+import { THEME_DESCRIPTIONS, THEME_LABELS, nextTheme } from "./theme";
 import { BOARD_ORDER, STATUS_LABELS, isClosed, knownPeople, knownReporters, todayIso } from "./pieces";
 import { BulkBar } from "./BulkBar";
 
@@ -151,6 +152,17 @@ export function App(): React.JSX.Element {
   /** The agenda builds its order asynchronously, so it reports it upward. */
   const [agendaOrder, setAgendaOrder] = useState<string[]>([]);
 
+  /**
+   * The theme, held here only to label its own button.
+   *
+   * Nothing on this screen renders from it. Main applied the saved preference
+   * before the window was created and the stylesheet resolved against
+   * `prefers-color-scheme` on first paint, so by the time this fetch lands the
+   * palette has been right for several frames. Which is why starting at
+   * "system" and correcting is harmless here and would not be for a palette.
+   */
+  const [theme, setTheme] = useState<ThemePreference>("system");
+
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const snapshot = vault.snapshot;
@@ -236,6 +248,26 @@ export function App(): React.JSX.Element {
     }
     return map;
   }, [snapshot]);
+
+  // Once, to label the button. A failure leaves the label at "Auto" and is not
+  // worth a banner: the palette on screen is already correct either way, so the
+  // only casualty is three characters of text.
+  useEffect(() => {
+    void window.vault.getTheme().then((result) => {
+      if (result.ok) setTheme(result.value);
+    });
+  }, []);
+
+  const cycleTheme = useCallback((): void => {
+    setTheme((current) => {
+      const next = nextTheme(current);
+      // Optimistic, and safe to be: main is the only writer, it cannot refuse a
+      // value from THEME_CYCLE, and the palette flips from Electron's side the
+      // moment it lands rather than from this state.
+      void window.vault.setTheme(next);
+      return next;
+    });
+  }, []);
 
   // Select whatever was just created, so the detail panel opens on it.
   useEffect(() => {
@@ -965,6 +997,20 @@ export function App(): React.JSX.Element {
             </button>
             <button className="btn" onClick={() => setHelpOpen(true)} title="Keyboard shortcuts (?)">
               ?
+            </button>
+            {/*
+              Labelled with the state it is in, not the one it would move to —
+              see theme.ts. No shortcut and no palette entry: a theme is set once
+              and left, and the Display group in SHORTCUTS is for things pressed
+              while working.
+            */}
+            <button
+              className="btn"
+              onClick={cycleTheme}
+              title="Theme: Auto, Light, Dark. Click to cycle."
+              aria-label={THEME_DESCRIPTIONS[theme]}
+            >
+              {THEME_LABELS[theme].glyph} {THEME_LABELS[theme].label}
             </button>
           </div>
         </div>

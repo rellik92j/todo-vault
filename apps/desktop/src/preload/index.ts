@@ -20,6 +20,8 @@ const api: VaultApi = {
   revealPath: (target) => ipcRenderer.invoke(CHANNELS.revealPath, target),
   openTarget: (target) => ipcRenderer.invoke(CHANNELS.openTarget, target),
   getSuggestedVault: () => ipcRenderer.invoke(CHANNELS.getSuggestedVault),
+  getTheme: () => ipcRenderer.invoke(CHANNELS.getTheme),
+  setTheme: (preference) => ipcRenderer.invoke(CHANNELS.setTheme, preference),
 
   createItem: (input) => ipcRenderer.invoke(CHANNELS.createItem, input),
   updateItem: (key, patch) => ipcRenderer.invoke(CHANNELS.updateItem, key, patch),

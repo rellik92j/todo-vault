@@ -2896,3 +2896,119 @@ parity between the two fields over the same data), typecheck clean.
 Verified by hand against the running app: the detail panel's suggestion
 menu, the bulk bar's native datalist popup and its empty-box commit
 semantics, and a hidden project's assignee still surfacing in the menu.
+
+## The theme is chosen rather than inherited ✅ built and driven
+
+The app has had a light theme since `004a8f3`, the first Electron commit —
+`index.css` carries a `@media (prefers-color-scheme: light)` block that flips
+`color-scheme` and redefines the surfaces. What it never had was a way to say
+which one you wanted. The OS decided and the app followed, silently: on a
+machine reporting light there was no way to see the dark design the app was
+actually built against, and on one reporting dark, no way out.
+
+The mechanism is `nativeTheme.themeSource`, not a `data-theme` attribute on the
+document, and the stylesheet was not edited at all. `themeSource` changes what
+`prefers-color-scheme` reports in every renderer, so the media query that has
+been there since day one simply *becomes* the thing the button drives. The
+attribute was rejected for a specific reason rather than a stylistic one:
+keeping a "follow the OS" option means keeping the media query whatever else is
+added, so an attribute would leave the palette with two independent ways of
+being chosen — exactly the seam a future token gets added to only one side of.
+That is not hypothetical here. `--disregard` was added to `:root` in `e383a5b`,
+a day after light mode already existed, and never got a light counterpart, on a
+codebase that has only ever had one selection mechanism.
+
+`themeSource` also reaches what CSS cannot. `color-scheme` follows it, so
+Chromium's own controls flip with the page — the date picker's popup and its
+indicator icon, scrollbars, focus rings — which is the thing `index.css`'s own
+comment at the `color-scheme: dark` line is already an argument for: without it
+the date input's calendar icon rendered dark-on-dark and the picker "was there
+the whole time and simply could not be seen." On Windows the window frame
+follows `shouldUseDarkColors` for free.
+
+Three states rather than a toggle, borrowing `themeSource`'s own vocabulary:
+nothing in a boolean can express "I have no opinion", so a two-position switch
+would strand the user the first time they pressed it, with "follow the OS"
+unreachable forever. `system` stays the default and an absent `theme` key in
+`settings.json` means `system`, so upgrading changes nobody's rendering.
+
+Theme went into `settings.json` beside zoom, on the argument that file's own
+comment already makes — it "is a property of this screen and these eyes, not of
+the vault" — but it is applied at a *different moment*, and that difference is
+the whole point. `restoreZoom` runs on `did-finish-load`, after the renderer has
+painted, which is fine because a page resizing a tick late is invisible. A
+theme applied a tick late is a flash of the wrong palette on every launch, so
+`applySavedTheme()` runs inside `whenReady` before `createWindow()`. The
+consequence removes work rather than adding it: the renderer never fetches the
+theme in order to render, only to label its own button, and a label that
+resolves one tick late is not visible to anyone.
+
+Which made `backgroundColor: "#111318"` — the colour Chromium paints before the
+renderer's first frame — a bug one line below the fix, since under light mode it
+is a near-black flash on every launch. It resolves from
+`nativeTheme.shouldUseDarkColors` now, and `setBackgroundColor` is called again
+when the toggle flips so a later reload does not flash the scheme just left.
+While there: `#111318` was never `--bg`, which is `#0f1115`. Harmless in the
+dark-only world, but the pre-paint colour exists specifically to be
+indistinguishable from the first painted frame, so both constants are the token
+values exactly and carry a comment saying they are copies that must move when
+`--bg` moves. Main cannot read the stylesheet, so the duplication is
+unavoidable; saying so is the mitigation.
+
+The control is one `.btn` in the `.sidebar-foot` row, beside Folder / Trash /
+Hidden / Switch / Claude / ?, cycling `◐ Auto → ☀ Light → ☾ Dark`. Not a
+three-segment `.chips` group, which is otherwise the house idiom for a small
+exclusive set: the sidebar is 236px and that row already wraps at six buttons.
+It is labelled with the state it is *in*, never the state pressing would move
+to, which settles the ambiguity every mode button has — "does ☾ mean it *is*
+dark, or that pressing makes it dark?" — and is the reading that stays true when
+the OS flips underneath `Auto`. No keyboard shortcut and no palette entry: a
+theme is set once and left, `SHORTCUTS`' Display group is for things pressed
+while working, and `CommandPalette` has no command layer to add one to.
+Accepted limitation: `.sidebar-foot` only exists once a vault is open, so the
+button is unreachable from `Welcome` — which is the wrong moment to be adjusting
+a theme and the right one to be picking a folder.
+
+**What the e2e found, and it was not in the product.** The plan flagged one
+thing to confirm while writing the spec: whether Playwright's
+`page.emulateMedia({ colorScheme })` — which `comment-editor.e2e.mts` uses to
+screenshot both schemes — would fight `themeSource`. The answer turned out to be
+worse than the question. `electron.launch`'s `colorScheme` option **defaults to
+`"light"`**, so Playwright has been forcing `prefers-color-scheme: light` over
+CDP in every e2e run since the harness was written, above anything the app does.
+The first run of this spec watched Electron flip to dark — `themeSource` and
+`getBackgroundColor` both agreed — while the page sat at `rgb(247, 248, 250)`,
+the light `--bg`. The harness grew a `colorScheme` passthrough and this spec
+passes `null`, which resets to the system default; every other spec keeps the
+`"light"` default deliberately, because that is what stops their screenshots
+depending on the OS theme of whichever machine ran them. The flip side is
+reassuring: `comment-editor.e2e.mts` was never at risk, since its emulation sits
+*above* `themeSource` rather than beside it.
+
+The harness also grew what the plan assumed it already had. It hardcoded
+`{ vaultRoot, zoomLevel: 0 }` and `close()` removed the whole temp stem, so
+there was no seam to seed a theme and no way to relaunch against the same
+`userData`. `launchHarness` now takes `settings` and `stem`, exposes
+`userDataDir` and `stem`, and `close({ keepStem: true })` leaves the stem for a
+relaunch — which is what makes the no-flash check possible at all, since
+`win.getBackgroundColor()` reads the colour painted *before* the renderer exists
+and no page assertion can see that.
+
+231 tests green (new: 5 in `test/theme.test.ts` — the cycle closes from every
+starting point, holds each preference once, has a label and a spoken description
+for every state, and recovers to `system` from an unrecognised value), 21 e2e
+green across four specs, typecheck clean on all four desktop projects. The e2e
+proves the part that matters: `getComputedStyle(document.body).backgroundColor`
+resolves to the dark `--bg` after two clicks, which — since no CSS was written
+for this feature — is the evidence that the untouched media query is the thing
+the button drives.
+
+**Still outstanding, and known.** Two checks need eyes rather than assertions,
+by this codebase's own standard that "a check that reads the DOM cannot verify a
+native control": the date picker's popup and indicator following into Light, and
+the Windows window frame following into Dark. And Part 2 of the plan is not
+done — the light block redefines twelve surface tokens and leaves every status
+and priority hue at values chosen against `#0f1115`, `--disregard` included.
+That is design work rather than typing, it does not block the button, and until
+it lands light mode is offered rather than supported. `plans/PLAN-theme-toggle.md`
+keeps the argument for it.

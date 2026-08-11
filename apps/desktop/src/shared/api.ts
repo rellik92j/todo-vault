@@ -122,6 +122,20 @@ export interface ItemDraft {
   notes: string;
 }
 
+/**
+ * Which palette the app renders in.
+ *
+ * Electron's own `nativeTheme.themeSource` vocabulary, adopted rather than
+ * reinvented, because that property is what this drives. Three states rather
+ * than a boolean: nothing in a two-position switch can express "I have no
+ * opinion", so a toggle would strand the user the first time they pressed it,
+ * with "follow the OS" unreachable forever.
+ *
+ * `system` is the default, and an absent key in settings.json means `system` —
+ * which is today's behaviour spelled out rather than changed.
+ */
+export type ThemePreference = "system" | "light" | "dark";
+
 export interface VaultApi {
   /** Current snapshot, or null if no vault is configured yet. */
   getSnapshot(): Promise<Result<MaybeSnapshot>>;
@@ -308,6 +322,19 @@ export interface VaultApi {
 
   /** Suggested starting point: the example vault shipped with the repo, if present. */
   getSuggestedVault(): Promise<Result<string | null>>;
+
+  // ---------------------------------------------------------------- theme
+  /**
+   * The preference in force, for labelling the control — never for rendering.
+   *
+   * Main applies the saved theme before the window is created, so by the time
+   * this resolves the stylesheet has long since picked a palette. A label that
+   * arrives one tick late is invisible; a palette that does is a flash of the
+   * wrong scheme on every launch, which is why the two are separated.
+   */
+  getTheme(): Promise<Result<ThemePreference>>;
+  /** Apply and persist, returning what was applied. */
+  setTheme(preference: ThemePreference): Promise<Result<ThemePreference>>;
 }
 
 /** Channel names, kept beside the interface so both sides agree. */
@@ -344,6 +371,11 @@ export const CHANNELS = {
   moveProject: "vault:move-project",
   hideProject: "vault:hide-project",
   unhideProject: "vault:unhide-project",
+
+  // Neither `vault:` nor `claude:` — the theme is a property of this machine's
+  // app window and says nothing about what is open in it.
+  getTheme: "app:get-theme",
+  setTheme: "app:set-theme",
 
   claudeStatus: "claude:status",
   setClaudeKey: "claude:set-key",

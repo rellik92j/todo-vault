@@ -9,6 +9,7 @@ import {
   type ClaudeStatus,
   type MaybeSnapshot,
   type Result,
+  type ThemePreference,
   type VaultSnapshot,
 } from "../shared/api.js";
 import { VaultService } from "./vault-service.js";
@@ -16,6 +17,7 @@ import { readSettings, rememberVault } from "./settings.js";
 import { clearApiKey, secretStatus, setApiKey } from "./secrets.js";
 import { CLAUDE_MODEL, draftItem } from "./claude.js";
 import { attachZoomShortcuts, restoreZoom } from "./zoom.js";
+import { applySavedTheme, applyTheme, backgroundColor, currentTheme } from "./theme.js";
 import { discoverSyncedRoots } from "./synced-roots.js";
 import { isInAppNavigation } from "./navigation.js";
 
@@ -71,7 +73,10 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: "#111318",
+    // Resolved rather than hardcoded: a fixed near-black here would flash on
+    // every launch in light mode, which is the exact thing applySavedTheme()
+    // running before this call went to trouble to avoid.
+    backgroundColor: backgroundColor(),
     title: "Vault",
     autoHideMenuBar: true,
     webPreferences: {
@@ -243,6 +248,18 @@ function registerHandlers(): void {
   handle(CHANNELS.getRelated, (key: string) => service.getRelated(key));
   handle(CHANNELS.getHistory, (query: HistoryQuery) => service.getHistory(query ?? {}));
   handle(CHANNELS.getSuggestedVault, () => suggestedVault());
+
+  handle<[], ThemePreference>(CHANNELS.getTheme, () => currentTheme());
+
+  handle<[ThemePreference], ThemePreference>(CHANNELS.setTheme, async (preference) => {
+    const applied = await applyTheme(preference);
+    // So a later reload does not flash the scheme just left. The window is
+    // reached from here rather than from theme.ts, which owns no window.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(backgroundColor());
+    }
+    return applied;
+  });
 
   // --------------------------------------------------------------- mutations
   // Each returns a fresh snapshot so the renderer replaces rather than merges.
@@ -522,6 +539,11 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send(CHANNELS.changed, snapshot);
     }
   });
+
+  // Before the window exists, not after it loads. See theme.ts: a palette
+  // applied once the renderer has painted is a flash of the wrong scheme on
+  // every launch, and it also decides the backgroundColor createWindow() reads.
+  await applySavedTheme();
 
   createWindow();
 

@@ -38,8 +38,46 @@ export interface Harness {
   app: ElectronApplication;
   page: Page;
   vaultRoot: string;
-  /** Closes the app (with a taskkill fallback) and removes the temp stem. */
-  close(): Promise<void>;
+  /** This run's `--user-data-dir`, for reading back what the app persisted. */
+  userDataDir: string;
+  /** The temp stem holding both. Pass it back to relaunch against this state. */
+  stem: string;
+  /**
+   * Closes the app (with a taskkill fallback) and removes the temp stem —
+   * unless `keepStem`, which a relaunch test needs so the second launch can
+   * read the settings.json the first one wrote.
+   */
+  close(options?: { keepStem?: boolean }): Promise<void>;
+}
+
+export interface LaunchOptions {
+  /**
+   * Merged over the default settings.json before launch, for seeding state the
+   * app reads at boot — a theme, say. Never a substitute for driving the UI:
+   * seed only what the test is not itself the check on.
+   */
+  settings?: Record<string, unknown>;
+  /**
+   * Relaunch against an earlier run's stem instead of building a fresh one.
+   *
+   * The vault is not reseeded and settings.json is not rewritten, because the
+   * point of a relaunch is to read what the first run left behind. Pair it with
+   * `close({ keepStem: true })` on the run before.
+   */
+  stem?: string;
+  /**
+   * Playwright's `prefers-color-scheme` emulation, which is **on by default and
+   * set to `"light"`** — `electron.launch` documents that default, and it is
+   * applied over CDP, above anything the app itself does. So a spec that drives
+   * `nativeTheme.themeSource` sees Electron move and the page stay put unless it
+   * passes `null` here, which resets to the system default.
+   *
+   * Left alone everywhere else on purpose. The default is what keeps
+   * `comment-editor.e2e.mts`'s screenshots from depending on the OS theme of
+   * whichever machine ran them, which is the argument written at its own call
+   * to `emulateMedia`.
+   */
+  colorScheme?: null | "light" | "dark" | "no-preference";
 }
 
 /** Spawns a command with a real argv (never a shell) and waits for a clean exit. */
@@ -141,11 +179,18 @@ async function initVaultGit(vaultRoot: string): Promise<void> {
   await run("git", ["-C", vaultRoot, "config", "user.name", "e2e"]);
 }
 
-async function writeSettings(userDataDir: string, vaultRoot: string): Promise<void> {
+async function writeSettings(
+  userDataDir: string,
+  vaultRoot: string,
+  extra: Record<string, unknown>,
+): Promise<void> {
   // Same shape and formatting `writeSettings` in src/main/settings.ts produces.
   // zoomLevel is explicit, so screenshots come out the same size on every
   // machine rather than depending on whatever the default happens to be.
-  const settings = { vaultRoot, zoomLevel: 0 };
+  // `extra` goes last so a test can seed a key the app reads at boot; nothing
+  // in the default pair is worth letting it overwrite by accident, but a test
+  // that does is being explicit about it.
+  const settings = { vaultRoot, zoomLevel: 0, ...extra };
   await fs.writeFile(
     path.join(userDataDir, "settings.json"),
     `${JSON.stringify(settings, null, 2)}\n`,
@@ -153,17 +198,23 @@ async function writeSettings(userDataDir: string, vaultRoot: string): Promise<vo
   );
 }
 
-export async function launchHarness(): Promise<Harness> {
+export async function launchHarness(options: LaunchOptions = {}): Promise<Harness> {
   await sweepStaleSiblings();
 
-  const stem = await fs.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX));
+  const relaunch = options.stem !== undefined;
+  const stem = options.stem ?? (await fs.mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX)));
   const vaultRoot = path.join(stem, "vault");
   const userDataDir = path.join(stem, "userData");
   await fs.mkdir(userDataDir, { recursive: true });
 
-  await seedVault(vaultRoot);
-  await initVaultGit(vaultRoot);
-  await writeSettings(userDataDir, vaultRoot);
+  // Skipped wholesale on a relaunch: reseeding the vault would discard the
+  // git history the first run wrote, and rewriting settings.json would erase
+  // the very thing a relaunch exists to read back.
+  if (!relaunch) {
+    await seedVault(vaultRoot);
+    await initVaultGit(vaultRoot);
+    await writeSettings(userDataDir, vaultRoot, options.settings ?? {});
+  }
 
   // The package's Node-side export *is* the binary path. Not a hardcoded
   // `dist/electron.exe`: this survives a hoisting change, and `ensure-electron`
@@ -183,6 +234,9 @@ export async function launchHarness(): Promise<Harness> {
     cwd: DESKTOP_ROOT,
     env,
     timeout: 60_000,
+    // Spread rather than passed straight through, so leaving the option unset
+    // keeps Playwright's own default rather than overwriting it with undefined.
+    ...("colorScheme" in options ? { colorScheme: options.colorScheme } : {}),
   });
 
   const electronProcess = app.process();
@@ -218,7 +272,7 @@ export async function launchHarness(): Promise<Harness> {
   assert.equal(await page.locator("text=This is the renderer, not the app").count(), 0);
   await page.locator("table.table tbody tr").first().waitFor({ state: "visible", timeout: 20_000 });
 
-  const close = async (): Promise<void> => {
+  const close = async (closeOptions: { keepStem?: boolean } = {}): Promise<void> => {
     const pid = electronProcess.pid;
     const stillAlive = (): boolean => {
       if (!pid) return false;
@@ -247,8 +301,11 @@ export async function launchHarness(): Promise<Harness> {
       });
     }
 
-    await removeStubborn(stem);
+    // The stem is left behind only when a relaunch is coming for it. It still
+    // lives under the OS temp directory, and sweepStaleSiblings collects it an
+    // hour later even if the run that asked for it never came back.
+    if (!closeOptions.keepStem) await removeStubborn(stem);
   };
 
-  return { app, page, vaultRoot, close };
+  return { app, page, vaultRoot, userDataDir, stem, close };
 }
