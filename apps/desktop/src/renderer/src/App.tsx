@@ -21,7 +21,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { isTypingTarget } from "./shortcuts";
-import { backlogOrder, boardLanes } from "./ordering";
+import { backlogOrder, boardLanes, visibleBoardStatuses } from "./ordering";
 import { monthGrid, stepMonth } from "./calendar";
 import { rangeBetween } from "./selection";
 import { BOARD_ORDER, STATUS_LABELS, isClosed, knownPeople, knownReporters, todayIso } from "./pieces";
@@ -323,6 +323,17 @@ export function App(): React.JSX.Element {
   );
 
   /**
+   * Which board columns the current filters leave reachable — computed once and
+   * given to both `<Board>` and the `boardLanes` call in `orderedKeys` below, the
+   * same arrangement `projectOrder` already has, and for the same reason: the
+   * keyboard cursor has to walk the columns the board actually drew.
+   */
+  const boardStatuses = useMemo(
+    () => visibleBoardStatuses(openOnly, status),
+    [openOnly, status],
+  );
+
+  /**
    * The backlog as it is drawn, kept whole rather than reduced straight to keys
    * because `←`/`→` also need to know whether the row under the cursor has
    * anything to collapse. `BacklogTable` derives the same rows from the same
@@ -343,7 +354,7 @@ export function App(): React.JSX.Element {
   const orderedKeys = useMemo<string[]>(() => {
     if (view === "backlog") return backlogRows.map(({ item }) => item.key);
     if (view === "board") {
-      return boardLanes(filtered, projectOrder, grouped).flatMap((lane) =>
+      return boardLanes(filtered, projectOrder, grouped, boardStatuses).flatMap((lane) =>
         lane.columns.flatMap((c) => c.items.map((i) => i.key)),
       );
     }
@@ -353,7 +364,7 @@ export function App(): React.JSX.Element {
       );
     }
     return agendaOrder;
-  }, [view, backlogRows, filtered, projectOrder, grouped, month, agendaOrder]);
+  }, [view, backlogRows, filtered, projectOrder, grouped, boardStatuses, month, agendaOrder]);
 
   const selectedItem = visibleItems.find((i) => i.key === selected) ?? null;
   const detailItem = visibleItems.find((i) => i.key === detailKey) ?? null;
@@ -1226,6 +1237,8 @@ export function App(): React.JSX.Element {
               projectOrder={projectOrder}
               projectNames={projectNames}
               grouped={grouped}
+              statuses={boardStatuses}
+              filterStatus={status}
               selected={selected}
               onSelect={open}
               onTransition={(key, next) =>

@@ -7,7 +7,9 @@ import {
   boardColumns,
   boardLanes,
   groupIntoBands,
+  visibleBoardStatuses,
 } from "../src/renderer/src/ordering.js";
+import { BOARD_ORDER, isClosed } from "../src/renderer/src/pieces.js";
 
 /**
  * Enough of an Item to order. `backlogOrder` reads `key` and `parent` and
@@ -257,6 +259,58 @@ test("a grouped lane column is one project in rank order", () => {
   assert.deepEqual(
     todo?.items.map((i) => i.key),
     ["A1", "A2"],
+  );
+});
+
+// --------------------------------------------------- which columns are shown
+
+/**
+ * The promise `visibleBoardStatuses` exists to keep: nothing `filtered` in
+ * App.tsx could still show is missing from the board. For every filter
+ * combination, and every status, an item of that status either survives the
+ * two clauses `filtered` applies (a status filter, and Hide closed) or it does
+ * not — mirroring those clauses independently of the function under test is
+ * what makes this a check rather than a restatement of it. A seventh status
+ * added to BOARD_ORDER and forgotten here would fail this immediately.
+ */
+test("every status an item could survive filtering with is in the visible list", () => {
+  for (const openOnly of [false, true]) {
+    for (const status of ["all", ...BOARD_ORDER] as const) {
+      const visible = visibleBoardStatuses(openOnly, status);
+      for (const s of BOARD_ORDER) {
+        const survives = (status === "all" || s === status) && !(openOnly && isClosed(s));
+        assert.equal(
+          visible.includes(s),
+          survives,
+          `openOnly=${openOnly} status=${status} s=${s}`,
+        );
+      }
+    }
+  }
+});
+
+test("openOnly alone returns the four open statuses, in board order", () => {
+  assert.deepEqual(visibleBoardStatuses(true, "all"), [
+    "todo",
+    "in_progress",
+    "in_review",
+    "blocked",
+  ]);
+});
+
+test("a status filter alone returns exactly that one status", () => {
+  assert.deepEqual(visibleBoardStatuses(false, "blocked"), ["blocked"]);
+});
+
+test("hide closed plus a status of done leaves no columns at all", () => {
+  assert.deepEqual(visibleBoardStatuses(true, "done"), []);
+});
+
+test("boardColumns given a short status list returns exactly those columns, in order", () => {
+  const short: Status[] = ["blocked", "todo"];
+  assert.deepEqual(
+    boardColumns(board, order, short).map((c) => c.status),
+    short,
   );
 });
 

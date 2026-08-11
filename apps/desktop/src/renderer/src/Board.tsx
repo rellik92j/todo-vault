@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
+  pointerWithin,
   PointerSensor,
+  rectIntersection,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -15,6 +18,24 @@ import { isTickedFor, todayIso } from "todo-vault/recurrence";
 
 import { BOARD_ORDER, Cadence, STATUS_LABELS, canTransition, isOverdue } from "./pieces";
 import { boardLanes } from "./ordering";
+
+/**
+ * The strip sits visually on top of whatever column is beneath it, but dnd-kit's
+ * built-in algorithms compare rects, not stacking order — the card underneath a
+ * zone is just as valid a `pointerWithin` match as the zone itself, and on a
+ * short board the card can win. A drop-strip zone always wins when it is one of
+ * the candidates, because nothing can be "more under the pointer" than the
+ * topmost thing actually drawn there. `pointerWithin` first, falling back to
+ * `rectIntersection`, is the same fallback dnd-kit's own docs use — a fast
+ * pointer flick can end a drag between measured pointer positions, landing
+ * outside every droppable by the stricter test.
+ */
+const boardCollisionDetection: CollisionDetection = (args) => {
+  const pointerHits = pointerWithin(args);
+  const stripHit = pointerHits.find((hit) => String(hit.id).startsWith("dropstrip:"));
+  if (stripHit) return [stripHit];
+  return pointerHits.length > 0 ? pointerHits : rectIntersection(args);
+};
 
 /**
  * Status columns in manual rank order, with drag to reorder or transition.
@@ -38,6 +59,8 @@ export function Board({
   projectOrder,
   projectNames,
   grouped,
+  statuses,
+  filterStatus,
   selected,
   onSelect,
   onTransition,
@@ -50,6 +73,16 @@ export function Board({
   projectNames: ReadonlyMap<string, string>;
   /** One band per project rather than one band holding all of them. */
   grouped: boolean;
+  /**
+   * The columns the current filters leave reachable, in `BOARD_ORDER` order —
+   * `visibleBoardStatuses` in ordering.ts owns the rule. Drives the header row,
+   * `--columns`, and the ungrouped column list; a status missing from this list
+   * draws no column at all.
+   */
+  statuses: Status[];
+  /** The raw status filter, read only to name the empty state when it and `Hide
+   * closed` together leave zero columns. */
+  filterStatus: Status | "all";
   selected: string | null;
   onSelect: (key: string) => void;
   onTransition: (key: string, status: Status) => void;
@@ -62,8 +95,8 @@ export function Board({
   );
 
   const lanes = useMemo(
-    () => boardLanes(items, projectOrder, grouped),
-    [items, projectOrder, grouped],
+    () => boardLanes(items, projectOrder, grouped, statuses),
+    [items, projectOrder, grouped, statuses],
   );
 
   /**
@@ -177,26 +210,50 @@ export function Board({
   const laneAllows = (lane: { project: string | null }): boolean =>
     !dragging || lane.project === null || lane.project === dragging.project;
 
+  /**
+   * The statuses the current filters hid that the card in flight could still
+   * legally reach — what the drop strip renders while `dragging` is set.
+   *
+   * `BOARD_ORDER`, not `statuses`: this list exists precisely to reach the
+   * columns `statuses` left out, so filtering against the same list would empty
+   * it. A card whose own status is filtered out never appears as a draggable in
+   * the first place, so `dragging` here is always a status `statuses` includes.
+   */
+  const hiddenReachable = useMemo(
+    () =>
+      dragging
+        ? BOARD_ORDER.filter((s) => !statuses.includes(s) && canTransition(dragging.status, s))
+        : [],
+    [dragging, statuses],
+  );
+
   return (
     <DndContext
       sensors={sensors}
+      collisionDetection={boardCollisionDetection}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragCancel={() => setDragging(null)}
     >
-      {grouped ? (
+      {statuses.length === 0 ? (
+        <div className="board-empty">
+          Hide closed and a status of {STATUS_LABELS[filterStatus]} cannot both be true. Untick
+          Hide closed, or pick another status.
+        </div>
+      ) : grouped ? (
         // --columns rather than a literal 6 in the CSS: the header row and every
         // lane are *separate* grids that have to agree on their track count, or
-        // the names stop sitting above the columns they name. BOARD_ORDER owns
-        // how many statuses there are, so it owns the track count too — one
-        // number feeding both grids, rather than a 6 in the stylesheet that a
-        // seventh status would silently leave behind.
+        // the names stop sitting above the columns they name. `statuses` owns how
+        // many columns there are — the same list that decides which ones — so it
+        // owns the track count too — one number feeding both grids, rather than a
+        // 6 in the stylesheet that a seventh status, or a filter, would silently
+        // leave behind.
         <div
           className="board-grouped"
-          style={{ "--columns": BOARD_ORDER.length } as React.CSSProperties}
+          style={{ "--columns": statuses.length } as React.CSSProperties}
         >
           <div className="board-head-row">
-            {BOARD_ORDER.map((status) => (
+            {statuses.map((status) => (
               <div className="board-head" key={status}>
                 <span className="dot" style={{ background: `var(--${status})` }} />
                 {STATUS_LABELS[status]}
@@ -271,6 +328,25 @@ export function Board({
         </div>
       )}
 
+      {/*
+       * Reveals the columns `statuses` left out, for the one operation that must
+       * survive their being hidden: closing a card. `position: fixed` rather than
+       * temporarily widening `statuses` — see `hiddenReachable` — so nothing the
+       * live columns already occupy reflows out from under the pointer mid-drag,
+       * the same failure `useEffect` above guards against for `grouped`.
+       *
+       * Absent, not merely empty, when nothing qualifies: a card in To do reaches
+       * neither Done nor Disregarded, and an empty bar inviting a drop it would
+       * refuse is worse than no bar.
+       */}
+      {dragging && hiddenReachable.length > 0 && (
+        <div className="board-drop-strip">
+          {hiddenReachable.map((status) => (
+            <DropStripZone key={status} status={status} />
+          ))}
+        </div>
+      )}
+
       <DragOverlay dropAnimation={null}>
         {dragging && <Card item={dragging} selected={false} overlay />}
       </DragOverlay>
@@ -293,6 +369,31 @@ type DropTarget =
 /** Unique per lane and status. Opaque — see DropTarget. */
 const columnId = (project: string | null, status: Status): string =>
   `column:${project ?? "*"}:${status}`;
+
+/**
+ * One zone in the drag-time drop strip, standing in for a column `statuses`
+ * hid. `project: null` in its `DropTarget` — the same value the ungrouped board
+ * uses — is what lets `onDragEnd`'s existing column branch handle a drop here
+ * with no new logic: a transition never moves an item between projects, so
+ * skipping the lane check is correct regardless of which project the dragged
+ * card actually belongs to.
+ */
+function DropStripZone({ status }: { status: Status }): React.JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `dropstrip:${status}`,
+    data: { kind: "column", project: null, status } satisfies DropTarget,
+  });
+
+  return (
+    <div
+      className={`board-drop-zone ${isOver ? "board-drop-zone-over" : ""}`}
+      ref={setNodeRef}
+    >
+      <span className="dot" style={{ background: `var(--${status})` }} />
+      {STATUS_LABELS[status]}
+    </div>
+  );
+}
 
 function Column({
   id,
