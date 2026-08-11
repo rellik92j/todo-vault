@@ -667,9 +667,14 @@ button:focus-visible {
    * scrolling — the sixth arrived with the disregard status and pushed the row
    * ~100px over. This floor only bites when space is short: `flex: 1 1 0` still
    * grows them to fill a wider window, up to the max below.
+   *
+   * 420, not unbounded: a card's summary clamps at three lines, and an
+   * unbounded column on a wide monitor would stretch that into a table row
+   * that lost its table. Six columns do not reach this ceiling until ~2600px
+   * of content width, so the unfiltered board is unaffected in practice.
    */
   min-width: 170px;
-  max-width: 320px;
+  max-width: 420px;
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -765,7 +770,7 @@ button:focus-visible {
  *
  * A plain block holding one grid for the status header and one per band, rather
  * than a single grid holding everything. Sibling grids line up regardless,
- * because `minmax(170px, 320px)` never consults content — same template, same
+ * because `minmax(170px, 420px)` never consults content — same template, same
  * available width, identical tracks. What one big grid costs is the sticky
  * header: a sticky grid item may not leave its grid area, and the header cells'
  * area is one row exactly as tall as they are, so it had nowhere to travel and
@@ -789,7 +794,7 @@ button:focus-visible {
      the note on `.column` for why the floor is 170. `justify-content: start`
      pools the slack on the right the way the flex row does, rather than
      stretching six columns across an ultrawide window. */
-  grid-template-columns: repeat(var(--columns), minmax(170px, 320px));
+  grid-template-columns: repeat(var(--columns), minmax(170px, 420px));
   gap: 0 12px;
   justify-content: start;
 }
@@ -2021,6 +2026,60 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   padding: 10px 2px;
   color: var(--text-faint);
   font-size: 11.5px;
+}
+
+/*
+ * Stands in for the columns `statuses` hid, while a card is in flight and can
+ * still legally reach one of them — otherwise closing a card would need the
+ * detail panel or the bulk bar, the real regression this exists to avoid.
+ *
+ * `position: fixed` with `left` set to the sidebar's own 236px, rather than
+ * `.bulk-bar`'s `position: absolute` anchored to `.main` — see the note in
+ * Board.tsx on why nothing may reflow mid-drag. Fixed also means it is never
+ * clipped or offset by `.content`'s own scrolling, which an absolutely
+ * positioned descendant of `.content` would be.
+ */
+.board-drop-strip {
+  position: fixed;
+  left: 236px;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  box-shadow: 0 -6px 16px rgb(0 0 0 / 0.3);
+}
+
+.board-drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 0;
+  max-width: 420px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.board-drop-zone-over {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-inset));
+}
+
+.board-empty {
+  padding: 32px 16px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  max-width: 60ch;
 }
 
 .card-placeholder {

@@ -1,5 +1,5 @@
 import type { Item, Status } from "todo-vault";
-import { BOARD_ORDER } from "./pieces";
+import { BOARD_ORDER, isClosed } from "./pieces";
 
 export interface BacklogRow {
   item: Item;
@@ -57,6 +57,23 @@ export function backlogOrder(
 }
 
 /**
+ * Which board columns a card could possibly land in under these filters.
+ *
+ * "Impossible", not "empty": a column is dropped only when the filters make it
+ * unreachable, never because nothing happens to be in it right now. An empty
+ * Blocked column is still where you drag a card *to* block it, and the set must
+ * not flicker as cards move — it can only change when a filter does, which is a
+ * deliberate act rather than a side effect of the last card leaving a column.
+ */
+export function visibleBoardStatuses(openOnly: boolean, status: Status | "all"): Status[] {
+  return BOARD_ORDER.filter((s) => {
+    if (status !== "all" && s !== status) return false;
+    if (openOnly && isClosed(s)) return false;
+    return true;
+  });
+}
+
+/**
  * One horizontal band of the board.
  *
  * `project` is null in exactly one case: ungrouped mode, which is a single lane
@@ -85,8 +102,9 @@ export function boardLanes(
   items: Item[],
   projectOrder: string[],
   grouped: boolean,
+  statuses: readonly Status[] = BOARD_ORDER,
 ): BoardLane[] {
-  if (!grouped) return [{ project: null, columns: boardColumns(items, projectOrder) }];
+  if (!grouped) return [{ project: null, columns: boardColumns(items, projectOrder, statuses) }];
 
   const byProject = new Map<string, Item[]>();
   for (const item of items) {
@@ -111,7 +129,7 @@ export function boardLanes(
   // empty bands with the cards buried among them.
   return [...known, ...rest].map((project) => ({
     project,
-    columns: boardColumns(byProject.get(project) ?? [], projectOrder),
+    columns: boardColumns(byProject.get(project) ?? [], projectOrder, statuses),
   }));
 }
 
@@ -130,10 +148,11 @@ export function boardLanes(
 export function boardColumns(
   items: Item[],
   projectOrder: string[],
+  statuses: readonly Status[] = BOARD_ORDER,
 ): Array<{ status: Status; items: Item[] }> {
   const projectRank = new Map(projectOrder.map((key, index) => [key, index]));
 
-  return BOARD_ORDER.map((status) => ({
+  return statuses.map((status) => ({
     status,
     items: items
       .filter((i) => i.status === status)
