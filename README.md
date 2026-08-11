@@ -22,13 +22,17 @@ mirror.
 
 ## What you get
 
-**A desktop app.** Backlog table with nested subtasks, a drag-and-drop board,
-an agenda over six time scopes, a History view reading the git log back in vault
-terms (`dueDate 2026-08-06 → 2026-08-19`, not a patch), and a detail panel where
-every edit commits straight to the file — there is no save button and no draft state. Illegal
+**A desktop app.** Five views over one vault, on keys `1`–`5`: a backlog table
+with nested subtasks, a drag-and-drop board that stops drawing the columns your
+filters have emptied, an agenda over six time scopes, a month calendar you
+reschedule in by dragging a chip to another day, and a History view reading the
+git log back in vault terms (`dueDate 2026-08-06 → 2026-08-19`, not a patch).
+Behind all five, a detail panel where every edit commits straight to the file —
+there is no save button and no draft state. Illegal
 status moves are prevented rather than attempted and reported. Descriptions are
 rich-text edited but stored as plain markdown. Recurring work is ticked off for
-the current period rather than closed permanently. Press `?` for every keyboard
+the current period rather than closed permanently. Light, dark or follow the OS,
+chosen in the app rather than inherited from it. Press `?` for every keyboard
 shortcut.
 
 **A command line.** Everything the app does, plus diagnostics and exports.
@@ -54,7 +58,7 @@ being set up at all.
 
 | | |
 |---|---|
-| **Node.js 20+** | Developed against 24. `node --version` to check. |
+| **Node.js 22+** | Developed against 24; CI runs both. `node --version` to check. |
 | **npm** | Ships with Node. The repo is an npm workspace. |
 | **Git** *(recommended)* | Not required to run, but without it the vault keeps no history. |
 | **~350 MB disk** | Electron's runtime, downloaded on first build and cached per-machine. |
@@ -316,6 +320,12 @@ three long scopes subdivide their output — nearest first, two or three heading
 whatever day it is — rather than printing one flat list. The app draws the same
 bands.
 
+The app's calendar is the one place a week starts on Sunday instead. It is a
+grid, following the convention every other month grid follows, and it has no
+second consumer to agree with — an agenda band states its week as a `from`/`to`
+range in prose, and a weekly cadence's period is never drawn as columns, so
+both stay Monday-anchored without either constraining the other.
+
 **A few other flags worth knowing.** `list --sort rank` gives the manual order;
 the default `--sort work` sorts by urgency (overdue, then due date, then
 priority). `link` takes six kinds: `--url`, `--item`, `--file`, `--folder`,
@@ -472,9 +482,19 @@ npm test
 Covers the core (key allocation, disk round-trips, frontmatter stability,
 hierarchy and transition rules, recurrence periods, agenda sectioning, the
 description grammar in both directions, ADF conversion, push ordering, drift
-detection, trash and restore, atomic writes, bulk edit), the desktop app's pure
-renderer logic (nesting, collapse, type filtering, board lanes, agenda bands,
-multi-select ranges), and the launcher's argument tokenizer.
+detection, trash and restore, atomic writes, bulk edit, Jira field discovery),
+the desktop app's pure renderer logic (nesting, collapse, type filtering, board
+lanes and which of them a filter leaves reachable, agenda bands, the calendar's
+month grid, multi-select ranges, the theme cycle), and the workspace scripts —
+the menu's argument tokenizer and the config block it prints, the staleness
+verdict and the exit codes `launch.vbs` switches on, the shortcut's quoting, and
+which dirty lockfiles `update` is entitled to throw away.
+
+One of those tests reads `index.css` rather than any TypeScript: every colour
+token in the dark `:root` has to appear in the light one too, and clear a
+contrast floor against both grounds. That was prose until a token got added to
+one half of the palette and nothing failed — not a test, not a typecheck, not a
+review — which is the whole argument for it being a test now.
 
 ```bash
 npm run e2e
@@ -482,12 +502,25 @@ npm run e2e
 
 Drives the *built* app itself, over `playwright-core`'s `_electron`, against a
 throwaway seeded vault and an isolated `--user-data-dir` — never the real
-`vault/` at the repo root. This is where `ItemDetail.tsx`, `RichEditor.tsx` and
-`Markdown.tsx` get covered: they are `.tsx`, which `npm test` deliberately
-excludes so that `tsx --test` importing JSX does not drag React into the fast
-suite. Today that means the comment editor — old comments rendering as
-markdown, the save hint being absent, blur and Ctrl+Enter not posting, posting
-for real, and a quoted comment's border reading clear of the comment's own.
+`vault/` at the repo root. It reaches two kinds of thing `npm test` cannot.
+
+First the `.tsx` files — `ItemDetail.tsx`, `RichEditor.tsx`, `Markdown.tsx` —
+which the fast suite deliberately excludes so that `tsx --test` importing JSX
+does not drag React into it. That is the comment editor: old comments rendering
+as markdown, the save hint being absent, blur and Ctrl+Enter not posting,
+posting for real, and a quoted comment's border reading clear of the comment's
+own.
+
+Second, the facts that live in no TypeScript file at all. That the calendar's
+seven columns stay seven *equal* columns when a wide chip lands in one of them,
+which is a CSS grid rule rather than a function. That the board really stops
+drawing a column its filters have emptied, and that a card in the ones left can
+still be closed. And that Electron's `nativeTheme.themeSource` genuinely moves
+`prefers-color-scheme` in the renderer, survives a relaunch, and agrees with the
+colour Chromium paints before the first frame — none of which a pure test can
+see, since the cycle it *can* see is the part of that feature least likely to
+break.
+
 Screenshots land in `apps/desktop/e2e/artifacts/` (gitignored) for the one part
 no DOM assertion can prove — see `PLAN.md`'s "Driving the desktop app with
 Playwright" section for the whole argument. It is slow, launches a real Electron

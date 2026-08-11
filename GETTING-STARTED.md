@@ -23,8 +23,10 @@ The rest of this page is the same steps by hand.
 winget install OpenJS.NodeJS
 ```
 
-This project is built against Node 24.18.0. Restart your terminal after
-installing so `node` and `npm` are on `PATH`.
+Node 22 is the floor and 24 is what this is developed against; CI runs both.
+Anything older cannot run the test suite at all, which is why the floor is where
+it is rather than being a guess. Restart your terminal after installing so
+`node` and `npm` are on `PATH`.
 
 ## 2. Install Git (recommended)
 
@@ -100,18 +102,23 @@ What you do next depends on why you're here.
 
 ## 6. A few things to set up once you're in
 
-- **Anthropic API key** (only if you want the AI drafting feature): Settings →
-  Claude. It's encrypted with Windows DPAPI and bound to this machine, so it
-  has to be re-entered on every new computer — there's no export/import path,
-  by design.
+- **Anthropic API key** (only if you want the AI drafting feature): the
+  **Claude** button at the foot of the sidebar. It's encrypted with Windows
+  DPAPI and bound to this machine, so it has to be re-entered on every new
+  computer — there's no export/import path, by design.
 - **Git history**: the sidebar shows a "history on / history off" dot for the
   open vault. Run `npm run vault -- git-status --vault ./vault` for detail if
-  it's off and you expected it on. When it's on, press `4` for the History view,
+  it's off and you expected it on. When it's on, press `5` for the History view,
   which reads the commits back as field changes rather than as patches; an item's
   own history is at the bottom of its detail panel, behind **Show history**.
-- **Press `?`** for every keyboard shortcut. Ctrl+`+`/`−`/`0` size the text, and
+- **Press `?`** for every keyboard shortcut. `1`–`5` move between Backlog,
+  Board, Agenda, Calendar and History. Ctrl+`+`/`−`/`0` size the text, and
   the level is remembered across launches — worth setting once on a new display
   rather than squinting at the default.
+- **Light or dark**: the button at the foot of the sidebar cycles Auto → Light →
+  Dark, and is labelled with the state it is *in* rather than the one pressing
+  would move to. Auto follows the OS. The choice is saved and applied before the
+  window is created, so a dark start never flashes white on the way in.
 - **A desktop shortcut**, so you stop needing a terminal to start the app: press
   `D` in the menu, or `npm run shortcut`. It writes `todo-vault.lnk` to your
   desktop, and a double-click starts the app with no console window and nothing
