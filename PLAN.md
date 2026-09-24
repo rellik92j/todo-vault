@@ -3087,3 +3087,99 @@ and screenshots of the board, the backlog and the command-palette scrim read in
 both schemes. Not verified: nothing was checked on a real display other than
 this one, so the values are right by measurement and by one pair of eyes on one
 monitor.
+
+## The board drops the columns its filters have emptied ✅ built and driven
+
+"Hide closed" defaults on and excludes `done` and `disregard` from `filtered`,
+so the board drew six columns of which two were structurally, permanently
+empty — not empty right now, empty for as long as the checkbox stayed ticked,
+which is nearly always. `.column`'s `min-width: 170px` comment recorded why:
+six columns fit the default 1360px window with nothing to spare, so the four
+that hold work were squeezed to make room for two that never would.
+
+**The rule is "impossible", not "empty".** `visibleBoardStatuses(openOnly,
+status)` in `ordering.ts` drops a status when the current filters make it
+unreachable, never because nothing happens to be in it. "Hide empty columns"
+was the tempting simpler rule and wrong in a way that shows up immediately: an
+empty Blocked column is still where you drag a card *to* block it, and it
+would flicker as you worked — dragging the last card out of a column would
+make the column you just emptied disappear from under the cursor. The
+impossibility rule can only change when a filter changes, a deliberate act.
+Folding the status select into the same rule cost nothing and fixed the
+identical complaint one control over: picking "To do" alone used to leave five
+empty columns for the same reason ticking Hide closed left two.
+
+**One function, threaded through both existing entry points rather than a new
+one.** `boardColumns` and `boardLanes` gained a `statuses` parameter
+defaulting to `BOARD_ORDER`, and `App.tsx` computes `boardStatuses` once via
+`useMemo` and passes it to both `<Board>` and the `boardLanes` call inside
+`orderedKeys` — the same arrangement `grouped` already had, for the reason
+recorded when grouping was built: the keyboard cursor walks the order the eye
+sees, and the only way to guarantee that is for there to be one answer to what
+that order is. Threading the list into `boardColumns` mattered for a second
+reason: that function's own comment already promises "nothing in `items` may
+silently fail to appear," and a bucketing pass over a short status list would
+have broken that promise for any card whose status wasn't in it. The property
+test that promise demanded — every status an item surviving `filtered` could
+carry is in `visibleBoardStatuses`' result, for every `(openOnly, status)`
+pair — is in `ordering.test.ts` alongside the named cases (`openOnly` alone,
+a single status, and the zero-column combination).
+
+**`--columns` already generalised.** It was set from `BOARD_ORDER.length` for
+the sticky header row and every lane grid to agree on track count; it became
+`statuses.length` and nothing else about that arrangement changed, which was
+the entire payoff of that number never having been a literal `6` in the
+stylesheet.
+
+**Dragging a card closed survives losing the Done column, via a fixed strip
+shown only while a card is in flight.** While `dragging` is non-null, a bar
+pinned to `.content` renders one drop zone per status that is both currently
+hidden and legally reachable from `dragging.status` via `canTransition`
+(`hiddenReachable` in `Board.tsx`). The alternative — revealing the hidden
+columns while dragging — was rejected in the plan and stayed rejected: it
+would move the layout under the cursor, snapping every live column's width
+mid-gesture the same way the file's existing note about regrouping mid-drag
+already warns against. Each zone carries `{ kind: "column", project: null,
+status }`, so `onDragEnd`'s existing column branch handles it with no new
+logic — `project === null` already skips the lane check, correctly, since a
+transition never moves an item between projects.
+
+**The real snag was not the one the plan flagged.** It predicted dnd-kit's
+default measuring strategy might miss a droppable that mounts mid-gesture, and
+said to reach for `MeasuringStrategy.Always` if drops landed nowhere. Drops
+registered fine; the actual problem was stacking order. dnd-kit's collision
+algorithms compare rects, not paint order, so the card visually underneath a
+strip zone was just as valid a `pointerWithin` match as the zone drawn on top
+of it, and on a short board the card could win the drop. Fixed with a custom
+`CollisionDetection` (`boardCollisionDetection`) that checks for a
+`dropstrip:`-prefixed hit first and returns it alone when present, falling
+back to plain `pointerWithin` and then `rectIntersection` — the same fallback
+chain dnd-kit's own docs use, kept for the reason it's there in the docs: a
+fast pointer flick can end a drag between measured positions, landing outside
+every droppable under the stricter test.
+
+**The zero-column case gets an explicit empty state**, not a blank screen.
+`openOnly` on plus a status of Done or Disregarded makes every column
+impossible at once, and the two controls sit inches apart in the same
+toolbar. `statuses.length === 0` now renders `.board-empty`: *"Hide closed and
+a status of {label} cannot both be true. Untick Hide closed, or pick another
+status."*
+
+**Widths.** `.column`'s `max-width` and the grouped grid's `minmax()` ceiling
+both moved from 320px to 420px in `index.css`, because `flex: 1 1 0` and
+`minmax(170px, 320px)` redistribute the freed space on their own but started
+binding at the old ceiling sooner than the wider columns should have had to.
+420 rather than no ceiling at all, because a card is a three-line clamped
+summary and four unbounded columns on a large monitor would read as a table
+that lost its table; six columns don't reach the new ceiling until well past
+2000px of content width, so the unfiltered board is unaffected in practice.
+
+Verified against the real app in `e2e/board-hides-columns.e2e.mts`, ordered
+subtests against one harness following `calendar-columns.e2e.mts`'s shape:
+the default board draws four wide columns with Done and Disregarded absent,
+unticking Hide closed brings back six, picking a status narrows to one, Done
+plus Hide closed shows the empty state, and dragging a card closes it through
+the strip. `ordering.test.ts` covers everything that's a pure function; the
+e2e file covers the part that isn't — layout, the gesture, and the one thing
+the change put at risk, that closing a card still works once its column is
+gone.
