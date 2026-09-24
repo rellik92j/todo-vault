@@ -36,9 +36,9 @@ jobs:
       matrix:
         node: ['22', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -65,9 +65,9 @@ jobs:
     name: build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
@@ -76,7 +76,7 @@ jobs:
       # require(), which apps/desktop's "ensure-electron" forces before the
       # build. That download is ~150MB and would otherwise repeat every run.
       - name: Cache the Electron binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~\AppData\Local\electron\Cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
