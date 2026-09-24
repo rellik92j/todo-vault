@@ -392,8 +392,8 @@ already read and edit it. The MCP server adds schema validation, key allocation
 and hierarchy rules on top — worth having, but not a hard dependency.
 
 The CLI and MCP surfaces cover the same ground on items and projects. A handful
-of operations are one-sided — `doctor`, `git-status`, `history` and `jira csv`
-are CLI-only (`history` is also a desktop view);
+of operations are one-sided — `doctor`, `git-status`, `history`, `jira csv` and
+`jira record` are CLI-only (`history` is also a desktop view);
 `vault_mark_pushed` is MCP-only; bulk edit is desktop-only.
 
 ---
@@ -416,6 +416,42 @@ the push so drift detection has a baseline.
 **The POST is deliberately left to you**, so an offline vault stays offline
 until you decide otherwise. Nothing here writes to Jira — the only command that
 touches the network at all is `jira discover`, and it only reads.
+
+### Bulk create by CSV, with no API token
+
+`jira csv` writes a file for Jira Cloud's external import — the path to take
+when there is no token, or the site is behind a VPN you would rather not
+automate against.
+
+```bash
+npm run vault -- jira csv --vault ./vault --out issues.csv
+# import it: Settings > System > External System Import > CSV
+npm run vault -- jira record --vault ./vault --from jira-export.csv
+```
+
+It exports open items by default; add `--all` to include closed ones, and
+`--reporter` to add a Reporter column. Reporter is off by default because the
+vault stores people as free text and the importer resolves them against real
+accounts — the command prints the names in the file so you can check them
+before importing rather than after a half-failed load.
+
+Three things about the import screen are worth knowing in advance, because each
+fails quietly rather than loudly:
+
+- **Map `Issue Id` and `Parent id`.** They are how rows inside one import link
+  to each other. Skip them and the import still succeeds — with every epic and
+  story arriving unparented.
+- **`Labels` and `Components` repeat.** One column per value is how the
+  importer reads a multi-value field. The command prints the full column list
+  after writing the file.
+- **External import needs permission.** It is a site-admin screen; without the
+  permission it is missing from the menu rather than reporting an error.
+
+Then **run `jira record`** on a CSV exported back out of Jira, containing the
+local keys and the issue keys Jira created. That is what stops the next export
+offering to create everything a second time. It reads the two columns by name,
+skips any local key it cannot find, and refuses to overwrite an item already
+recorded under a different Jira key. `--dry` reports without writing.
 
 ### Finding your instance's field ids
 

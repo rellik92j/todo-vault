@@ -51,5 +51,21 @@ export { classifyLinkTarget } from "./link-target.js";
 export type { LinkTargetKind } from "./link-target.js";
 export { cadencePeriod, isTickedFor, isSettledForWindow } from "./recurrence.js";
 export type { Tickable } from "./recurrence.js";
-export { buildPushPlan, loadJiraMap, markdownToAdf, toJiraCsv, JiraMapSchema } from "./jira.js";
-export type { JiraMap, JiraPushPlan, JiraIssueDraft } from "./jira.js";
+export {
+  blocksToWiki,
+  buildPushPlan,
+  loadJiraMap,
+  markdownToAdf,
+  selectPushable,
+  toJiraCsv,
+  JiraMapSchema,
+} from "./jira.js";
+export type {
+  JiraMap,
+  JiraPushPlan,
+  JiraIssueDraft,
+  JiraCsvColumn,
+  JiraCsvOptions,
+  JiraCsvResult,
+  PushSelection,
+} from "./jira.js";

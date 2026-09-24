@@ -2227,6 +2227,12 @@ export function pushableFields(item: Item): Record<string, unknown> {
     description: item.description,
     priority: item.priority,
     parent: item.parent ?? null,
+    // Pushed as a label or as a custom field, depending on jira-map.yaml, but
+    // pushed either way — so it belongs here. Left out, editing a category
+    // changed what Jira should hold while leaving this hash identical, and the
+    // item read as "pushed and unchanged" forever after. Same bug the links
+    // note below describes, found the same way.
+    category: item.category ?? null,
     labels: [...item.labels].sort(),
     components: [...item.components].sort(),
     assignee: item.assignee ?? null,

@@ -84,7 +84,7 @@ Legal needs to review sections 4 and 7 before this goes out.
 | `status` | enum | `todo` `in_progress` `in_review` `blocked` `done` `disregard` |
 | `priority` | enum | `highest` `high` `medium` `low` `lowest` |
 | `parent` | key | Epic link, or parent task for a subtask. |
-| `category` | string | Your grouping. Becomes a label or custom field on push. |
+| `category` | string | Your grouping. Becomes a label or custom field on push — `jira-map.yaml` decides which — and counts as drift either way. |
 | `labels` | string[] | Passes straight through to Jira. |
 | `components` | string[] | Passes straight through to Jira. |
 | `assignee` | string | Who is doing it. Pushed to Jira's `assignee`. Filtered case-insensitively — spellings of one person fold together, so the app's assignee menu and `listItems` agree. |
@@ -426,6 +426,12 @@ because Jira assigned a different one.
 Changing the summary will. So will moving an item into `in_progress` for the
 first time, because that writes `startDate`, which is pushed — a status change
 on its own is not drift, but the date it stamps is.
+
+"Fields that actually get pushed" has twice turned out to be narrower in
+`pushableFields` than in the code that does the pushing, and both times the
+symptom was silence: the item read as pushed-and-unchanged while Jira held
+something stale. `links` was the first, `category` the second. Anything added
+to a push payload belongs in that list in the same commit.
 
 ## Rules the vault enforces
 

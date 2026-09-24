@@ -82,7 +82,11 @@ Usage: vault <command> [options]
   git-status                        Whether writes are being committed
   history [KEY|PROJ]                What changed, newest first, from the git log
   jira plan [--out plan.json]       Build a reviewable Jira push payload
-  jira csv  [--out issues.csv]      Export for Jira's CSV importer
+  jira csv  [--out issues.csv]      Export for Jira Cloud's CSV importer
+            [--all] [--reporter]    --all includes done items; --reporter adds
+                                    a Reporter column (names must match Jira)
+  jira record --from export.csv     Record what an import created, so the next
+                                    export skips it
   jira discover --url U --project K Read a live instance for jira-map.yaml ids
                                     (needs JIRA_EMAIL and JIRA_TOKEN set)
 
@@ -155,6 +159,144 @@ function fieldPatch(flags: Args["flags"]): Record<string, unknown> {
   const estimate = str(flags, "estimate");
   if (estimate !== undefined) patch.estimate = Number(estimate);
   return patch;
+}
+
+/**
+ * Every matching item, not the first page of them.
+ *
+ * ItemFilter caps `limit` at 500, so a bulk export cannot simply ask for all of
+ * them — and asking for 500 and taking what comes back is how you get a partial
+ * import that looks complete. Page instead: `listItems` reports `total`
+ * alongside the page, so there is something to page against.
+ */
+function listEveryItem(vault: Vault, filter: { project?: string; open?: boolean }): Item[] {
+  const page = 500;
+  const collected: Item[] = [];
+  for (let offset = 0; ; offset += page) {
+    const { items, total } = vault.listItems({ ...filter, limit: page, offset });
+    collected.push(...items);
+    if (collected.length >= total || items.length === 0) return collected;
+  }
+}
+
+/**
+ * A CSV row splitter that understands quoted cells.
+ *
+ * Deliberately minimal, and deliberately not a dependency: the only file it
+ * ever reads is one a person exported out of Jira minutes earlier, and the one
+ * thing it has to get right is a quoted summary containing a comma.
+ */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  // Strip a BOM if the file has one; Jira's own exports usually do.
+  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch !== '"') cell += ch;
+      else if (src[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else quoted = false;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && src[i + 1] === "\n") i += 1;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += ch;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((c) => c.trim()));
+}
+
+/** Case- and space-insensitive header lookup, returning a column index. */
+function columnIndex(headers: string[], candidates: string[]): number {
+  const normalised = headers.map((h) => h.trim().toLowerCase().replace(/\s+/g, " "));
+  for (const candidate of candidates) {
+    const found = normalised.indexOf(candidate);
+    if (found !== -1) return found;
+  }
+  return -1;
+}
+
+/**
+ * Stamp the issue keys an import created back onto the vault items.
+ *
+ * Without this the export is a one-shot: nothing in the vault records that Jira
+ * now holds these issues, so the next export offers to create them all again.
+ * `markPushed` writes the content hash that makes that skip work.
+ *
+ * Columns are found by name rather than position, because the file is whatever
+ * the person exported back out of Jira and its column order is not ours to
+ * assume.
+ */
+async function recordImport(
+  vault: Vault,
+  from: string,
+  dryRun: boolean,
+): Promise<{ lines: string[] }> {
+  const rows = parseCsv(await fs.readFile(from, "utf8"));
+  if (rows.length < 2) {
+    throw new VaultError(`${from} has no data rows. Expected a header row and at least one issue.`);
+  }
+
+  const headers = rows[0];
+  const localAt = columnIndex(headers, ["issue id", "local key", "vault key"]);
+  const jiraAt = columnIndex(headers, ["issue key", "key", "jira key"]);
+  if (localAt === -1 || jiraAt === -1) {
+    throw new VaultError(
+      `Could not find the columns to read in ${from}. Need one of "Issue Id"/"Local Key" for the vault key and one of "Issue Key"/"Key" for what Jira created. Found: ${headers.join(", ")}`,
+    );
+  }
+
+  const lines: string[] = [];
+  let stamped = 0;
+  for (const row of rows.slice(1)) {
+    const localKey = (row[localAt] ?? "").trim();
+    const jiraKey = (row[jiraAt] ?? "").trim();
+    if (!localKey || !jiraKey) continue;
+
+    let item: Item;
+    try {
+      item = vault.getItem(localKey);
+    } catch {
+      lines.push(`  skip ${localKey}: no such item in this vault`);
+      continue;
+    }
+    // A different key already recorded is either a double import or the wrong
+    // file. Both want a human, and neither wants the baseline overwritten.
+    if (item.sync.jiraKey && item.sync.jiraKey !== jiraKey) {
+      lines.push(
+        `  skip ${localKey}: already recorded as ${item.sync.jiraKey}, but this file says ${jiraKey}`,
+      );
+      continue;
+    }
+    if (!dryRun) await vault.markPushed(localKey, jiraKey);
+    stamped += 1;
+    lines.push(`  ${localKey} -> ${jiraKey}`);
+  }
+
+  lines.push(
+    dryRun
+      ? `\nWould record ${stamped} item(s). Re-run without --dry to write.`
+      : `\nRecorded ${stamped} item(s) as pushed.`,
+  );
+  return { lines };
 }
 
 async function main(): Promise<void> {
@@ -787,23 +929,61 @@ async function main(): Promise<void> {
         return;
       }
 
+      // Recording what an import created needs no map, same as discover.
+      if (sub === "record") {
+        const from = str(flags, "from");
+        if (!from) {
+          throw new VaultError(
+            "Pass --from <file.csv> — the CSV you exported back out of Jira after the import, with a column of local keys and a column of the issue keys Jira created.",
+          );
+        }
+        const recorded = await recordImport(vault, from, flags.dry === true);
+        for (const line of recorded.lines) process.stdout.write(`${line}\n`);
+        return;
+      }
+
       const mapPath = str(flags, "map") ?? path.join(vault.root, "jira-map.yaml");
       const map = await loadJiraMap(mapPath);
-      const { items } = vault.listItems({
+      const items = listEveryItem(vault, {
         project: str(flags, "project"),
         open: flags.all === true ? undefined : true,
-        limit: 500,
       });
 
       if (sub === "csv") {
-        const csv = toJiraCsv(items, map);
+        const result = toJiraCsv(items, map, vault, { reporter: flags.reporter === true });
         const out = str(flags, "out");
-        if (out) {
-          await fs.writeFile(out, csv, "utf8");
-          process.stdout.write(`Wrote ${items.length} rows to ${out}\n`);
-        } else {
-          process.stdout.write(`${csv}\n`);
+        if (!out) {
+          process.stdout.write(result.csv);
+          return;
         }
+
+        await fs.writeFile(out, result.csv, "utf8");
+        process.stdout.write(`Wrote ${result.rowCount} row(s) to ${out}\n`);
+
+        // The mapping screen is where this file either works or quietly loses
+        // the hierarchy, and Issue Id / Parent id are the two nobody guesses.
+        process.stdout.write("\nOn the importer's mapping screen:\n");
+        const seen = new Set<string>();
+        for (const column of result.columns) {
+          if (seen.has(column.header)) continue;
+          seen.add(column.header);
+          process.stdout.write(`  ${column.header.padEnd(14)} -> ${column.maps}\n`);
+        }
+
+        if (result.assignees.length) {
+          process.stdout.write(
+            `\nAssignees in this file — check these resolve on your site before importing:\n  ${result.assignees.join(", ")}\n`,
+          );
+        }
+        if (result.reporters.length) {
+          process.stdout.write(`Reporters:\n  ${result.reporters.join(", ")}\n`);
+        }
+
+        for (const s of result.skipped) process.stdout.write(`  skip ${s.localKey}: ${s.reason}\n`);
+        for (const w of result.warnings) process.stdout.write(`  warn ${w}\n`);
+        process.stdout.write(
+          `\nAfter importing, run \`vault jira record --from <export.csv>\` so this vault knows what Jira created and the next export skips it.\n`,
+        );
         return;
       }
 
