@@ -8,22 +8,30 @@
  * it. Now a top-level field this build does not know is kept: the file loads,
  * the field rides along on every write, and `load().notices` names it for
  * `vault doctor`. Fields nested inside a link, attachment, comment or sync
- * block are still strict (TV-11); the last test here records that gap.
+ * block are still strict (TV-11); one test here records that gap. A key named
+ * `description` is the exception and is still rejected, because the body is
+ * the description and a save would drop the key's text.
  *
  * "A newer build" is simulated by writing an item with this build and then
  * adding a field to its frontmatter by hand, which is byte for byte what a
  * newer build's serializer would have produced for that field.
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { FRONTMATTER_ORDER } from "../src/constants.js";
 import { parseFrontmatter, serializeFrontmatter } from "../src/markdown.js";
 import { unknownFrontmatterKeys } from "../src/schema.js";
 import { Vault } from "../src/vault.js";
+
+const execFileAsync = promisify(execFile);
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-unknown-"));
@@ -208,6 +216,106 @@ test("unknownFrontmatterKeys checks raw frontmatter against this build's field l
   assert.deepEqual(unknownFrontmatterKeys("item", { name: "x" }), ["name"]);
   // An Object.prototype name is not mistaken for a known field.
   assert.deepEqual(unknownFrontmatterKeys("item", { toString: "x" }), ["toString"]);
+  // `description` is an error in frontmatter, never a notice.
+  assert.deepEqual(unknownFrontmatterKeys("item", { description: "x", b: 1 }), ["b"]);
+  assert.deepEqual(unknownFrontmatterKeys("project", { description: "x" }), []);
+});
+
+/**
+ * A `description:` key in frontmatter is the one unknown key that is rejected.
+ * The body is the description, so loading the file would overwrite the key and
+ * the next save would drop its text. Rejecting it keeps the file out of the
+ * index, so no build ever rewrites it, and puts it in front of a human.
+ */
+test("an item with a description key in its frontmatter is rejected, and its file is never rewritten", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Hand-edited", description: "The body" });
+  const file = vault.itemPath(item.key);
+  const before = await addFrontmatterLine(file, /^key: ACME-1$/m, "description: Copied from a Hugo page");
+
+  const { errors, notices } = await vault.load();
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /ACME-1\.md: .*description is the body, not a frontmatter field/);
+  assert.deepEqual(notices, [], "an error, not a notice");
+  assert.equal(vault.hasItem(item.key), false);
+  assert.throws(() => vault.getItem(item.key), /No item with key ACME-1/);
+  assert.deepEqual(vault.listItems({ project: "ACME" }).items, []);
+
+  await assert.rejects(vault.updateItem(item.key, { summary: "Overwrite" }), /No item with key/);
+  assert.equal(await fs.readFile(file, "utf8"), before, "the file is byte for byte as it was");
+
+  // A fresh open, as an MCP server starting up, rejects it the same way.
+  const reopened = await Vault.open(vault.root);
+  assert.equal(reopened.hasItem(item.key), false);
+  assert.equal(await fs.readFile(file, "utf8"), before);
+});
+
+test("a project with a description key in its frontmatter is rejected, and its file is never rewritten", async () => {
+  const vault = await tmpVault();
+  const file = vault.projectPath("ACME");
+  const before = await addFrontmatterLine(file, /^key: ACME$/m, "description: Copied from a Jekyll page");
+
+  const { errors, notices } = await vault.load();
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /ACME\.md: .*description is the body, not a frontmatter field/);
+  assert.deepEqual(notices, []);
+  assert.deepEqual(vault.listProjects(), []);
+  assert.throws(() => vault.getProject("ACME"));
+
+  await assert.rejects(vault.updateProject("ACME", { name: "Overwrite" }));
+  await assert.rejects(vault.createItem({ project: "ACME", summary: "Into a project that did not load" }));
+  assert.equal(await fs.readFile(file, "utf8"), before, "the file is byte for byte as it was");
+});
+
+test("the write paths still accept an item and a project, whose description is the body", async () => {
+  // writeAndIndex strips `description` before it parses, so the rejection only
+  // ever fires on a file read from disk.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Body", description: "First" });
+  await vault.updateItem(item.key, { description: "Second" });
+  await vault.updateProject("ACME", { description: "Project body" });
+  await vault.renameProject("ACME", "ACMX");
+
+  const { errors } = await vault.load();
+  assert.deepEqual(errors, []);
+  assert.equal(vault.getItem("ACMX-1").description, "Second");
+  assert.equal(vault.getProject("ACMX").description, "Project body");
+  assert.equal((await frontmatterOf(vault.itemPath("ACMX-1"))).description, undefined);
+  assert.equal((await frontmatterOf(vault.projectPath("ACMX"))).description, undefined);
+});
+
+/** `vault doctor`, run from source the way a user runs the built CLI. */
+async function doctor(root: string): Promise<{ code: number; stdout: string }> {
+  const tsx = createRequire(import.meta.url).resolve("tsx/cli");
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [tsx, cli, "doctor", "--vault", root]);
+    return { code: 0, stdout };
+  } catch (err) {
+    const e = err as { code?: number; stdout?: string };
+    if (typeof e.code !== "number") throw err;
+    return { code: e.code, stdout: e.stdout ?? "" };
+  }
+}
+
+test("vault doctor lists unknown keys as notices, exits 0, and lists a description key as a problem", async () => {
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Hand-edited" });
+  await addFrontmatterLine(vault.itemPath(item.key), /^key: ACME-1$/m, "dueDtae: 2026-12-01");
+
+  const notices = await doctor(vault.root);
+  assert.equal(notices.code, 0, "notices leave the exit code alone");
+  assert.match(notices.stdout, /No problems found\./);
+  assert.match(notices.stdout, /1 notice\(s\)/);
+  assert.match(notices.stdout, /ACME-1\.md: field\(s\) this build does not know: dueDtae/);
+
+  const other = await vault.createItem({ project: "ACME", summary: "Also hand-edited" });
+  await addFrontmatterLine(vault.itemPath(other.key), /^key: ACME-2$/m, "description: lost text");
+
+  const problems = await doctor(vault.root);
+  assert.equal(problems.code, 1);
+  assert.match(problems.stdout, /1 problem\(s\):\n {2}- .*ACME-2\.md: .*description is the body/);
+  assert.doesNotMatch(problems.stdout.split("notice(s)")[1] ?? "", /description/);
 });
 
 test("gap, TV-11: an unknown field nested inside a link still drops the whole item", async () => {

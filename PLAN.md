@@ -5118,6 +5118,24 @@ not know, and `vault doctor` lists them under their own heading without
 setting a failing exit code, because the same line is correct when a newer
 build wrote it.
 
+**Except `description`.** The first cut let a `description:` key in
+frontmatter load like any other unknown key. The loader then overwrote it with
+the body, and the next save dropped it, so its text was lost without anyone
+having seen it: the desktop snapshot ignores `notices`, and the MCP tools
+project known fields only. No build writes that key; it arrives from hand
+edits, often copied from tools that keep a description in frontmatter. Review
+caught it, and both schemas now carry a `superRefine` issue for it, so the
+file lands in `load().errors` as it did before this change and is never
+rewritten. `unknownFrontmatterKeys` skips it. The write paths are unaffected,
+because `writeAndIndex` strips `description` before it parses.
+
+**What the write-side parse no longer catches.** `writeAndIndex` parses with
+the passthrough schemas, so a stray key that code casts onto an `Item` or
+`Project` is now written to disk instead of rejected. The exposure is small:
+`CreateItemInput`, `UpdateItemInput`, `BulkUpdateInput` and
+`UpdateProjectInput` are still strict, and the exported types still refuse a
+misspelled field, so a key can only get there through a cast.
+
 **What it does not cover.** Builds older than this change still reject unknown
 fields, so a new field is safe only once every app and MCP server opening the
 vault has been rebuilt past it. The nested link, attachment, comment and sync
@@ -5129,13 +5147,17 @@ build also carries a newer field without acting on it: it will not rewrite
 item keys held in one during a re-key, and it will not enforce a rule one
 implies. SCHEMA.md's "Extending it" now says so.
 
-**Tests.** `unknown-fields.test.ts` has 10 tests. The item loads, is listed
+**Tests.** `unknown-fields.test.ts` has 14 tests. The item loads, is listed
 and searchable, and keeps its unknown key through update, bulk update,
 transition, comment, link, clearing a known field, project rename, move to
 another project, and trash and restore. `deleteProject` now counts it. A
 pushed item does not read as drifted. A project keeps its unknown key through
 update and rename. `notices` names a misspelled field, and a nested link field
-still drops its item. `vault doctor` was run by hand on a vault with a
-misspelled field: one notice, exit code 0. Not verified: the desktop app and
-an MCP server were not run against such a vault. Both go through the same
-`load()` and write paths, and nothing in the app shows notices.
+still drops its item. An item file and a project file with a `description:`
+key are in `errors`, missing from every read, refuse writes, and are byte for
+byte unchanged afterwards, while the write paths still save a body. `vault
+doctor` is run from source: a misspelled field is one notice with exit code 0,
+and a `description:` key is a problem with exit code 1. Not verified: the
+desktop app and an MCP server were not run against such a vault. Both go
+through the same `load()` and write paths, and nothing in the app shows
+notices.

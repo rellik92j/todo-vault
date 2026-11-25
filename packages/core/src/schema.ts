@@ -90,6 +90,27 @@ export const SyncSchema = z
   .strict();
 
 /**
+ * A frontmatter key named `description` is an error, not a field kept for a
+ * newer build. The body is the description, so the loader would overwrite the
+ * key with the body and the next save would drop it: text lost without anyone
+ * having seen it. No build writes this key. It arrives from a hand edit, often
+ * copied from tools (Jekyll, Hugo, Obsidian) that do keep a description in
+ * frontmatter. Rejecting it puts the file in `load().errors`, where the desktop
+ * banner and `vault doctor` show it, and a build never rewrites a file it could
+ * not load. The write paths strip `description` from an `Item` or `Project`
+ * before they parse, so this only ever fires on a file read from disk.
+ */
+function rejectDescriptionKey(v: Record<string, unknown>, ctx: z.RefinementCtx): void {
+  if (Object.hasOwn(v, "description")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["description"],
+      message: "description is the body, not a frontmatter field",
+    });
+  }
+}
+
+/**
  * The fields this build knows an item to have. Kept separate from the schema
  * below so the exported type is this exact field list: `passthrough()` would
  * add an index signature to the inferred type, and then `item.dueDtae` would
@@ -159,9 +180,12 @@ const ItemFrontmatterShape = z
  * names them, which is how `vault doctor` catches a misspelled hand edit.
  *
  * Only the top level. Links, attachments, comments and sync stay strict (TV-11).
+ *
+ * One unknown key is still rejected: `description`. See `rejectDescriptionKey`.
  */
 export const ItemFrontmatterSchema = ItemFrontmatterShape.passthrough().superRefine(
   (v, ctx) => {
+    rejectDescriptionKey(v, ctx);
     if (v.type === "epic" && v.parent) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -231,8 +255,11 @@ const ProjectShape = z
     updated: isoDateTime,
   });
 
-/** Passthrough for the same reason as `ItemFrontmatterSchema`. */
-export const ProjectSchema = ProjectShape.passthrough();
+/**
+ * Passthrough for the same reason as `ItemFrontmatterSchema`, and rejects a
+ * `description` key for the same reason too.
+ */
+export const ProjectSchema = ProjectShape.passthrough().superRefine(rejectDescriptionKey);
 
 export type ProjectFrontmatter = z.infer<typeof ProjectShape>;
 export type Project = ProjectFrontmatter & { description: string };
@@ -242,15 +269,15 @@ export type Project = ProjectFrontmatter & { description: string };
  * they appear. Not errors: a newer build may have written them, and they are
  * kept on save. Reported by `vault doctor`, so that a misspelled field in a
  * hand-edited file, which would otherwise be kept and silently ignored, gets
- * noticed. Pass the parsed frontmatter, not an `Item`: on an item,
- * `description` is the body.
+ * noticed. Never lists `description`: in frontmatter that key is an error
+ * (`rejectDescriptionKey`), and on an `Item` or `Project` it is the body.
  */
 export function unknownFrontmatterKeys(
   kind: "item" | "project",
   data: Record<string, unknown>,
 ): string[] {
   const known = kind === "item" ? ItemFrontmatterShape.shape : ProjectShape.shape;
-  return Object.keys(data).filter((k) => !Object.hasOwn(known, k));
+  return Object.keys(data).filter((k) => k !== "description" && !Object.hasOwn(known, k));
 }
 
 /**

@@ -45,7 +45,10 @@ matters when two processes might be writing at once.
 ## Item file
 
 YAML frontmatter, then the markdown body. The body **is** the description — no
-separate `description` key.
+separate `description` key. A file that has one is rejected, the same as any
+other invalid file: it is reported in `load().errors` and left out of the
+index, so no build rewrites it and the key's text is never dropped. The same
+holds for a project file.
 
 ```markdown
 ---
@@ -588,6 +591,10 @@ The cost of keeping unknown fields is that a misspelled field in a hand-edited
 file (`dueDtae:`) is kept and ignored, not rejected. `load()` returns such keys
 as `notices`, and `vault doctor` lists them under a notice heading without
 failing, because the same line is correct when a newer build wrote it.
+
+One key is never kept: `description`. The body is the description, so the key
+would be overwritten on load and dropped on the next save. A file with it is
+an error, not a notice (see **Item file**).
 
 Three limits:
 
