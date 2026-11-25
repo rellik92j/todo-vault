@@ -1087,6 +1087,10 @@ export class Vault {
     await fs.copyFile(absSource, destPath);
     // Stored POSIX-style so the vault survives being opened on another OS.
     const relative = toPosixPath(path.relative(this.root, destPath));
+    // Re-attaching a file of the same name replaces its entry. Spread the old
+    // one first so a field a newer build put on it survives (TV-11); every
+    // known field is set below, so none of the old values leak through.
+    const replaced = existing.attachments.find((a) => a.path === relative);
 
     return this.persist(
       {
@@ -1094,6 +1098,7 @@ export class Vault {
         attachments: [
           ...existing.attachments.filter((a) => a.path !== relative),
           {
+            ...replaced,
             path: relative,
             title: opts.title ?? path.basename(absSource),
             bytes: stat.size,
@@ -1106,13 +1111,20 @@ export class Vault {
     );
   }
 
-  /** Records the outcome of a Jira push so drift detection has a baseline. */
+  /**
+   * Records the outcome of a Jira push so drift detection has a baseline.
+   *
+   * Every known sync field is set here, so a `jiraId` not passed is dropped as
+   * before. The stored block is spread first only so that a field a newer build
+   * added to it survives an older build's push (TV-11).
+   */
   async markPushed(key: string, jiraKey: string, jiraId?: string): Promise<Item> {
     const existing = this.getItem(key);
     return this.persist(
       {
         ...existing,
         sync: {
+          ...existing.sync,
           jiraKey,
           jiraId,
           lastPushedAt: nowIso(),

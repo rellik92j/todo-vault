@@ -37,57 +37,77 @@ export const itemKey = z
   .string()
   .regex(ITEM_KEY_RE, "Item keys look like ACME-42");
 
-export const LinkSchema = z
-  .object({
-    type: z.enum(LINK_TYPES).describe("What kind of thing is on the other end"),
-    target: z
-      .string()
-      .min(1)
-      .describe(
-        "URL, absolute or vault-relative file path, another item key, or an outlook: deep link",
-      ),
-    label: z.string().max(200).optional().describe("Human label shown in the UI"),
-    addedAt: isoDateTime.optional(),
-  })
-  .strict();
+/*
+ * Each nested block is declared as a `...Shape`, which is its field list and
+ * gives the exported types, and a passthrough `...Schema`, which is what a file
+ * on disk is checked against. Same reason as `ItemFrontmatterShape` below: a
+ * newer build may add a field inside one link, and an older build must keep it
+ * rather than drop the whole item (TV-11), while code that misspells a field
+ * must still fail to compile.
+ */
 
-export const AttachmentSchema = z
-  .object({
-    path: z
-      .string()
-      .min(1)
-      .describe("Path relative to the vault root, under attachments/<key>/"),
-    title: z.string().max(200).optional(),
-    bytes: z.number().int().nonnegative().optional(),
-    addedAt: isoDateTime.optional(),
-  })
-  .strict();
+const LinkShape = z.object({
+  type: z.enum(LINK_TYPES).describe("What kind of thing is on the other end"),
+  target: z
+    .string()
+    .min(1)
+    .describe(
+      "URL, absolute or vault-relative file path, another item key, or an outlook: deep link",
+    ),
+  label: z.string().max(200).optional().describe("Human label shown in the UI"),
+  addedAt: isoDateTime.optional(),
+});
 
-export const CommentSchema = z
-  .object({
-    author: z.string().min(1).default("me"),
-    at: isoDateTime,
-    body: z.string().min(1),
-  })
-  .strict();
+export const LinkSchema = LinkShape.passthrough();
+
+const AttachmentShape = z.object({
+  path: z
+    .string()
+    .min(1)
+    .describe("Path relative to the vault root, under attachments/<key>/"),
+  title: z.string().max(200).optional(),
+  bytes: z.number().int().nonnegative().optional(),
+  addedAt: isoDateTime.optional(),
+});
+
+export const AttachmentSchema = AttachmentShape.passthrough();
+
+const CommentShape = z.object({
+  author: z.string().min(1).default("me"),
+  at: isoDateTime,
+  body: z.string().min(1),
+});
+
+export const CommentSchema = CommentShape.passthrough();
 
 /**
  * Everything the vault knows about this item's relationship to a Jira instance.
  * `key` (ours) and `sync.jiraKey` (theirs) are never the same field — an item
  * can exist locally forever without a Jira counterpart.
  */
-export const SyncSchema = z
-  .object({
-    jiraKey: z.string().optional(),
-    jiraId: z.string().optional(),
-    lastPushedAt: isoDateTime.optional(),
-    contentHash: z
-      .string()
-      .optional()
-      .describe("Hash of the pushed content, used to detect local drift since the push"),
-    state: z.enum(SYNC_STATES).default("never"),
-  })
-  .strict();
+const SyncShape = z.object({
+  jiraKey: z.string().optional(),
+  jiraId: z.string().optional(),
+  lastPushedAt: isoDateTime.optional(),
+  contentHash: z
+    .string()
+    .optional()
+    .describe("Hash of the pushed content, used to detect local drift since the push"),
+  state: z.enum(SYNC_STATES).default("never"),
+});
+
+export const SyncSchema = SyncShape.passthrough();
+
+/**
+ * The keys each nested block knows, for `unknownFrontmatterKeys`. Links,
+ * attachments and comments are arrays of these; sync is one.
+ */
+const NESTED_SHAPES = {
+  links: LinkShape.shape,
+  attachments: AttachmentShape.shape,
+  comments: CommentShape.shape,
+  sync: SyncShape.shape,
+} as const;
 
 /**
  * A frontmatter key named `description` is an error, not a field kept for a
@@ -161,10 +181,10 @@ const ItemFrontmatterShape = z
       .describe(
         "Manual sort position within the project. Sparse by design — gaps of ~1000 — so a drag rewrites one file. Local only.",
       ),
-    links: z.array(LinkSchema).default([]),
-    attachments: z.array(AttachmentSchema).default([]),
-    comments: z.array(CommentSchema).default([]),
-    sync: SyncSchema.default({ state: "never" }),
+    links: z.array(LinkShape).default([]),
+    attachments: z.array(AttachmentShape).default([]),
+    comments: z.array(CommentShape).default([]),
+    sync: SyncShape.default({ state: "never" }),
     created: isoDateTime,
     updated: isoDateTime,
   });
@@ -179,12 +199,21 @@ const ItemFrontmatterShape = z
  * the known ones, so the field survives a save. `unknownFrontmatterKeys`
  * names them, which is how `vault doctor` catches a misspelled hand edit.
  *
- * Only the top level. Links, attachments, comments and sync stay strict (TV-11).
+ * The same holds one level down (TV-11): the nested blocks are swapped for
+ * their passthrough schemas here, so a field inside a link, attachment,
+ * comment or sync block is kept too. The shape keeps the plain field lists, so
+ * the exported type does not gain index signatures there either.
  *
  * One unknown key is still rejected: `description`. See `rejectDescriptionKey`.
  */
-export const ItemFrontmatterSchema = ItemFrontmatterShape.passthrough().superRefine(
-  (v, ctx) => {
+export const ItemFrontmatterSchema = ItemFrontmatterShape.extend({
+  links: z.array(LinkSchema).default([]),
+  attachments: z.array(AttachmentSchema).default([]),
+  comments: z.array(CommentSchema).default([]),
+  sync: SyncSchema.default({ state: "never" }),
+})
+  .passthrough()
+  .superRefine((v, ctx) => {
     rejectDescriptionKey(v, ctx);
     if (v.type === "epic" && v.parent) {
       ctx.addIssue({
@@ -221,8 +250,7 @@ export const ItemFrontmatterSchema = ItemFrontmatterShape.passthrough().superRef
         message: `Key ${v.key} does not belong to project ${v.project}`,
       });
     }
-  },
-);
+  });
 
 export type ItemFrontmatter = z.infer<typeof ItemFrontmatterShape>;
 
@@ -271,13 +299,34 @@ export type Project = ProjectFrontmatter & { description: string };
  * hand-edited file, which would otherwise be kept and silently ignored, gets
  * noticed. Never lists `description`: in frontmatter that key is an error
  * (`rejectDescriptionKey`), and on an `Item` or `Project` it is the body.
+ *
+ * For an item, keys inside a link, attachment, comment or sync block are
+ * checked too and named by their path, as zod names them in an error:
+ * `links.0.pinned`, `sync.jiraUrl`. They come after the top-level ones.
  */
 export function unknownFrontmatterKeys(
   kind: "item" | "project",
   data: Record<string, unknown>,
 ): string[] {
   const known = kind === "item" ? ItemFrontmatterShape.shape : ProjectShape.shape;
-  return Object.keys(data).filter((k) => k !== "description" && !Object.hasOwn(known, k));
+  const unknown = Object.keys(data).filter(
+    (k) => k !== "description" && !Object.hasOwn(known, k),
+  );
+  if (kind === "project") return unknown;
+
+  const unknownIn = (prefix: string, value: unknown, shape: object): void => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    for (const k of Object.keys(value)) {
+      if (!Object.hasOwn(shape, k)) unknown.push(`${prefix}.${k}`);
+    }
+  };
+  for (const field of ["links", "attachments", "comments"] as const) {
+    const entries = data[field];
+    if (!Array.isArray(entries)) continue;
+    entries.forEach((entry, i) => unknownIn(`${field}.${i}`, entry, NESTED_SHAPES[field]));
+  }
+  unknownIn("sync", data.sync, NESTED_SHAPES.sync);
+  return unknown;
 }
 
 /**
@@ -339,7 +388,9 @@ export const CreateItemInput = z
     dueDate: isoDate.optional(),
     estimate: z.number().nonnegative().optional(),
     cadence: z.enum(CADENCES).optional(),
-    links: z.array(LinkSchema).optional(),
+    // Strict, unlike a link read from disk. A caller is not a newer build with
+    // a field to carry, so an unknown key here is a mistake to report.
+    links: z.array(LinkShape.strict()).optional(),
   })
   .strict();
 

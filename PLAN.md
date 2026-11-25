@@ -5161,3 +5161,72 @@ and a `description:` key is a problem with exit code 1. Not verified: the
 desktop app and an MCP server were not run against such a vault. Both go
 through the same `load()` and write paths, and nothing in the app shows
 notices.
+
+## A field inside a link, attachment, comment or sync block survives too ✅ built
+
+The section above stopped at the top level. `LinkSchema`, `AttachmentSchema`,
+`CommentSchema` and `SyncSchema` were still strict, so a newer build adding
+`pinned: true` to one link made every older build drop the whole item from
+every view, which is the failure the top-level change fixed one level up. The
+test that recorded that gap is now the first of the new ones. TV-11 in the
+agent vault.
+
+**Same split, one level down.** Each block is now a plain field list
+(`LinkShape` and so on) and a passthrough schema built from it.
+`ItemFrontmatterShape` uses the field lists, so `ItemFrontmatter` and every
+`Item["links"][number]` stay without an index signature, and
+`ItemFrontmatterSchema` swaps in the passthrough schemas with `.extend()`
+before its own `.passthrough()`. That restates the four nested fields once,
+which is cheaper than a second copy of the item field list. A throwaway
+`@ts-expect-error` probe confirmed that `link.lable`, `sync.jiraUrl`,
+`attachment.pinned` and `comment.edited` still fail to compile.
+
+**Accepting the field was half of it.** Two writes built a block from nothing
+and would have dropped a nested field even once the parse kept it.
+`markPushed` wrote a fresh `sync` object, and `addAttachment` replaced a
+same-named attachment with a fresh entry. Both now spread the stored object
+first and then set every known field, so a known field behaves exactly as
+before (a `jiraId` the caller does not pass is still dropped, which
+`JiraIssueUpdate.jiraId` relies on) and only the unknown ones survive. The
+others already spread or append: `rekeyItems` maps each link and attachment
+with a spread, `addLink` and `addComment` append a new entry and leave the
+rest alone, `addLink` on an existing type and target returns the item
+untouched, and drift marking spreads `sync`. `removeLink` drops the whole
+entry on purpose. A relabel is a remove and an add, so the relabelled link
+loses its unknown fields; there is no relabel-in-place to fix that with, and
+adding one is its own change.
+
+**Keeping can mean keeping something stale.** A newer field that describes
+the rest of its block, say a checksum on an attachment or a Jira URL in sync,
+outlives the values it describes when an older build re-attaches the file or
+restamps the push. Dropping it instead would lose fields that do not go stale
+(`pinned`, a note on a link), and the Done-when list asked for keeping.
+SCHEMA.md now tells whoever designs a nested field to make outliving its
+block safe.
+
+**Input stays strict.** `CreateItemInput.links` uses `LinkShape.strict()`. A
+caller is not a newer build with a field to carry, so an unknown key in a
+link passed to `createItem` is still a mistake and still rejected. As at the
+top level, a key cast onto a link in code is now written to disk rather than
+rejected by `writeAndIndex`.
+
+**`vault doctor` reports nested keys.** A `lable:` inside a link is the same
+hand-edit typo as `dueDtae:` and is just as silently ignored, so
+`unknownFrontmatterKeys` now walks an item's links, attachments, comments and
+sync and names each unknown key by its zod-style path (`links.0.lable`,
+`sync.jiraUrl`), after the top-level ones, on the same notice line. Shapes the
+schema would reject are left to the schema. A project has no nested blocks.
+
+**Tests.** `unknown-fields.test.ts` has 23. An item with an unknown field in
+each block (a url link, an item link, a copied attachment, a comment and a
+pushed sync block) loads, is listed and searchable, and opens fresh. Every
+field survives update, transition and bulk update; adding, re-adding and
+removing other links; a project rename, which rewrites the item link's target
+and the attachment's path; re-attaching the same file name; a new comment;
+and a second `markPushed`, which still drops a `jiraId` it is not given. A
+rank change does not drift the pushed item. Notices name the nested keys by
+path, and a link passed to `createItem` with an unknown key is still
+rejected. With either spread removed, its test fails. Not verified: the
+desktop app and an MCP server against such a vault, and what a pre-TV-11
+build does with a vault this one has written, which is reject the item, as
+SCHEMA.md says.
