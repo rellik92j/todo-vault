@@ -577,20 +577,45 @@ same two files.
 
 The desktop app and the MCP servers routinely run different builds against one
 vault, so a new field is on disk before every reader knows it. Item and project
-frontmatter is therefore passthrough, not strict, at the top level. A build
-that meets a field it does not know still loads the file, lists it, and keeps
-the field on the parsed object; every write spreads the stored item, and
-`serializeFrontmatter` writes keys outside the order list after the known ones,
-so an update, a transition, a re-key or a trash-and-restore writes the field
-back unchanged. Jira never sees it: `pushableFields` is an allowlist, so the
-field is not pushed and cannot make a pushed item read as drifted. The
-exported `ItemFrontmatter` and `ProjectFrontmatter` types are the known field
-list only, so code that misspells a field still fails to compile.
+frontmatter is therefore passthrough, not strict. A build that meets a field
+it does not know still loads the file, lists it, and keeps the field on the
+parsed object; every write spreads the stored item, and `serializeFrontmatter`
+writes keys outside the order list after the known ones, so an update, a
+transition, a re-key or a trash-and-restore writes the field back unchanged.
+Jira never sees it: `pushableFields` is an allowlist, so the field is not
+pushed and cannot make a pushed item read as drifted. The exported
+`ItemFrontmatter` and `ProjectFrontmatter` types are the known field list
+only, so code that misspells a field still fails to compile.
+
+The same holds one level down. `LinkSchema`, `AttachmentSchema`,
+`CommentSchema` and `SyncSchema` are passthrough too, so a field a newer build
+adds inside one link, attachment, comment or the sync block is kept, and the
+types of those blocks are still their known field lists. The write paths that
+rebuild one of those blocks keep it as well:
+
+- `markPushed` spreads the stored `sync` block before setting its known
+  fields, so an unknown sync field survives a push. Every known field is still
+  set, so a `jiraId` the caller does not pass is dropped as before.
+- `addAttachment` re-attaching a file of the same name spreads the entry it
+  replaces before setting path, title, size and time.
+- A re-key rewrites link targets and attachment paths by spreading each entry.
+- `addLink` and `addComment` append a new entry and leave the others as they
+  are. A link that already exists is not rebuilt: `addLink` with the same type
+  and target returns the item unchanged.
+- `removeLink` drops the whole entry, unknown fields included, because removing
+  it was the request. There is no relabel in place; relabelling a link is a
+  remove and an add, so the new entry starts without the old one's unknown
+  fields.
+
+Input is not a file from a newer build. A link passed to `createItem` is still
+checked strictly, so an unknown key there is rejected as a mistake.
 
 The cost of keeping unknown fields is that a misspelled field in a hand-edited
-file (`dueDtae:`) is kept and ignored, not rejected. `load()` returns such keys
-as `notices`, and `vault doctor` lists them under a notice heading without
-failing, because the same line is correct when a newer build wrote it.
+file (`dueDtae:`, or `lable:` inside a link) is kept and ignored, not rejected.
+`load()` returns such keys as `notices`, and `vault doctor` lists them under a
+notice heading without failing, because the same line is correct when a newer
+build wrote it. A key inside a nested block is named by its path, as zod would
+name it in an error: `links.0.lable`, `sync.jiraUrl`.
 
 One key is never kept: `description`. The body is the description, so the key
 would be overwritten on load and dropped on the next save. A file with it is
@@ -598,14 +623,16 @@ an error, not a notice (see **Item file**).
 
 Three limits:
 
-- **Only builds from this change onward.** Builds older than it rejected any
-  unknown field, and they still do. A new field is safe once every app and MCP
-  server that opens the vault has been rebuilt at least once past it.
-- **Only the top level.** `LinkSchema`, `AttachmentSchema`, `CommentSchema` and
-  `SyncSchema` are still strict, so a field added inside one link still makes
-  an older build drop the whole item.
+- **Only builds from these changes onward.** Builds before TV-3 rejected any
+  unknown field, and builds before TV-11 rejected any unknown field inside a
+  link, attachment, comment or sync block; they still do. A new field is safe
+  once every app and MCP server that opens the vault has been rebuilt at least
+  once past the change for its level.
 - **Kept, not understood.** An older build carries a newer field without acting
   on it. A field holding item keys is not rewritten when a re-key changes them,
-  and a rule the field implies is not enforced. Design new fields so that being
-  ignored is safe, and an unknown enum value is still a parse failure (see
-  **Links**).
+  and a rule the field implies is not enforced. A field that describes the rest
+  of its block goes stale when an older build rewrites that block: a checksum
+  on an attachment is kept when the file is re-attached, and a remote URL in
+  `sync` is kept when `markPushed` restamps it. Design new fields so that being
+  ignored, and outliving the values they describe, is safe. An unknown enum
+  value is still a parse failure (see **Links**).

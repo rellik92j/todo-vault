@@ -7,8 +7,9 @@
  * older build dropped such a file from every view and refused every write to
  * it. Now a top-level field this build does not know is kept: the file loads,
  * the field rides along on every write, and `load().notices` names it for
- * `vault doctor`. Fields nested inside a link, attachment, comment or sync
- * block are still strict (TV-11); one test here records that gap. A key named
+ * `vault doctor`. Since TV-11 the same holds for a field nested inside a link,
+ * attachment, comment or sync block, including through the write path that
+ * rebuilds that block. A key named
  * `description` is the exception and is still rejected, because the body is
  * the description and a save would drop the key's text.
  *
@@ -318,12 +319,10 @@ test("vault doctor lists unknown keys as notices, exits 0, and lists a descripti
   assert.doesNotMatch(problems.stdout.split("notice(s)")[1] ?? "", /description/);
 });
 
-test("gap, TV-11: an unknown field nested inside a link still drops the whole item", async () => {
-  // Only the top level is passthrough. LinkSchema, AttachmentSchema,
-  // CommentSchema and SyncSchema are still strict, so a field a newer build
-  // adds to one link makes this build reject the item and leave it out of
-  // every view, as every unknown field did before TV-3. When TV-11 lands,
-  // this test flips.
+test("an unknown field nested inside a link loads, and the item is listed (TV-11)", async () => {
+  // Until TV-11 this was the recorded gap: the nested schemas were strict, so
+  // a field a newer build added to one link made this build reject the whole
+  // item. Same file, same hand edit, now kept.
   const vault = await tmpVault();
   const item = await vault.createItem({
     project: "ACME",
@@ -332,10 +331,209 @@ test("gap, TV-11: an unknown field nested inside a link still drops the whole it
   });
   await addFrontmatterLine(vault.itemPath(item.key), /^ {4}label: spec$/m, "    pinned: true");
 
+  const { errors, notices } = await vault.load();
+  assert.deepEqual(errors, []);
+  assert.equal(vault.hasItem(item.key), true);
+  assert.equal(extra(vault.getItem(item.key).links[0], "pinned"), true);
+  assert.deepEqual(notices, [
+    `${path.join("items", "ACME-1.md")}: field(s) this build does not know: links.0.pinned`,
+  ]);
+});
+
+/**
+ * ACME-1 written by "a newer build" that added a field inside each of its
+ * nested blocks: a url link and an item link (to ACME-2), a copied attachment,
+ * a comment, and a pushed sync block. Rewritten through the serializer rather
+ * than by line edits, which is what a newer build's own save would produce.
+ */
+async function vaultWithNewerNestedFields() {
+  const vault = await tmpVault();
+  const other = await vault.createItem({ project: "ACME", summary: "Link target" });
+  // Created second so the first `links` entry is the url link either way.
+  const item = await vault.createItem({
+    project: "ACME",
+    summary: "Nested fields from a newer build",
+    links: [
+      { type: "url", target: "https://example.com/spec", label: "spec" },
+      { type: "item", target: other.key, label: "relates" },
+    ],
+  });
+  const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-unknown-src-"));
+  const source = path.join(srcDir, "notes.txt");
+  await fs.writeFile(source, "first", "utf8");
+  await vault.addAttachment(item.key, source);
+  await vault.addComment(item.key, "First comment", "tester");
+  await vault.markPushed(item.key, "ENG-1", "10001");
+
+  const file = vault.itemPath(item.key);
+  const { data, body } = parseFrontmatter(await fs.readFile(file, "utf8"));
+  const links = data.links as Array<Record<string, unknown>>;
+  links[0].pinned = true;
+  links[1].role = "blocks";
+  (data.attachments as Array<Record<string, unknown>>)[0].checksum = "abc123";
+  (data.comments as Array<Record<string, unknown>>)[0].editedAt = "2026-11-24T10:00:00.000Z";
+  (data.sync as Record<string, unknown>).jiraUrl = "https://jira.example.com/browse/ENG-1";
+  await fs.writeFile(file, serializeFrontmatter(data, body, FRONTMATTER_ORDER), "utf8");
+
+  return { vault, item, other, file, source };
+}
+
+/** The four nested extras as they stand in the file on disk. */
+async function nestedExtrasOn(file: string) {
+  const front = await frontmatterOf(file);
+  const links = front.links as Array<Record<string, unknown>>;
+  return {
+    pinned: links.find((l) => l.type === "url")?.pinned,
+    role: links.find((l) => l.type === "item")?.role,
+    checksum: (front.attachments as Array<Record<string, unknown>>)[0].checksum,
+    editedAt: (front.comments as Array<Record<string, unknown>>)[0].editedAt,
+    jiraUrl: (front.sync as Record<string, unknown>).jiraUrl,
+  };
+}
+
+const ALL_NESTED_EXTRAS = {
+  pinned: true,
+  role: "blocks",
+  checksum: "abc123",
+  editedAt: "2026-11-24T10:00:00.000Z",
+  jiraUrl: "https://jira.example.com/browse/ENG-1",
+};
+
+test("an item with an unknown field in each nested block loads, is listed, and keeps the fields", async () => {
+  const { vault, item } = await vaultWithNewerNestedFields();
+
   const { errors } = await vault.load();
-  assert.equal(vault.hasItem(item.key), false);
-  assert.equal(errors.length, 1);
-  assert.match(errors[0], /links\.0: Unrecognized key\(s\) in object: 'pinned'/);
+  assert.deepEqual(errors, []);
+  assert.ok(vault.listItems({ project: "ACME" }).items.some((i) => i.key === item.key));
+  assert.deepEqual(
+    vault.listItems({ text: "newer build" }).items.map((i) => i.key),
+    [item.key],
+  );
+
+  const loaded = vault.getItem(item.key);
+  assert.equal(extra(loaded.links[0], "pinned"), true);
+  assert.equal(extra(loaded.links[1], "role"), "blocks");
+  assert.equal(extra(loaded.attachments[0], "checksum"), "abc123");
+  assert.equal(extra(loaded.comments[0], "editedAt"), "2026-11-24T10:00:00.000Z");
+  assert.equal(extra(loaded.sync, "jiraUrl"), "https://jira.example.com/browse/ENG-1");
+
+  // A fresh open is what a newly started MCP server does.
+  const reopened = await Vault.open(vault.root);
+  assert.equal(reopened.hasItem(item.key), true);
+});
+
+test("an update and a transition write every nested unknown field back", async () => {
+  const { vault, item, file } = await vaultWithNewerNestedFields();
+  await vault.load();
+
+  await vault.updateItem(item.key, { summary: "Edited by an older build", dueDate: "2026-12-01" });
+  await vault.transition(item.key, "in_progress");
+  await vault.updateItems([item.key], { priority: "high" });
+
+  assert.deepEqual(await nestedExtrasOn(file), ALL_NESTED_EXTRAS);
+  // The summary edit drifted the pushed item, which rewrites sync by spreading it.
+  assert.equal(vault.getItem(item.key).sync.state, "drifted");
+});
+
+test("a link's unknown field survives adding, re-adding and removing other links, and a re-key", async () => {
+  const { vault, item, other, file } = await vaultWithNewerNestedFields();
+  await vault.load();
+
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/other" });
+  // A duplicate (same type and target) is a no-op, so it cannot rebuild the entry.
+  await vault.addLink(item.key, { type: "url", target: "https://example.com/spec", label: "new" });
+  await vault.removeLink(item.key, "https://example.com/other", "url");
+  assert.deepEqual(await nestedExtrasOn(file), ALL_NESTED_EXTRAS);
+
+  // Renaming the project rewrites the item link's target and the attachment's
+  // path, by spreading each entry.
+  await vault.renameProject("ACME", "ACMX");
+  const moved = vault.itemPath(item.key.replace("ACME", "ACMX"));
+  const front = await frontmatterOf(moved);
+  const itemLink = (front.links as Array<Record<string, unknown>>).find((l) => l.type === "item");
+  assert.equal(itemLink?.target, other.key.replace("ACME", "ACMX"));
+  assert.equal(itemLink?.role, "blocks");
+  const attachment = (front.attachments as Array<Record<string, unknown>>)[0];
+  assert.match(attachment.path as string, /^attachments\/ACMX-2\//);
+  assert.equal(attachment.checksum, "abc123");
+  assert.deepEqual(await nestedExtrasOn(moved), ALL_NESTED_EXTRAS);
+});
+
+test("re-attaching a file of the same name keeps the old entry's unknown field", async () => {
+  const { vault, item, file, source } = await vaultWithNewerNestedFields();
+  await vault.load();
+
+  await fs.writeFile(source, "second, longer", "utf8");
+  const reattached = await vault.addAttachment(item.key, source, { title: "Notes v2" });
+  assert.equal(reattached.attachments.length, 1);
+  assert.equal(reattached.attachments[0].title, "Notes v2");
+  assert.equal(reattached.attachments[0].bytes, "second, longer".length, "known fields are fresh");
+  assert.deepEqual(await nestedExtrasOn(file), ALL_NESTED_EXTRAS);
+});
+
+test("adding a comment keeps an earlier comment's unknown field", async () => {
+  const { vault, item, file } = await vaultWithNewerNestedFields();
+  await vault.load();
+
+  const commented = await vault.addComment(item.key, "Second comment", "tester");
+  assert.equal(commented.comments.length, 2);
+  assert.deepEqual(await nestedExtrasOn(file), ALL_NESTED_EXTRAS);
+});
+
+test("markPushed keeps sync's unknown field, and still drops a jiraId it is not given", async () => {
+  const { vault, item, file } = await vaultWithNewerNestedFields();
+  await vault.load();
+
+  const repushed = await vault.markPushed(item.key, "ENG-2");
+  assert.equal(repushed.sync.jiraKey, "ENG-2");
+  assert.equal(repushed.sync.state, "pushed");
+  assert.equal(repushed.sync.jiraId, undefined, "the known fields behave as before");
+  assert.deepEqual(await nestedExtrasOn(file), ALL_NESTED_EXTRAS);
+
+  // pushableFields flattens links to type, target and label, so an unknown
+  // field inside one never moves the hash.
+  await vault.updateItem(item.key, { rank: 5000 });
+  assert.equal(vault.getItem(item.key).sync.state, "pushed");
+});
+
+test("load() names nested unknown keys by path", async () => {
+  const { vault } = await vaultWithNewerNestedFields();
+  const { notices } = await vault.load();
+  assert.deepEqual(notices, [
+    `${path.join("items", "ACME-2.md")}: field(s) this build does not know: ` +
+      "links.0.pinned, links.1.role, attachments.0.checksum, comments.0.editedAt, sync.jiraUrl",
+  ]);
+});
+
+test("unknownFrontmatterKeys checks nested blocks of an item, and only of an item", () => {
+  assert.deepEqual(
+    unknownFrontmatterKeys("item", {
+      zeta: 1,
+      links: [{ type: "url", target: "x" }, { type: "url", target: "y", lable: "typo" }],
+      attachments: [{ path: "a", toString: "x" }],
+      comments: [{ author: "me", at: "t", body: "b" }],
+      sync: { state: "never", jiraUrl: "u" },
+    }),
+    ["zeta", "links.1.lable", "attachments.0.toString", "sync.jiraUrl"],
+  );
+  // Shapes this build would reject are left to the schema, not reported here.
+  assert.deepEqual(unknownFrontmatterKeys("item", { links: "nope", sync: [1] }), []);
+  // A project has no nested blocks; a `links` key there is itself the unknown key.
+  assert.deepEqual(unknownFrontmatterKeys("project", { links: [{ x: 1 }] }), ["links"]);
+});
+
+test("a link passed to createItem is still checked strictly", async () => {
+  // Input from a caller is not a file from a newer build, so an unknown key
+  // there is a mistake and is rejected, as before TV-11.
+  const vault = await tmpVault();
+  await assert.rejects(
+    vault.createItem({
+      project: "ACME",
+      summary: "x",
+      links: [{ type: "url", target: "https://example.com", pinned: true }],
+    }),
+    /Unrecognized key\(s\) in object: 'pinned'/,
+  );
 });
 
 test("the item serializer keeps fields it does not know, after the known ones", () => {
