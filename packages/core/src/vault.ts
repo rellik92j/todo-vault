@@ -25,6 +25,7 @@ import {
   TRANSITIONS,
   UpdateItemInput,
   UpdateProjectInput,
+  unknownFrontmatterKeys,
   type AgendaScope,
   type Cadence,
   type Item,
@@ -371,8 +372,17 @@ export class Vault {
    * at the end means there is no window in which the index is wrong: it is the
    * old contents, then the new ones.
    */
-  async load(): Promise<{ items: number; projects: number; errors: string[] }> {
+  async load(): Promise<{
+    items: number;
+    projects: number;
+    errors: string[];
+    notices: string[];
+  }> {
     const errors: string[] = [];
+    // Loaded, but carrying frontmatter keys this build does not know. Kept and
+    // written back (see ItemFrontmatterSchema), so not errors. `vault doctor`
+    // lists them so that a typo in a hand edit is not ignored forever.
+    const notices: string[] = [];
     const items = new Map<string, Item>();
     const projects = new Map<string, Project>();
 
@@ -399,6 +409,12 @@ export class Vault {
             const parsed = ItemFrontmatterSchema.parse(data);
             items.set(parsed.key, { ...parsed, description: body });
           }
+          const unknown = unknownFrontmatterKeys(isProject ? "project" : "item", data);
+          if (unknown.length) {
+            notices.push(
+              `${path.relative(this.root, filePath)}: field(s) this build does not know: ${unknown.join(", ")}`,
+            );
+          }
         } catch (err) {
           errors.push(`${path.relative(this.root, filePath)}: ${formatZodError(err)}`);
         }
@@ -408,7 +424,7 @@ export class Vault {
     this.items = items;
     this.projects = projects;
     this.loaded = true;
-    return { items: this.items.size, projects: this.projects.size, errors };
+    return { items: this.items.size, projects: this.projects.size, errors, notices };
   }
 
   private assertLoaded(): void {

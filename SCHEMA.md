@@ -45,7 +45,10 @@ matters when two processes might be writing at once.
 ## Item file
 
 YAML frontmatter, then the markdown body. The body **is** the description — no
-separate `description` key.
+separate `description` key. A file that has one is rejected, the same as any
+other invalid file: it is reported in `load().errors` and left out of the
+index, so no build rewrites it and the key's text is never dropped. The same
+holds for a project file.
 
 ```markdown
 ---
@@ -151,10 +154,10 @@ drag carries no dialog in which to have chosen otherwise. The file picker's
 "Copy in" button *was* an explicit choice, so there the refusal stands.
 
 **There is no `onedrive` link type, on purpose.** `LinkSchema.type` is a zod
-enum, and while unknown *fields* survive a round-trip through an older build,
-unknown *enum values* do not: an older app opening a vault that contains one
-fails to parse the whole item, which then lands in `snapshot.errors` and
-disappears from every view. Running the desktop app and a globally-installed
+enum, and while an unknown top-level *field* survives a round-trip through an
+older build (see **Extending it**), an unknown *enum value* does not: an older
+app opening a vault that contains one fails to parse the whole item, which then
+lands in `snapshot.errors` and disappears from every view. Running the desktop app and a globally-installed
 MCP server at different versions is the normal state, so that is a live
 data-visibility risk rather than a theoretical one. OneDrive links are stored as
 `type: url` and recognised by their target — the app derives the "onedrive"
@@ -567,6 +570,42 @@ stale-lock recovery than they save.
 
 ## Extending it
 
-Add the field to `ItemFrontmatterSchema` and to `FRONTMATTER_ORDER` in
-`src/schema.ts`. Unknown fields already on disk are preserved on write, so an
-older build of the app will not destroy data written by a newer one.
+Add an item field to the field list behind `ItemFrontmatterSchema` in
+`src/schema.ts`, and to `FRONTMATTER_ORDER` in `src/constants.ts`. A project
+field goes behind `ProjectSchema` and into `PROJECT_FRONTMATTER_ORDER`, in the
+same two files.
+
+The desktop app and the MCP servers routinely run different builds against one
+vault, so a new field is on disk before every reader knows it. Item and project
+frontmatter is therefore passthrough, not strict, at the top level. A build
+that meets a field it does not know still loads the file, lists it, and keeps
+the field on the parsed object; every write spreads the stored item, and
+`serializeFrontmatter` writes keys outside the order list after the known ones,
+so an update, a transition, a re-key or a trash-and-restore writes the field
+back unchanged. Jira never sees it: `pushableFields` is an allowlist, so the
+field is not pushed and cannot make a pushed item read as drifted. The
+exported `ItemFrontmatter` and `ProjectFrontmatter` types are the known field
+list only, so code that misspells a field still fails to compile.
+
+The cost of keeping unknown fields is that a misspelled field in a hand-edited
+file (`dueDtae:`) is kept and ignored, not rejected. `load()` returns such keys
+as `notices`, and `vault doctor` lists them under a notice heading without
+failing, because the same line is correct when a newer build wrote it.
+
+One key is never kept: `description`. The body is the description, so the key
+would be overwritten on load and dropped on the next save. A file with it is
+an error, not a notice (see **Item file**).
+
+Three limits:
+
+- **Only builds from this change onward.** Builds older than it rejected any
+  unknown field, and they still do. A new field is safe once every app and MCP
+  server that opens the vault has been rebuilt at least once past it.
+- **Only the top level.** `LinkSchema`, `AttachmentSchema`, `CommentSchema` and
+  `SyncSchema` are still strict, so a field added inside one link still makes
+  an older build drop the whole item.
+- **Kept, not understood.** An older build carries a newer field without acting
+  on it. A field holding item keys is not rewritten when a re-key changes them,
+  and a rule the field implies is not enforced. Design new fields so that being
+  ignored is safe, and an unknown enum value is still a parse failure (see
+  **Links**).

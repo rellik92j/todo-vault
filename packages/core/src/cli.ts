@@ -334,7 +334,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case "doctor": {
-      const { items, projects, errors } = await vault.load();
+      const { items, projects, errors, notices } = await vault.load();
       // load() does not read the pad (it is read from disk on demand), so a
       // broken note would otherwise pass doctor and only vanish from the list.
       const scratch = await vault.listScratch();
@@ -380,6 +380,15 @@ async function main(): Promise<void> {
         process.stdout.write(`\n${problems.length} problem(s):\n`);
         for (const p of problems) process.stdout.write(`  - ${p}\n`);
         process.exitCode = 1;
+      }
+      // Notices, not problems, and they leave the exit code alone: a newer
+      // build may have written these fields, and they are kept on save. Listed
+      // because a misspelled field in a hand edit looks exactly the same.
+      if (notices.length) {
+        process.stdout.write(
+          `\n${notices.length} notice(s) — fine if a newer build wrote them, a typo if you did:\n`,
+        );
+        for (const n of notices) process.stdout.write(`  - ${n}\n`);
       }
       return;
     }
