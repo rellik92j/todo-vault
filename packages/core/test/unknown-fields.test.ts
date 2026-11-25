@@ -3,10 +3,12 @@
  *
  * The desktop app and the MCP servers routinely run different builds of core
  * against one vault, so a field added in one build will be on disk before every
- * reader knows it. These tests pin down what a reader that does not know the
- * field does today. They assert the current behaviour, not the intended one:
- * TV-3 decides which of the two is to be kept, and whichever is chosen changes
- * these assertions in the same PR.
+ * reader knows it. Until TV-3, item and project frontmatter was strict, and an
+ * older build dropped such a file from every view and refused every write to
+ * it. Now a top-level field this build does not know is kept: the file loads,
+ * the field rides along on every write, and `load().notices` names it for
+ * `vault doctor`. Fields nested inside a link, attachment, comment or sync
+ * block are still strict (TV-11); the last test here records that gap.
  *
  * "A newer build" is simulated by writing an item with this build and then
  * adding a field to its frontmatter by hand, which is byte for byte what a
@@ -20,7 +22,8 @@ import test from "node:test";
 
 import { FRONTMATTER_ORDER } from "../src/constants.js";
 import { parseFrontmatter, serializeFrontmatter } from "../src/markdown.js";
-import { Vault, VaultError } from "../src/vault.js";
+import { unknownFrontmatterKeys } from "../src/schema.js";
+import { Vault } from "../src/vault.js";
 
 async function tmpVault(): Promise<Vault> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "vault-unknown-"));
@@ -38,129 +41,188 @@ async function addFrontmatterLine(file: string, after: RegExp, line: string): Pr
   return next;
 }
 
+/** The parsed frontmatter of a file on disk, as the next reader will see it. */
+async function frontmatterOf(file: string): Promise<Record<string, unknown>> {
+  return parseFrontmatter(await fs.readFile(file, "utf8")).data;
+}
+
+/** A field the exported types deliberately do not know, read off a loaded object. */
+function extra(obj: object, field: string): unknown {
+  return (obj as Record<string, unknown>)[field];
+}
+
 /** An item written by "a newer build": ACME-1 with `claimedBy`, ACME-2 untouched. */
 async function vaultWithNewerItem() {
   const vault = await tmpVault();
   const newer = await vault.createItem({ project: "ACME", summary: "Written by a newer build" });
   const plain = await vault.createItem({ project: "ACME", summary: "Nothing new here" });
   const file = vault.itemPath(newer.key);
-  const onDisk = await addFrontmatterLine(file, /^key: ACME-1$/m, "claimedBy: core-worker@x");
-  return { vault, newer, plain, file, onDisk };
+  await addFrontmatterLine(file, /^key: ACME-1$/m, "claimedBy: core-worker@x");
+  return { vault, newer, plain, file };
 }
 
-test("an item with an unknown top-level field is skipped by load(), not thrown", async () => {
+test("an item with an unknown top-level field loads, and the field is kept on it", async () => {
   const { vault, newer, plain } = await vaultWithNewerItem();
 
-  // load() catches the parse failure and reports it. It does not throw, so
-  // Vault.open, the MCP server's reload-before-every-call, and the desktop
-  // snapshot all carry on with the rest of the vault.
   const result = await vault.load();
-  assert.equal(result.items, 1, "only the item without the new field is indexed");
-  assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /ACME-1\.md/);
-  assert.match(result.errors[0], /Unrecognized key\(s\) in object: 'claimedBy'/);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.items, 2);
+  assert.equal(extra(vault.getItem(newer.key), "claimedBy"), "core-worker@x");
 
-  // The same is true of a fresh open, which is what a newly started MCP server does.
+  // A fresh open is what a newly started MCP server does.
   const reopened = await Vault.open(vault.root);
-  assert.equal(reopened.hasItem(newer.key), false);
+  assert.equal(reopened.hasItem(newer.key), true);
   assert.equal(reopened.hasItem(plain.key), true);
 });
 
-test("the skipped item is missing from every read path", async () => {
+test("the item is listed and searchable like any other", async () => {
   const { vault, newer, plain } = await vaultWithNewerItem();
   await vault.load();
 
   assert.deepEqual(
-    vault.listItems({ project: "ACME" }).items.map((i) => i.key),
-    [plain.key],
-    "listings (vault_list_items, the backlog, the board) do not show it",
+    vault
+      .listItems({ project: "ACME" })
+      .items.map((i) => i.key)
+      .sort(),
+    [newer.key, plain.key],
   );
-  assert.equal(vault.listItems({ text: "newer build" }).total, 0, "a text search does not find it");
-  assert.equal(vault.hasItem(newer.key), false);
-  assert.throws(
-    () => vault.getItem(newer.key),
-    (err: unknown) => err instanceof VaultError && /No item with key ACME-1/.test(err.message),
-    "vault_get_item and the detail panel report it as not existing",
+  assert.deepEqual(
+    vault.listItems({ text: "newer build" }).items.map((i) => i.key),
+    [newer.key],
   );
+  assert.equal(vault.getItem(newer.key).summary, "Written by a newer build");
 });
 
-test("an older build cannot save the item, so the file and its new field are left as they were", async () => {
-  const { vault, newer, file, onDisk } = await vaultWithNewerItem();
+test("every kind of save writes the unknown field back", async () => {
+  const { vault, newer, file } = await vaultWithNewerItem();
   await vault.load();
 
-  // Every write that names the key goes through getItem first and is refused.
-  const notFound = (err: unknown) =>
-    err instanceof VaultError && /No item with key ACME-1/.test(err.message);
-  await assert.rejects(vault.updateItem(newer.key, { summary: "Edited" }), notFound);
-  await assert.rejects(vault.transition(newer.key, "in_progress"), notFound);
-  await assert.rejects(vault.addComment(newer.key, "hello", "tester"), notFound);
-  await assert.rejects(
-    vault.addLink(newer.key, { type: "url", target: "https://example.com" }),
-    notFound,
-  );
-  await assert.rejects(vault.deleteItem(newer.key), notFound);
+  await vault.updateItem(newer.key, { summary: "Edited by an older build", dueDate: "2026-12-01" });
+  await vault.transition(newer.key, "in_progress");
+  await vault.addComment(newer.key, "hello", "tester");
+  await vault.addLink(newer.key, { type: "url", target: "https://example.com" });
+  await vault.updateItems([newer.key], { priority: "high" });
+  await vault.updateItem(newer.key, { dueDate: null });
 
-  // Nothing was written over it, so no data is lost — it is only invisible.
-  assert.equal(await fs.readFile(file, "utf8"), onDisk);
+  const front = await frontmatterOf(file);
+  assert.equal(front.claimedBy, "core-worker@x");
+  assert.equal(front.summary, "Edited by an older build");
+  assert.equal(front.status, "in_progress");
+  assert.equal(front.priority, "high");
+  assert.equal(front.dueDate, undefined, "clearing a known field leaves the unknown one alone");
+
+  // Known fields keep their order; the unknown one is written after them.
+  const keys = Object.keys(front);
+  assert.equal(keys.at(-1), "claimedBy");
+
+  // And the next reader still sees it.
+  await vault.load();
+  assert.equal(extra(vault.getItem(newer.key), "claimedBy"), "core-worker@x");
 });
 
-test("a new item does not take the skipped item's key or overwrite its file", async () => {
-  const { vault, file, onDisk } = await vaultWithNewerItem();
-  await vault.load();
-
-  const created = await vault.createItem({ project: "ACME", summary: "Created by the older build" });
-  assert.equal(created.key, "ACME-3", "the counter still knows ACME-1 was handed out");
-  assert.equal(await fs.readFile(file, "utf8"), onDisk);
-
-  // Even with the counter gone, the exclusive create refuses to replace the
-  // file on disk and moves past it.
-  await fs.writeFile(path.join(vault.root, ".counters.json"), "{}\n", "utf8");
-  await fs.rm(vault.itemPath("ACME-2"));
-  await fs.rm(vault.itemPath("ACME-3"));
-  await vault.load();
-  const afterReset = await vault.createItem({ project: "ACME", summary: "Counter was lost" });
-  assert.equal(afterReset.key, "ACME-2");
-  assert.equal(await fs.readFile(file, "utf8"), onDisk);
-});
-
-test("project-wide writes in an older build pass over the skipped item", async () => {
-  // Not the item's own save, but the writes that should have carried it along.
-  const { vault, file, onDisk } = await vaultWithNewerItem();
+test("re-keying, trashing and restoring carry the unknown field along", async () => {
+  const { vault } = await vaultWithNewerItem();
   await vault.createProject({ key: "OPS", name: "Operations" });
   await vault.load();
 
-  // A rename re-keys the items it can see. The skipped one keeps its old key
-  // and project, so it is left pointing at a project that no longer exists.
-  await vault.renameProject("ACME", "ACMX");
-  assert.equal(await fs.readFile(file, "utf8"), onDisk);
-  assert.match(onDisk, /^project: ACME$/m);
-  assert.equal(vault.listProjects().some((p) => p.key === "ACME"), false);
-  assert.equal(vault.hasItem("ACMX-1"), false);
-  assert.equal(vault.hasItem("ACMX-2"), true);
+  // deleteProject now counts the item, instead of orphaning it.
+  await assert.rejects(vault.deleteProject("ACME"), /still holds 2 item\(s\)/);
 
-  // Trashing a project without cascade is refused while it holds items, but
-  // the skipped item does not count, so a project that holds only it goes.
-  const opsFile = vault.itemPath("OPS-1");
-  const opsOnDisk = onDisk
-    .replace(/^key: ACME-1$/m, "key: OPS-1")
-    .replace(/^project: ACME$/m, "project: OPS");
-  await fs.writeFile(opsFile, opsOnDisk, "utf8");
-  await vault.load();
-  assert.equal(vault.hasItem("OPS-1"), false);
-  await vault.deleteProject("OPS");
-  assert.equal(vault.listProjects().some((p) => p.key === "OPS"), false);
-  assert.equal(await fs.readFile(opsFile, "utf8"), opsOnDisk, "the item is left behind, orphaned");
+  await vault.renameProject("ACME", "ACMX");
+  assert.equal(vault.hasItem("ACME-1"), false);
+  assert.equal(extra(vault.getItem("ACMX-1"), "claimedBy"), "core-worker@x");
+  assert.equal((await frontmatterOf(vault.itemPath("ACMX-1"))).claimedBy, "core-worker@x");
+
+  const moved = await vault.moveItemsToProject("ACMX-1", "OPS");
+  const opsKey = moved.rekeyed[0].to;
+  assert.equal((await frontmatterOf(vault.itemPath(opsKey))).claimedBy, "core-worker@x");
+
+  const [trashed] = await vault.deleteItem(opsKey);
+  const restored = await vault.restoreItem(path.basename(trashed.trashedTo));
+  assert.equal(extra(restored, "claimedBy"), "core-worker@x");
 });
 
-test("an unknown field nested inside a link also drops the whole item", async () => {
+test("an unknown field does not make a pushed item read as drifted", async () => {
+  // pushableFields is an allowlist, so Jira never sees the field and its hash
+  // never moves because of it.
+  const vault = await tmpVault();
+  const item = await vault.createItem({ project: "ACME", summary: "Pushed" });
+  await vault.markPushed(item.key, "ENG-1");
+  await addFrontmatterLine(vault.itemPath(item.key), /^key: ACME-1$/m, "claimedBy: someone");
+  await vault.load();
+
+  assert.equal(vault.getItem(item.key).sync.state, "pushed");
+  const reranked = await vault.updateItem(item.key, { rank: 5000 });
+  assert.equal(reranked.sync.state, "pushed");
+  assert.equal(extra(reranked, "claimedBy"), "someone");
+});
+
+test("a project with an unknown field loads, is listed, and keeps the field on save", async () => {
+  const vault = await tmpVault();
+  await vault.createItem({ project: "ACME", summary: "Lives in ACME" });
+  const file = vault.projectPath("ACME");
+  await addFrontmatterLine(file, /^key: ACME$/m, "owner: someone");
+
+  const { errors } = await vault.load();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(
+    vault.listProjects().map((p) => p.key),
+    ["ACME"],
+  );
+  assert.equal(extra(vault.getProject("ACME"), "owner"), "someone");
+
+  await vault.updateProject("ACME", { name: "Acme renamed", lead: "Dana" });
+  assert.equal((await frontmatterOf(file)).owner, "someone");
+  assert.equal((await frontmatterOf(file)).name, "Acme renamed");
+
+  await vault.renameProject("ACME", "ACMX");
+  assert.equal((await frontmatterOf(vault.projectPath("ACMX"))).owner, "someone");
+  await vault.load();
+  assert.equal(extra(vault.getProject("ACMX"), "owner"), "someone");
+});
+
+test("load() names unknown keys as notices, so doctor can show a misspelled field", async () => {
+  const vault = await tmpVault();
+  const clean = await vault.load();
+  assert.deepEqual(clean.notices, [], "a vault this build wrote has nothing to report");
+
+  const item = await vault.createItem({ project: "ACME", summary: "Hand-edited" });
+  await addFrontmatterLine(vault.itemPath(item.key), /^key: ACME-1$/m, "dueDtae: 2026-12-01");
+  await addFrontmatterLine(vault.projectPath("ACME"), /^key: ACME$/m, "owner: someone");
+
+  const { errors, notices } = await vault.load();
+  assert.deepEqual(errors, [], "notices are not errors");
+  assert.equal(notices.length, 2);
+  assert.ok(notices.some((n) => /ACME\.md: .*does not know: owner$/.test(n)));
+  assert.ok(notices.some((n) => /ACME-1\.md: .*does not know: dueDtae$/.test(n)));
+  assert.equal(vault.getItem(item.key).dueDate, undefined, "the typo is not read as the field");
+});
+
+test("unknownFrontmatterKeys checks raw frontmatter against this build's field list", () => {
+  assert.deepEqual(unknownFrontmatterKeys("item", { key: "ACME-1", summary: "x", b: 1, a: 2 }), [
+    "b",
+    "a",
+  ]);
+  assert.deepEqual(unknownFrontmatterKeys("project", { key: "ACME", name: "x" }), []);
+  // `name` is a project field, not an item one.
+  assert.deepEqual(unknownFrontmatterKeys("item", { name: "x" }), ["name"]);
+  // An Object.prototype name is not mistaken for a known field.
+  assert.deepEqual(unknownFrontmatterKeys("item", { toString: "x" }), ["toString"]);
+});
+
+test("gap, TV-11: an unknown field nested inside a link still drops the whole item", async () => {
+  // Only the top level is passthrough. LinkSchema, AttachmentSchema,
+  // CommentSchema and SyncSchema are still strict, so a field a newer build
+  // adds to one link makes this build reject the item and leave it out of
+  // every view, as every unknown field did before TV-3. When TV-11 lands,
+  // this test flips.
   const vault = await tmpVault();
   const item = await vault.createItem({
     project: "ACME",
     summary: "Has a link",
     links: [{ type: "url", target: "https://example.com", label: "spec" }],
   });
-  const file = vault.itemPath(item.key);
-  await addFrontmatterLine(file, /^ {4}label: spec$/m, "    pinned: true");
+  await addFrontmatterLine(vault.itemPath(item.key), /^ {4}label: spec$/m, "    pinned: true");
 
   const { errors } = await vault.load();
   assert.equal(vault.hasItem(item.key), false);
@@ -168,22 +230,7 @@ test("an unknown field nested inside a link also drops the whole item", async ()
   assert.match(errors[0], /links\.0: Unrecognized key\(s\) in object: 'pinned'/);
 });
 
-test("a project with an unknown field is skipped the same way, and its items stay listed", async () => {
-  const vault = await tmpVault();
-  const item = await vault.createItem({ project: "ACME", summary: "Lives in ACME" });
-  await addFrontmatterLine(vault.projectPath("ACME"), /^key: ACME$/m, "owner: someone");
-
-  const { errors } = await vault.load();
-  assert.equal(errors.length, 1);
-  assert.match(errors[0], /ACME\.md: Unrecognized key\(s\) in object: 'owner'/);
-  assert.deepEqual(vault.listProjects(), []);
-  assert.equal(vault.hasItem(item.key), true, "load() does not check that an item's project exists");
-});
-
-test("the item serializer already keeps fields it does not know", () => {
-  // Context for the fix: the write side of option 1 exists. orderKeys appends
-  // any key not in FRONTMATTER_ORDER rather than dropping it, so only the
-  // strict parse stands between a newer field and a round trip.
+test("the item serializer keeps fields it does not know, after the known ones", () => {
   const text = serializeFrontmatter(
     { key: "ACME-1", summary: "x", claimedBy: "core-worker@x" },
     "body",

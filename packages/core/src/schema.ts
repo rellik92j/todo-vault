@@ -89,7 +89,13 @@ export const SyncSchema = z
   })
   .strict();
 
-export const ItemFrontmatterSchema = z
+/**
+ * The fields this build knows an item to have. Kept separate from the schema
+ * below so the exported type is this exact field list: `passthrough()` would
+ * add an index signature to the inferred type, and then `item.dueDtae` would
+ * compile everywhere, desktop included.
+ */
+const ItemFrontmatterShape = z
   .object({
     id: z.string().uuid().describe("Stable identity, survives renames and key changes"),
     key: itemKey,
@@ -140,9 +146,22 @@ export const ItemFrontmatterSchema = z
     sync: SyncSchema.default({ state: "never" }),
     created: isoDateTime,
     updated: isoDateTime,
-  })
-  .strict()
-  .superRefine((v, ctx) => {
+  });
+
+/**
+ * Passthrough rather than strict, so a field this build does not know is kept
+ * rather than rejected. The desktop app and the MCP servers routinely run
+ * different builds against one vault. Strict made an older build drop every
+ * item a newer one had given a new field from every view, and refuse to write
+ * it. Passthrough keeps the field on the parsed object, every write spreads the
+ * stored item, and `serializeFrontmatter` writes keys it does not know after
+ * the known ones, so the field survives a save. `unknownFrontmatterKeys`
+ * names them, which is how `vault doctor` catches a misspelled hand edit.
+ *
+ * Only the top level. Links, attachments, comments and sync stay strict (TV-11).
+ */
+export const ItemFrontmatterSchema = ItemFrontmatterShape.passthrough().superRefine(
+  (v, ctx) => {
     if (v.type === "epic" && v.parent) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -178,14 +197,16 @@ export const ItemFrontmatterSchema = z
         message: `Key ${v.key} does not belong to project ${v.project}`,
       });
     }
-  });
+  },
+);
 
-export type ItemFrontmatter = z.infer<typeof ItemFrontmatterSchema>;
+export type ItemFrontmatter = z.infer<typeof ItemFrontmatterShape>;
 
 /** An item is its frontmatter plus the markdown body, which is the description. */
 export type Item = ItemFrontmatter & { description: string };
 
-export const ProjectSchema = z
+/** The fields this build knows a project to have. Split out for the same reason as items. */
+const ProjectShape = z
   .object({
     key: projectKey,
     name: z.string().min(1).max(200),
@@ -208,17 +229,35 @@ export const ProjectSchema = z
       .describe("Target project in Jira, if this one is ever pushed"),
     created: isoDateTime,
     updated: isoDateTime,
-  })
-  .strict();
+  });
 
-export type ProjectFrontmatter = z.infer<typeof ProjectSchema>;
+/** Passthrough for the same reason as `ItemFrontmatterSchema`. */
+export const ProjectSchema = ProjectShape.passthrough();
+
+export type ProjectFrontmatter = z.infer<typeof ProjectShape>;
 export type Project = ProjectFrontmatter & { description: string };
+
+/**
+ * Keys in a file's raw frontmatter that this build does not know, in the order
+ * they appear. Not errors: a newer build may have written them, and they are
+ * kept on save. Reported by `vault doctor`, so that a misspelled field in a
+ * hand-edited file, which would otherwise be kept and silently ignored, gets
+ * noticed. Pass the parsed frontmatter, not an `Item`: on an item,
+ * `description` is the body.
+ */
+export function unknownFrontmatterKeys(
+  kind: "item" | "project",
+  data: Record<string, unknown>,
+): string[] {
+  const known = kind === "item" ? ItemFrontmatterShape.shape : ProjectShape.shape;
+  return Object.keys(data).filter((k) => !Object.hasOwn(known, k));
+}
 
 /**
  * A scratch note: `scratch/<id>.md`, this frontmatter, and the note's text as
  * the body. Not an item — no key, no project, nothing Jira ever sees.
  *
- * Passthrough rather than strict, unlike items and projects. The pad is the
+ * Passthrough rather than strict, like items and projects. The pad is the
  * likeliest place for a field to arrive later (a per-note monospace flag is
  * already planned), and an MCP server one version behind the app is a normal
  * state (SCHEMA.md). Strict would make that older reader drop every newer

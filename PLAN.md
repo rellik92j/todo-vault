@@ -5074,3 +5074,68 @@ fix made on the card. #100 and #101 both changed `ScratchPage` and were each
 tested alone, so the scratch, edit and paste specs were run again on the merged
 main, 27/27. One flake is open: *More… opens the page* failed once in a full
 run and passed on three reruns, and has not been traced.
+
+## A field from a newer build survives an older one ✅ built
+
+SCHEMA.md promised that unknown fields on disk were kept when an item was
+rewritten. They never got that far. `ItemFrontmatterSchema` and
+`ProjectSchema` were strict, so an older build rejected any file carrying a
+field it did not know, recorded `Unrecognized key(s) in object` in
+`load().errors`, and left it out of the index. The file was safe, because
+nothing can write an item it cannot load, but it was invisible in every view
+and refused every write. Project-wide writes passed over it: a rename left it
+under the old key, pointing at a project that no longer existed, and a
+project whose only item was the hidden one could be trashed without
+`cascade`. The desktop app, the in-app assistant and several MCP servers
+routinely run different builds against one vault, and the next item fields
+(`dependsOn`, `claimedBy`) were about to land, so the first test recorded the
+failure as it stood before anything was changed.
+
+**Keep, rather than document the strictness.** The other option was to leave
+both schemas strict, correct SCHEMA.md, and ship every new field only after
+every build was upgraded together. That costs nothing now and something every
+time a field is added, and the app and the MCP servers are not upgraded
+together in practice. Keeping was also nearly free, because the write side was
+already there: every write path spreads the stored item (`mergeUpdate`, tick,
+comment, link, rank, `rekeyItems`), and `serializeFrontmatter` already wrote
+keys outside `FRONTMATTER_ORDER` after the known ones. Only the strict parse
+was in the way. The user chose this option and asked for projects to be
+included.
+
+**Passthrough on the schema, strict on the type.** `.passthrough()` adds
+`[k: string]: unknown` to the inferred type, and then `item.dueDtae` would
+compile in core and desktop alike. So the field list is declared once as a
+plain object (`ItemFrontmatterShape`, `ProjectShape`), the exported schemas
+are that list with `.passthrough()`, and `ItemFrontmatter` and
+`ProjectFrontmatter` are inferred from the list, not from the schemas. A
+misspelled field in code still fails to compile, which was checked with a
+throwaway `@ts-expect-error` probe.
+
+**A typo in a file is now a notice.** Keeping unknown fields means a
+hand-edited `dueDtae:` is kept and ignored, not rejected. `load()` now returns
+`notices` beside `errors`, one line per file naming the keys this build does
+not know, and `vault doctor` lists them under their own heading without
+setting a failing exit code, because the same line is correct when a newer
+build wrote it.
+
+**What it does not cover.** Builds older than this change still reject unknown
+fields, so a new field is safe only once every app and MCP server opening the
+vault has been rebuilt past it. The nested link, attachment, comment and sync
+schemas stay strict. A field added inside one link still drops the whole item
+in an older build, and making them passthrough means also checking the writes
+that build those objects fresh (`markPushed`, `addLink`). That is TV-11 in the
+agent vault, and a test in `unknown-fields.test.ts` records the gap. An older
+build also carries a newer field without acting on it: it will not rewrite
+item keys held in one during a re-key, and it will not enforce a rule one
+implies. SCHEMA.md's "Extending it" now says so.
+
+**Tests.** `unknown-fields.test.ts` has 10 tests. The item loads, is listed
+and searchable, and keeps its unknown key through update, bulk update,
+transition, comment, link, clearing a known field, project rename, move to
+another project, and trash and restore. `deleteProject` now counts it. A
+pushed item does not read as drifted. A project keeps its unknown key through
+update and rename. `notices` names a misspelled field, and a nested link field
+still drops its item. `vault doctor` was run by hand on a vault with a
+misspelled field: one notice, exit code 0. Not verified: the desktop app and
+an MCP server were not run against such a vault. Both go through the same
+`load()` and write paths, and nothing in the app shows notices.
