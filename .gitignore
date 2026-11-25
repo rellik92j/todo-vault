@@ -9,6 +9,11 @@ dist/
 # transient, and `git worktree remove` is what disposes of them, not a delete.
 .claude/worktrees/
 
+# Subagent definitions for the agents that work this repo through the local
+# agent vault. They name machine-specific paths and a workflow that exists only
+# on this machine, so they stay local, like settings.local.json.
+.claude/agents/
+
 # MCP server config with machine-specific absolute paths (dist/ output, vault dir).
 .mcp.json
 
